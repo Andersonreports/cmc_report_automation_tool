@@ -17,14 +17,13 @@ import traceback
 from datetime import datetime
 
 from PySide6.QtCore import QDate, QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QKeySequence, QPainter,
-                           QPen, QPixmap, QTextCharFormat)
+from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCalendarWidget, QComboBox, QFileDialog, QMenu,
-    QWidgetAction, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QAbstractItemView, QHeaderView, QScrollArea, QSplitter, QTableWidget,
-    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QComboBox, QFileDialog, QFormLayout,
+    QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
+    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton,
+    QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from ..config.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template
@@ -247,48 +246,101 @@ def chevron_icon(direction: str) -> QIcon:
     return icon
 
 
-CALENDAR_STYLE = """
-QCalendarWidget QWidget#qt_calendar_navigationbar {
-    background: white; border-bottom: 1px solid #e5e7eb; }
-QCalendarWidget QToolButton {
-    color: #1f2937; background: transparent; border: none; border-radius: 4px;
-    font-weight: 600; padding: 4px 6px; margin: 2px; }
-QCalendarWidget QToolButton:hover { background: #eef2f7; }
-QCalendarWidget QToolButton::menu-indicator { image: none; width: 0px; }
-QCalendarWidget QSpinBox {
-    border: 1px solid #d0d7de; border-radius: 4px; padding: 1px 4px;
-    selection-background-color: #1A467D; }
-QCalendarWidget QAbstractItemView {
-    background: white; color: #1f2937; outline: 0; border: none;
-    selection-background-color: #1A467D; selection-color: white; }
-QCalendarWidget QAbstractItemView:disabled { color: #b0b7c3; }
-"""
+class DatePicker(QWidget):
+    """Clean month-view date picker: arrows to change month, round day
+    buttons, the chosen day as a filled circle and today as a ring.
+    Same small API as QCalendarWidget: clicked(QDate), selectedDate(),
+    setSelectedDate()."""
+    clicked = Signal(QDate)
 
+    STYLE = """
+    QWidget#picker { background: white; }
+    QLabel#title { color: #111827; font-weight: 600; font-size: 10.5pt; }
+    QLabel#weekday { color: #6b7280; font-size: 8.5pt; font-weight: 600; }
+    QToolButton#nav { border: none; border-radius: 14px; background: transparent; }
+    QToolButton#nav:hover { background: #eef2f7; }
+    QToolButton#day {
+        border: none; border-radius: 15px; background: transparent;
+        color: #111827; font-size: 9.5pt; }
+    QToolButton#day:hover { background: #e8eef7; }
+    QToolButton#day[other="true"] { color: #c0c6cf; }
+    QToolButton#day[today="true"] { border: 1.5px solid #1A467D; color: #1A467D; font-weight: 600; }
+    QToolButton#day[selected="true"] { background: #1A467D; color: white; font-weight: 600; }
+    """
 
-def style_calendar(cal: QCalendarWidget) -> None:
-    """Flat, clean look instead of Qt's default (black triangles, grid,
-    week numbers, red weekends)."""
-    cal.setGridVisible(False)
-    cal.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
-    cal.setHorizontalHeaderFormat(QCalendarWidget.ShortDayNames)
-    cal.setFirstDayOfWeek(Qt.Monday)
-    cal.setStyleSheet(CALENDAR_STYLE)
-    for day in (Qt.Saturday, Qt.Sunday):             # no red weekends
-        cal.setWeekdayTextFormat(day, QTextCharFormat())
-    header = QTextCharFormat()
-    header.setForeground(QColor("#6b7280"))
-    header.setFontWeight(QFont.DemiBold)
-    cal.setHeaderTextFormat(header)
-    today = QTextCharFormat()
-    today.setFontWeight(QFont.Bold)
-    today.setForeground(QColor("#1A467D"))
-    cal.setDateTextFormat(QDate.currentDate(), today)
-    for name, direction in (("qt_calendar_prevmonth", "left"), ("qt_calendar_nextmonth", "right")):
-        btn = cal.findChild(QWidget, name)
-        if btn is not None:
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("picker")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(self.STYLE)
+        self._selected = QDate.currentDate()
+        self._month = QDate(self._selected.year(), self._selected.month(), 1)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 8, 10, 10)
+        lay.setSpacing(6)
+        head = QHBoxLayout()
+        prev_btn, next_btn = QToolButton(objectName="nav"), QToolButton(objectName="nav")
+        for btn, direction, step in ((prev_btn, "left", -1), (next_btn, "right", 1)):
             btn.setIcon(chevron_icon(direction))
-            btn.setIconSize(QSize(16, 16))
-    cal.setMinimumSize(300, 230)
+            btn.setIconSize(QSize(14, 14))
+            btn.setFixedSize(28, 28)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, st=step: self._shift(st))
+        self.title = QLabel(objectName="title", alignment=Qt.AlignCenter)
+        head.addWidget(prev_btn)
+        head.addWidget(self.title, 1)
+        head.addWidget(next_btn)
+        lay.addLayout(head)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(2)
+        grid.setVerticalSpacing(2)
+        for c, name in enumerate(("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su")):
+            grid.addWidget(QLabel(name, objectName="weekday", alignment=Qt.AlignCenter), 0, c)
+        self._days = []
+        for i in range(42):
+            b = QToolButton(objectName="day")
+            b.setFixedSize(30, 30)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, idx=i: self._pick(idx))
+            grid.addWidget(b, 1 + i // 7, i % 7)
+            self._days.append(b)
+        lay.addLayout(grid)
+        self._refresh()
+
+    def selectedDate(self) -> QDate:
+        return self._selected
+
+    def setSelectedDate(self, d: QDate):
+        self._selected = d
+        self._month = QDate(d.year(), d.month(), 1)
+        self._refresh()
+
+    def _first_cell(self) -> QDate:
+        return self._month.addDays(-(self._month.dayOfWeek() - 1))   # Monday first
+
+    def _shift(self, months: int):
+        self._month = self._month.addMonths(months)
+        self._refresh()
+
+    def _pick(self, idx: int):
+        d = self._first_cell().addDays(idx)
+        self._selected = d
+        self._refresh()
+        self.clicked.emit(d)
+
+    def _refresh(self):
+        self.title.setText(self._month.toString("MMMM yyyy"))
+        first, today = self._first_cell(), QDate.currentDate()
+        for i, b in enumerate(self._days):
+            d = first.addDays(i)
+            b.setText(str(d.day()))
+            b.setProperty("other", d.month() != self._month.month())
+            b.setProperty("today", d == today)
+            b.setProperty("selected", d == self._selected)
+            b.style().unpolish(b)          # re-apply the stylesheet for new properties
+            b.style().polish(b)
 
 
 class DateField(QWidget):
@@ -305,12 +357,11 @@ class DateField(QWidget):
         self.edit = QLineEdit(placeholderText=placeholder or "dd/mm/yyyy")
         self.edit.textChanged.connect(self.textChanged)
         lay.addWidget(self.edit, 1)
-        self.calendar = QCalendarWidget()
-        style_calendar(self.calendar)
+        self.calendar = DatePicker()
         self.calendar.clicked.connect(self._picked)
         self._menu = QMenu(self)
         self._menu.setStyleSheet("QMenu { background: white; border: 1px solid #d0d7de; "
-                                 "border-radius: 6px; padding: 4px; }")
+                                 "border-radius: 8px; padding: 2px; }")
         act = QWidgetAction(self._menu)
         act.setDefaultWidget(self.calendar)
         self._menu.addAction(act)
