@@ -1,0 +1,86 @@
+name: Build Windows + Linux apps
+
+# Builds CMCReportAutomation.exe (Windows) and CMCReportAutomation-linux.tar.gz
+# (Linux, with install.sh) on every push to main, or on demand from the
+# Actions tab ("Run workflow"). Download them from the run's "Artifacts".
+#
+# The patient lookup address comes from the repository secret APPS_SCRIPT_URL
+# (Settings -> Secrets and variables -> Actions). It is built into the apps,
+# so builds are kept as workflow artifacts only - never published as public
+# Releases. Without the secret the apps still build, with the lookup off.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: CMCReportAutomation-windows
+          # Oldest supported Ubuntu runner, so the app runs on older distros too.
+          - os: ubuntu-22.04
+            artifact: CMCReportAutomation-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Qt build libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libegl1
+
+      - name: Write patient lookup config from secret
+        shell: bash
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+        run: |
+          python - <<'EOF'
+          import os
+          url = os.environ.get("APPS_SCRIPT_URL", "").strip()
+          with open("app/config/sheet_config.py", "w", encoding="utf-8") as fh:
+              fh.write(f'APPS_SCRIPT_URL = {url!r}\nSHEET_CSV_URL = ""\n')
+          print("lookup configured" if url else "WARNING: APPS_SCRIPT_URL secret not set - lookup disabled")
+          EOF
+
+      - name: Build with PyInstaller
+        run: pyinstaller build.spec --noconfirm --clean
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p pkg/CMCReportAutomation-linux
+          cp dist/CMCReportAutomation tools/linux/install.sh pkg/CMCReportAutomation-linux/
+          chmod +x pkg/CMCReportAutomation-linux/CMCReportAutomation pkg/CMCReportAutomation-linux/install.sh
+          tar -C pkg -czf CMCReportAutomation-linux.tar.gz CMCReportAutomation-linux
+
+      - name: Upload (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/CMCReportAutomation.exe
+          retention-days: 30
+
+      - name: Upload (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: CMCReportAutomation-linux.tar.gz
+          retention-days: 30

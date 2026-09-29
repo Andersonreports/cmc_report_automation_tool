@@ -111,6 +111,24 @@ Program Files) or **Microsoft Word** as a fallback.
 
 It then appears in the **Template** drop-down automatically.
 
+## Windows and Linux builds (GitHub Actions)
+
+`.github/workflows/build.yml` builds both apps on every push to `main` (or
+*Actions -> Build Windows + Linux apps -> Run workflow*). Download them from
+the run page, under **Artifacts**:
+
+* `CMCReportAutomation-windows` -> `CMCReportAutomation.exe` (double-click).
+* `CMCReportAutomation-linux` -> `CMCReportAutomation-linux.tar.gz`. On the
+  Linux PC: extract it, then run `./install.sh` inside the folder once. It
+  adds the app to the applications menu and desktop, and installs LibreOffice
+  Writer, a Qt library and the report fonts (Arial, Trebuchet MS, Carlito for
+  Calibri) so the reports look the same as on Windows.
+
+The patient lookup address is read from the repository secret
+`APPS_SCRIPT_URL` (*Settings -> Secrets and variables -> Actions*) and built
+into both apps, so keep the repository **private** and share the builds only
+with staff. Without the secret the apps still build, with the lookup off.
+
 ## Building a Windows exe
 
 `build.bat` (or `pyinstaller build.spec --noconfirm --clean` after
