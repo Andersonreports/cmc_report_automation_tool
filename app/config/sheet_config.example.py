@@ -5,3 +5,8 @@ Use the CSV export form of the tab that holds the patient list:
 The sheet contains patient details: never commit the real link.
 """
 SHEET_CSV_URL = ""
+
+# Preferred: the Apps Script web app URL (ends in /exec), from deploying
+# tools/apps_script/Code.gs. When set, it is used instead of SHEET_CSV_URL and
+# the sheet can be made private.
+APPS_SCRIPT_URL = ""

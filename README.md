@@ -41,10 +41,19 @@ Endocrinology template only: when the row's *Client name* contains
 Otherwise the ID is copied as written. Set per template in
 `app/config/templates.py` (`patient_id_client`, `patient_id_prefix`).
 
-The sheet link is kept in `app/config/sheet_config.py`, which is
-**git-ignored**: the sheet holds patient details and is readable by anyone
-with the link, so the link must never be committed. On a new machine, copy
-`app/config/sheet_config.example.py` to `sheet_config.py` and paste the link.
+Two ways to read the sheet, set in `app/config/sheet_config.py`
+(**git-ignored** - never commit these links; on a new machine copy
+`app/config/sheet_config.example.py` to `sheet_config.py`):
+
+* **`APPS_SCRIPT_URL` (recommended):** deploy `tools/apps_script/Code.gs` from
+  the sheet (*Extensions -> Apps Script*; setup steps are at the top of that
+  file). The sheet can then be **private**; the script returns only the
+  requested patient's 7 demography columns and allows 60 lookups a minute.
+* **`SHEET_CSV_URL` (fallback):** the sheet's CSV export; the sheet must be
+  shared as "anyone with the link", and the whole list is downloaded.
+
+After changing either link, rebuild the exe (`build.bat`) - the links are
+built into it.
 
 Everything else (results, CNV findings, recommendations, methodology,
 disclaimer, references, signatures, appendix) is **fixed** template content.

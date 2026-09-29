@@ -1,10 +1,12 @@
 """Look up a patient's demography in the live Google Sheet by PIN.
 
-The sheet is read fresh on every lookup (CSV export of one tab), so new or
-corrected rows are picked up immediately. Its link lives in
-app/config/sheet_config.py, which is git-ignored: the sheet holds patient
-details and is readable by anyone with the link, so the link must never be
-committed. See app/config/sheet_config.example.py.
+The sheet is read fresh on every lookup, so new or corrected rows are picked
+up immediately. Two ways, set in app/config/sheet_config.py (git-ignored -
+never commit these links; see sheet_config.example.py):
+  * APPS_SCRIPT_URL (preferred): the web app in tools/apps_script/Code.gs.
+    The sheet can stay private and only one patient's row is returned.
+  * SHEET_CSV_URL (fallback): the sheet's CSV export; the sheet must be
+    shared as "anyone with the link".
 
 Column mapping (matched by header name):
     Anderson ID        -> PIN (lookup key)
@@ -22,13 +24,19 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
+import urllib.parse
 import urllib.request
 
 try:
-    from ..config.sheet_config import SHEET_CSV_URL
+    from ..config import sheet_config as _cfg
 except ImportError:          # no local config: lookup is disabled
-    SHEET_CSV_URL = ""
+    _cfg = None
+# Preferred: the Apps Script web app (sheet can stay private, returns one row).
+APPS_SCRIPT_URL = getattr(_cfg, "APPS_SCRIPT_URL", "").strip()
+# Fallback: the sheet's CSV export (needs "anyone with the link" sharing).
+SHEET_CSV_URL = getattr(_cfg, "SHEET_CSV_URL", "").strip()
 
 HOSPITALS = {
     "ENDOCRINOLOGY": "Christian Medical College - Molecular Endocrinology",
@@ -44,7 +52,7 @@ class SheetError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(SHEET_CSV_URL)
+    return bool(APPS_SCRIPT_URL or SHEET_CSV_URL)
 
 
 def _norm(h: str) -> str:
@@ -85,13 +93,24 @@ def _template_patient_id(cfg, name: str, client: str) -> str:
     return f"{cfg.patient_id_prefix} - {digits.group(0)}" if digits else ""
 
 
-def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | None:
-    """Return the demography fields found for `pin`, or None if not in the sheet.
-    Only fields the sheet actually has a value for are returned. `cfg` is the
-    selected TemplateConfig, whose Patient ID rule is applied."""
-    if not SHEET_CSV_URL:
-        raise SheetError("The patient sheet link is not set up "
-                         "(app/config/sheet_config.py is missing).")
+def _row_via_apps_script(pin: str, timeout: int) -> dict[str, str] | None:
+    """One patient's row from the Apps Script web app (tools/apps_script/Code.gs)."""
+    url = f"{APPS_SCRIPT_URL}?{urllib.parse.urlencode({'pin': pin})}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            reply = json.loads(resp.read().decode("utf-8"))
+    except json.JSONDecodeError as e:
+        raise SheetError("The patient lookup service returned an unexpected reply "
+                         "(check its deployment: Who has access = Anyone).") from e
+    except Exception as e:  # noqa: BLE001
+        raise SheetError(f"Could not reach the patient lookup service: {e}") from e
+    if not reply.get("ok"):
+        raise SheetError(reply.get("error") or "The patient lookup failed.")
+    return {_norm(k): str(v) for k, v in (reply.get("row") or {}).items()}         if reply.get("found") else None
+
+
+def _row_via_csv(pin: str, timeout: int) -> dict[str, str] | None:
+    """One patient's row from the sheet's CSV export (sheet shared by link)."""
     try:
         with urllib.request.urlopen(SHEET_CSV_URL, timeout=timeout) as resp:
             text = resp.read().decode("utf-8-sig", errors="replace")
@@ -100,40 +119,53 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
     if text.lstrip().startswith("<"):
         raise SheetError("The patient sheet is not shared for reading "
                          "(Google returned a sign-in page).")
-
     rows = list(csv.reader(io.StringIO(text)))
     if not rows:
         return None
-    col = {_norm(h): i for i, h in enumerate(rows[0])}
-
-    def get(row, header):
-        i = col.get(_norm(header))
-        return row[i].strip() if i is not None and i < len(row) else ""
-
-    key = pin.strip().upper()
+    header = [_norm(h) for h in rows[0]]
     for row in rows[1:]:
-        if get(row, "Anderson ID").upper() != key:
-            continue
-        out = {"pin": key}
-        out.update(_parse_name(get(row, "Name")))
-        pid = _template_patient_id(cfg, get(row, "Name"), get(row, "Client name"))
-        if pid:
-            out["patient_id"] = pid
-        if get(row, "Sample Number"):
-            out["sample_number"] = get(row, "Sample Number")
-        if get(row, "Received Date"):
-            # The lab's collection date is the same as the received date.
-            out["received_date"] = out["collection_date"] = _date(get(row, "Received Date"))
-        specimen = SPECIMENS.get(get(row, "Sample Type").upper())
-        if specimen:
-            out["specimen"] = specimen
-        client = get(row, "Client name").upper()
-        hospital = next((v for k, v in HOSPITALS.items() if k in client), "")
-        if hospital:
-            out["hospital"] = hospital
-        doctor = get(row, "Client Doctor Name")
-        if doctor:
-            doctor = re.sub(r"^\s*DR\.?\s*", "", doctor, flags=re.I).title()
-            out["referring_clinician"] = f"Dr. {doctor}"
-        return out
+        cells = {h: (row[i].strip() if i < len(row) else "") for i, h in enumerate(header)}
+        if cells.get(_norm("Anderson ID"), "").upper() == pin:
+            return cells
     return None
+
+
+def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | None:
+    """Return the demography fields found for `pin`, or None if not in the sheet.
+    Only fields the sheet actually has a value for are returned. `cfg` is the
+    selected TemplateConfig, whose Patient ID rule is applied.
+    Uses the Apps Script service when configured, else the CSV export."""
+    if not is_configured():
+        raise SheetError("The patient sheet link is not set up "
+                         "(app/config/sheet_config.py is missing).")
+    key = pin.strip().upper()
+    cells = (_row_via_apps_script(key, timeout) if APPS_SCRIPT_URL
+             else _row_via_csv(key, timeout))
+    if cells is None:
+        return None
+
+    def get(header):
+        return (cells.get(_norm(header)) or "").strip()
+
+    out = {"pin": key}
+    out.update(_parse_name(get("Name")))
+    pid = _template_patient_id(cfg, get("Name"), get("Client name"))
+    if pid:
+        out["patient_id"] = pid
+    if get("Sample Number"):
+        out["sample_number"] = get("Sample Number")
+    if get("Received Date"):
+        # The lab's collection date is the same as the received date.
+        out["received_date"] = out["collection_date"] = _date(get("Received Date"))
+    specimen = SPECIMENS.get(get("Sample Type").upper())
+    if specimen:
+        out["specimen"] = specimen
+    client = get("Client name").upper()
+    hospital = next((v for k, v in HOSPITALS.items() if k in client), "")
+    if hospital:
+        out["hospital"] = hospital
+    doctor = get("Client Doctor Name")
+    if doctor:
+        doctor = re.sub(r"^\s*DR\.?\s*", "", doctor, flags=re.I).title()
+        out["referring_clinician"] = f"Dr. {doctor}"
+    return out
