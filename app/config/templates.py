@@ -33,6 +33,8 @@ class TemplateConfig:
     patient_id_prefix: str = ""
     file_suffix: str = "whole_exome_report"   # <PatientID>_<suffix>_<date>
     file_date_sep: str = "-"                  # 29-09-2026 / 29_09_2026
+    # Section headings that always start on a new page, e.g. ("Disclaimer",).
+    new_page_before: tuple[str, ...] = ()
 
 
 TEMPLATES: dict[str, TemplateConfig] = {
@@ -59,6 +61,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_id_label="Patient name",
         file_suffix="Whole_Exome_Whole_mitochondrial_Report",
         file_date_sep="_",
+        new_page_before=("Disclaimer",),
     ),
 }
 

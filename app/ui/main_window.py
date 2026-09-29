@@ -141,6 +141,59 @@ class ChoiceBox(QComboBox):
             e.ignore()
 
 
+class OtherChoiceBox(ChoiceBox):
+    """Dropdown whose last entry is 'Other': choosing it turns the box into a
+    text field for a name that isn't in the list. 'Other' itself is never
+    returned as the value."""
+    OTHER = "Other"
+
+    def __init__(self, options: list[str]):
+        QComboBox.__init__(self)
+        self._options = list(options)
+        self.addItems(self._options + [self.OTHER])
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(12)
+        self.activated.connect(self._chosen)
+        self.currentTextChanged.connect(lambda *_: self.textChanged.emit(self.text()))
+        self._set_other("")
+
+    def _set_other(self, value: str):
+        self.blockSignals(True)
+        self.setCurrentIndex(self.count() - 1)
+        self.setEditable(True)
+        self.lineEdit().setPlaceholderText("Type the hospital / clinic name")
+        self.lineEdit().setText(value)
+        self.blockSignals(False)
+        self.textChanged.emit(self.text())
+
+    def _chosen(self, index: int):
+        if index == self.count() - 1:          # "Other": type a name
+            self._set_other("")
+            self.lineEdit().setFocus()
+        else:
+            self.setEditable(False)
+            self.setCurrentIndex(index)
+            self.textChanged.emit(self.text())
+
+    def text(self) -> str:
+        if self.isEditable():
+            value = self.lineEdit().text().strip()
+            return "" if value == self.OTHER else value
+        return self.currentText()
+
+    def setText(self, value: str):
+        value = (value or "").strip()
+        if value in self._options:
+            self.blockSignals(True)
+            self.setEditable(False)
+            self.setCurrentIndex(self._options.index(value))
+            self.blockSignals(False)
+            self.textChanged.emit(value)
+        else:
+            self._set_other(value)             # blank or a name not in the list
+
+
 def calendar_icon() -> QIcon:
     """A small calendar glyph, painted at several sizes so it stays sharp at
     any Windows display scaling (Qt has no built-in calendar icon)."""
@@ -439,7 +492,9 @@ class MainWindow(QMainWindow):
         pf = QFormLayout(pgrp)
         self.fields: dict[str, QLineEdit | ChoiceBox | DateField] = {}
         for key, label, example in PATIENT_FIELDS:
-            if key in PATIENT_CHOICES:
+            if key == "hospital":
+                le = OtherChoiceBox(PATIENT_CHOICES[key])
+            elif key in PATIENT_CHOICES:
                 le = ChoiceBox(PATIENT_CHOICES[key])
             elif key in DATE_FIELDS:
                 le = DateField(example)

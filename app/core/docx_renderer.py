@@ -7,8 +7,9 @@ follows the chosen specimen, and the Appendix 1 gene coverage table. All other
 content (results, CNV findings, recommendations, methodology, disclaimer,
 references, signatures, appendix) is left exactly as in the template.
 
-Two layout-only fixes are applied so the fixed content stays well laid out
-when the clinical history is long:
+Layout-only fixes keep the fixed content well laid out whatever the length
+of the clinical history:
+  * section headings are kept with the text that follows them;
   * the footer's typed "of 4" becomes a live NUMPAGES field;
   * the empty paragraphs padding page 3 are replaced by a page break before
     the appendix, so it always starts on a fresh page.
@@ -268,6 +269,56 @@ def _appendix_page_break(doc):
         ppr.insert(0, pb)
 
 
+SECTION_HEADINGS = ("Clinical History", "Results", "CNV Findings", "Recommendations",
+                    "Methodology", "Sequence data attributes", "Disclaimer", "References",
+                    "Whole Exome Sequencing Analysis", "Whole Mitochondrial Genome Sequencing",
+                    "This report has been reviewed and approved by")
+
+
+def _keep_headings_with_next(doc):
+    """A section heading never sits alone at the bottom of a page: it moves to
+    the next page together with the start of its section."""
+    wanted = {h.lower() for h in SECTION_HEADINGS}
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        if _text(p).strip().rstrip(":").lower() not in wanted:
+            continue
+        ppr = p.find(qn("w:pPr"))
+        if ppr is None:
+            ppr = OxmlElement("w:pPr")
+            p.insert(0, ppr)
+        if ppr.find(qn("w:keepNext")) is not None:
+            continue
+        kn = OxmlElement("w:keepNext")
+        # CT_PPr order: pStyle, keepNext, ...
+        style = ppr.find(qn("w:pStyle"))
+        if style is not None:
+            style.addnext(kn)
+        else:
+            ppr.insert(0, kn)
+
+
+def _new_pages(doc, headings):
+    """Start each of these section headings on a new page."""
+    wanted = {h.lower() for h in headings}
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        if _text(p).strip().rstrip(":").lower() not in wanted:
+            continue
+        ppr = p.find(qn("w:pPr"))
+        if ppr is None:
+            ppr = OxmlElement("w:pPr")
+            p.insert(0, ppr)
+        if ppr.find(qn("w:pageBreakBefore")) is not None:
+            continue
+        pb = OxmlElement("w:pageBreakBefore")
+        # CT_PPr order: pStyle, keepNext, keepLines, pageBreakBefore, ...
+        before = [ppr.find(qn(t)) for t in ("w:keepLines", "w:keepNext", "w:pStyle")]
+        before = next((e for e in before if e is not None), None)
+        if before is not None:
+            before.addnext(pb)
+        else:
+            ppr.insert(0, pb)
+
+
 def _field_runs(rpr, instr: str):
     out = []
     for kind in ("begin", "instr", "separate", "text", "end"):
@@ -325,5 +376,7 @@ def render_report(data: ReportData):
     _fill_methodology(doc, data)
     _fill_gene_table(doc, data)
     _appendix_page_break(doc)
+    _keep_headings_with_next(doc)
+    _new_pages(doc, get_template(data.template_key).new_page_before)
     _fix_page_count(doc)
     return doc
