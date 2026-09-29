@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.venv/
+out/
+*.tmp
+.~lock.*#
+.remember/
+
+# PyInstaller build output - the .exe is a release artifact, not source
+build/
+dist/
+*.spec.bak
+
+# sample patient reports / workbooks - not source code, keep local-only.
+# These contain patient PHI (names, variant data) and must never be committed.
+/inputs/
+*_draft.json
+*.doc
+*.docx
+*.pdf
+*.xlsx
+
+# ...except the bundled report template the renderer fills in
+!app/templates/*.docx

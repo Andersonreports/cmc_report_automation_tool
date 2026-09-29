@@ -1,0 +1,3 @@
+# Extra deps needed only to produce the packaged executable.
+# Install:  pip install -r requirements.txt -r requirements-build.txt
+pyinstaller>=6.6.0
