@@ -701,6 +701,7 @@ class MainWindow(QMainWindow):
     def _set_fetch_status(self, text: str, color: str):
         self.fetch_status.setText(text)
         self.fetch_status.setStyleSheet(f"color:{color};")
+        self.fetch_status.setVisible(bool(text))    # no empty gap when blank
 
     def _pin_typed(self, text: str):
         pin = text.strip().upper()
@@ -731,18 +732,10 @@ class MainWindow(QMainWindow):
     def _fetch_found(self, pin: str, fields: dict):
         if self.fields["pin"].text().strip().upper() != pin:
             return                          # PIN changed while looking up
-        labels = {k: label for k, label, _ in PATIENT_FIELDS}
-        filled = []
         for key, value in fields.items():
             if key != "pin" and key in self.fields and value:
                 self.fields[key].setText(value)
-                filled.append(labels[key])
-        not_in_sheet = [labels[k] for k in ("hospital", "referring_clinician")
-                        if k not in fields]
-        msg = f"Filled from the patient sheet: {', '.join(filled)}."
-        if not_in_sheet:
-            msg += f" Not in the sheet (enter or check): {', '.join(not_in_sheet)}."
-        self._set_fetch_status(msg, "#1a7f37")
+        self._set_fetch_status("", "gray")          # filled: nothing to report
 
     # -- drafts ------------------------------------------------------------
     def _save_draft(self):
