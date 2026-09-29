@@ -146,9 +146,10 @@ class OtherChoiceBox(ChoiceBox):
     returned as the value."""
     OTHER = "Other"
 
-    def __init__(self, options: list[str]):
+    def __init__(self, options: list[str], placeholder: str = "Type the value"):
         QComboBox.__init__(self)
         self._options = list(options)
+        self._placeholder = placeholder
         self.addItems(self._options + [self.OTHER])
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -161,7 +162,7 @@ class OtherChoiceBox(ChoiceBox):
         self.blockSignals(True)
         self.setCurrentIndex(self.count() - 1)
         self.setEditable(True)
-        self.lineEdit().setPlaceholderText("Type the hospital / clinic name")
+        self.lineEdit().setPlaceholderText(self._placeholder)
         self.lineEdit().setText(value)
         self.blockSignals(False)
         self.textChanged.emit(self.text())
@@ -397,6 +398,10 @@ PATIENT_CHOICES = {
                  "Christian Medical College - Nephrology"],
     "specimen": ["DNA", "Peripheral Blood"],
 }
+OTHER_PLACEHOLDERS = {
+    "hospital": "Type the hospital / clinic name",
+    "specimen": "Type the specimen",
+}
 DATE_FIELDS = {"collection_date", "received_date", "report_date"}
 
 
@@ -543,10 +548,8 @@ class MainWindow(QMainWindow):
         pf = QFormLayout(pgrp)
         self.fields: dict[str, QLineEdit | ChoiceBox | DateField] = {}
         for key, label, example in PATIENT_FIELDS:
-            if key == "hospital":
-                le = OtherChoiceBox(PATIENT_CHOICES[key])
-            elif key in PATIENT_CHOICES:
-                le = ChoiceBox(PATIENT_CHOICES[key])
+            if key in PATIENT_CHOICES:     # dropdown + "Other" (typed by the user)
+                le = OtherChoiceBox(PATIENT_CHOICES[key], OTHER_PLACEHOLDERS[key])
             elif key in DATE_FIELDS:
                 le = DateField(example)
             else:
