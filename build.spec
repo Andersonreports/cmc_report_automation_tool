@@ -6,7 +6,7 @@ a = Analysis(
     ["app/main.py"],
     pathex=["."],
     datas=[("app/templates", "app/templates")],
-    hiddenimports=["docx", "pypdfium2", "PIL"],
+    hiddenimports=["docx", "pypdfium2", "PIL", "app.config.sheet_config"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(

@@ -22,3 +22,6 @@ dist/
 
 # ...except the bundled report template the renderer fills in
 !app/templates/*.docx
+
+# Link to the live patient sheet (patient details) - local only, never commit
+app/config/sheet_config.py

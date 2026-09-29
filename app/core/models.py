@@ -1,8 +1,8 @@
 """Data model for the CMC Whole Exome Sequencing report.
 
-Only three parts of the report are entered by the user: the patient
-demography table, the clinical history, and the Sequence data attributes
-values. Everything else is fixed template content.
+The user enters the patient demography table, the clinical history, the
+Sequence data attributes values and the gene list link. Everything else is
+fixed template content.
 """
 from __future__ import annotations
 
@@ -42,6 +42,8 @@ class ReportData:
     clinical_history: str = ""
     total_reads: str = ""                 # Total Read Generated, e.g. "12.6 GB"
     q30: str = ""                         # Data >= Q30, e.g. "96.34 %"
+    gene_list_url: str = ""               # Methodology "Click here"; blank = template's link
+    genes: list = field(default_factory=list)   # [(gene, coverage)]; empty = template's table
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -51,4 +53,5 @@ class ReportData:
         d = dict(d or {})
         data = _from_dict(cls, {k: v for k, v in d.items() if k != "patient"})
         data.patient = _from_dict(PatientInfo, d.get("patient", {}))
+        data.genes = [(str(g), str(c)) for g, c in d.get("genes", [])]
         return data

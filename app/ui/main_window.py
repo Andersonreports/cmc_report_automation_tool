@@ -16,16 +16,22 @@ import tempfile
 import traceback
 from datetime import datetime
 
-from PySide6.QtCore import QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QDate, QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QKeySequence, QPainter,
+                           QPen, QPixmap, QTextCharFormat)
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QApplication, QCalendarWidget, QComboBox, QFileDialog, QMenu,
+    QWidgetAction, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QSplitter, QVBoxLayout, QWidget,
+    QAbstractItemView, QHeaderView, QScrollArea, QSplitter, QTableWidget,
+    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from ..config.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template
-from ..core.models import PatientInfo, ReportData
+from ..core.docx_renderer import template_gene_list_url, template_gene_table
+from ..core.gene_table import parse_pasted
+from ..core import sheet_client
+from ..core.models import PatientInfo, ReportData, today_str
 
 APP_NAME = "CMC Report Automation"
 
@@ -38,10 +44,10 @@ PATIENT_FIELDS = [
     ("hospital", "Hospital/Clinic", "Hospital / clinic name"),
     ("sample_number", "Sample Number", "Sample number"),
     ("referring_clinician", "Referring Clinician", "Clinician name"),
-    ("collection_date", "Sample Collection Date", "29/08/2026"),
+    ("collection_date", "Sample Collection Date", "dd/mm/yyyy"),
     ("specimen", "Specimen", "DNA"),
-    ("received_date", "Sample Received Date", "29/08/2026"),
-    ("report_date", "Report Date", "21/09/2026"),
+    ("received_date", "Sample Received Date", "dd/mm/yyyy"),
+    ("report_date", "Report Date", "dd/mm/yyyy"),
 ]
 
 
@@ -79,6 +85,296 @@ class RenderWorker(QThread):
             self.failed.emit(traceback.format_exc())
 
 
+class FetchWorker(QThread):
+    """Look up one PIN in the live patient sheet off the UI thread."""
+    found = Signal(str, dict)       # pin, fields
+    missing = Signal(str)           # pin
+    failed = Signal(str, str)       # pin, message
+
+    def __init__(self, pin: str, template_key: str):
+        super().__init__()
+        self.pin, self.template_key = pin, template_key
+
+    def run(self):
+        try:
+            fields = sheet_client.fetch_patient(self.pin, get_template(self.template_key))
+        except sheet_client.SheetError as e:
+            self.failed.emit(self.pin, str(e))
+            return
+        if fields is None:
+            self.missing.emit(self.pin)
+        else:
+            self.found.emit(self.pin, fields)
+
+
+PIN_PATTERN = re.compile(r"ADK\d{10}", re.I)
+
+
+class ChoiceBox(QComboBox):
+    """Dropdown with the same text()/setText()/textChanged API as QLineEdit,
+    so it slots into the patient fields like any other box. The mouse wheel
+    is ignored unless it has focus, so scrolling the form can't change it."""
+    textChanged = Signal(str)
+
+    def __init__(self, options: list[str]):
+        super().__init__()
+        self.addItems([""] + options)        # blank first: nothing pre-selected
+        self.setFocusPolicy(Qt.StrongFocus)
+        # Don't force the panel as wide as the longest option (the open list
+        # still shows it in full), so the preview keeps its room.
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(12)
+        self.currentTextChanged.connect(self.textChanged)
+
+    def text(self) -> str:
+        return self.currentText()
+
+    def setText(self, value: str):
+        if value and self.findText(value) < 0:
+            self.addItem(value)              # e.g. a value from an older draft
+        self.setCurrentText(value)
+
+    def wheelEvent(self, e):
+        if self.hasFocus():
+            super().wheelEvent(e)
+        else:
+            e.ignore()
+
+
+def calendar_icon() -> QIcon:
+    """A small calendar glyph, painted at several sizes so it stays sharp at
+    any Windows display scaling (Qt has no built-in calendar icon)."""
+    icon = QIcon()
+    for size in (16, 20, 24, 32, 40, 48, 64):
+        px = QPixmap(size, size)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        p.setRenderHint(QPainter.Antialiasing)
+        u = size / 16.0                      # drawn on a 16-unit grid
+        blue, grey = QColor("#1A467D"), QColor("#5A6270")
+        # page
+        p.setPen(QPen(grey, max(1.0, u)))
+        p.setBrush(QColor("white"))
+        p.drawRoundedRect(1.5 * u, 3 * u, 13 * u, 11.5 * u, 1.5 * u, 1.5 * u)
+        # header band
+        p.setPen(Qt.NoPen)
+        p.setBrush(blue)
+        p.drawRoundedRect(1.5 * u, 3 * u, 13 * u, 3.5 * u, 1.5 * u, 1.5 * u)
+        p.drawRect(1.5 * u, 5 * u, 13 * u, 1.5 * u)
+        # binder rings
+        p.setPen(QPen(grey, max(1.0, 1.2 * u), c=Qt.RoundCap))
+        p.drawLine(5 * u, 1.5 * u, 5 * u, 4.5 * u)
+        p.drawLine(11 * u, 1.5 * u, 11 * u, 4.5 * u)
+        # day grid
+        p.setPen(Qt.NoPen)
+        p.setBrush(grey)
+        for row in range(2):
+            for col in range(3):
+                p.drawRect((3.5 + col * 3.3) * u, (8.2 + row * 3) * u, 2 * u, 1.8 * u)
+        p.end()
+        icon.addPixmap(px)
+    return icon
+
+
+def chevron_icon(direction: str) -> QIcon:
+    """Thin '<' / '>' arrows for the calendar's month buttons."""
+    icon = QIcon()
+    for size in (16, 20, 24, 32, 48):
+        px = QPixmap(size, size)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor("#374151"), size / 9, c=Qt.RoundCap, j=Qt.RoundJoin))
+        u = size / 16.0
+        xs = (10, 6, 10) if direction == "left" else (6, 10, 6)
+        p.drawPolyline([QPoint(int(xs[0] * u), int(4 * u)), QPoint(int(xs[1] * u), int(8 * u)),
+                        QPoint(int(xs[2] * u), int(12 * u))])
+        p.end()
+        icon.addPixmap(px)
+    return icon
+
+
+CALENDAR_STYLE = """
+QCalendarWidget QWidget#qt_calendar_navigationbar {
+    background: white; border-bottom: 1px solid #e5e7eb; }
+QCalendarWidget QToolButton {
+    color: #1f2937; background: transparent; border: none; border-radius: 4px;
+    font-weight: 600; padding: 4px 6px; margin: 2px; }
+QCalendarWidget QToolButton:hover { background: #eef2f7; }
+QCalendarWidget QToolButton::menu-indicator { image: none; width: 0px; }
+QCalendarWidget QSpinBox {
+    border: 1px solid #d0d7de; border-radius: 4px; padding: 1px 4px;
+    selection-background-color: #1A467D; }
+QCalendarWidget QAbstractItemView {
+    background: white; color: #1f2937; outline: 0; border: none;
+    selection-background-color: #1A467D; selection-color: white; }
+QCalendarWidget QAbstractItemView:disabled { color: #b0b7c3; }
+"""
+
+
+def style_calendar(cal: QCalendarWidget) -> None:
+    """Flat, clean look instead of Qt's default (black triangles, grid,
+    week numbers, red weekends)."""
+    cal.setGridVisible(False)
+    cal.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+    cal.setHorizontalHeaderFormat(QCalendarWidget.ShortDayNames)
+    cal.setFirstDayOfWeek(Qt.Monday)
+    cal.setStyleSheet(CALENDAR_STYLE)
+    for day in (Qt.Saturday, Qt.Sunday):             # no red weekends
+        cal.setWeekdayTextFormat(day, QTextCharFormat())
+    header = QTextCharFormat()
+    header.setForeground(QColor("#6b7280"))
+    header.setFontWeight(QFont.DemiBold)
+    cal.setHeaderTextFormat(header)
+    today = QTextCharFormat()
+    today.setFontWeight(QFont.Bold)
+    today.setForeground(QColor("#1A467D"))
+    cal.setDateTextFormat(QDate.currentDate(), today)
+    for name, direction in (("qt_calendar_prevmonth", "left"), ("qt_calendar_nextmonth", "right")):
+        btn = cal.findChild(QWidget, name)
+        if btn is not None:
+            btn.setIcon(chevron_icon(direction))
+            btn.setIconSize(QSize(16, 16))
+    cal.setMinimumSize(300, 230)
+
+
+class DateField(QWidget):
+    """Date box (typed or picked from a calendar), dd/mm/yyyy. Starts empty.
+    Same text()/setText()/textChanged API as QLineEdit."""
+    textChanged = Signal(str)
+    FORMAT = "dd/MM/yyyy"
+
+    def __init__(self, placeholder: str = ""):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.edit = QLineEdit(placeholderText=placeholder or "dd/mm/yyyy")
+        self.edit.textChanged.connect(self.textChanged)
+        lay.addWidget(self.edit, 1)
+        self.calendar = QCalendarWidget()
+        style_calendar(self.calendar)
+        self.calendar.clicked.connect(self._picked)
+        self._menu = QMenu(self)
+        self._menu.setStyleSheet("QMenu { background: white; border: 1px solid #d0d7de; "
+                                 "border-radius: 6px; padding: 4px; }")
+        act = QWidgetAction(self._menu)
+        act.setDefaultWidget(self.calendar)
+        self._menu.addAction(act)
+        self._menu.aboutToShow.connect(self._sync_calendar)
+        # Calendar icon inside the box, at its right edge.
+        pick = self.edit.addAction(calendar_icon(), QLineEdit.TrailingPosition)
+        pick.setToolTip("Choose the date from a calendar")
+        pick.triggered.connect(self._open_calendar)
+
+    def _open_calendar(self):
+        # Drop the calendar below the box, right-aligned with it.
+        below = self.edit.mapToGlobal(self.edit.rect().bottomRight())
+        self._menu.popup(below - QPoint(self._menu.sizeHint().width(), 0))
+
+    def _sync_calendar(self):
+        d = QDate.fromString(self.edit.text().strip(), self.FORMAT)
+        self.calendar.setSelectedDate(d if d.isValid() else QDate.currentDate())
+
+    def _picked(self, d: QDate):
+        self.edit.setText(d.toString(self.FORMAT))
+        self._menu.close()
+
+    def text(self) -> str:
+        return self.edit.text()
+
+    def setText(self, value: str):
+        self.edit.setText(value)
+
+
+# Patient fields shown as dropdowns / date pickers instead of plain text.
+PATIENT_CHOICES = {
+    "hospital": ["Christian Medical College - Molecular Endocrinology",
+                 "Christian Medical College - Nephrology"],
+    "specimen": ["DNA", "Peripheral Blood"],
+}
+DATE_FIELDS = {"collection_date", "received_date", "report_date"}
+
+
+class GeneTableEditor(QWidget):
+    """Appendix 1 gene coverage table: paste a whole table to replace it."""
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        info = QLabel("Copy the whole gene coverage table (from Word, Excel or the "
+                      "coverage report) and click <b>Paste table</b> to replace the "
+                      "table in Appendix 1. Both layouts work: 4 gene/coverage pairs "
+                      "per row, or 2 columns (Gene, Coverage).")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        row = QHBoxLayout()
+        paste = QPushButton("Paste table")
+        paste.setToolTip("Replace the table with the one on the clipboard (Ctrl+V)")
+        paste.clicked.connect(self.paste)
+        row.addWidget(paste)
+        self.restore_btn = QPushButton("Restore template table")
+        row.addWidget(self.restore_btn)
+        row.addStretch(1)
+        self.count = QLabel()
+        row.addWidget(self.count)
+        lay.addLayout(row)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Gene Name", "% of coding region covered"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.itemChanged.connect(lambda *_: self._changed())
+        lay.addWidget(self.table, 1)
+
+    def genes(self) -> list[tuple[str, str]]:
+        out = []
+        for r in range(self.table.rowCount()):
+            g, c = self.table.item(r, 0), self.table.item(r, 1)
+            gene = g.text().strip() if g else ""
+            if gene:
+                out.append((gene, c.text().strip() if c else ""))
+        return out
+
+    def set_genes(self, genes, status: str = "", color: str = "gray"):
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(genes))
+        for r, (gene, cov) in enumerate(genes):
+            self.table.setItem(r, 0, QTableWidgetItem(gene))
+            self.table.setItem(r, 1, QTableWidgetItem(cov))
+        self.table.blockSignals(False)
+        self.status.setText(status)
+        self.status.setStyleSheet(f"color:{color};")
+        self._changed()
+
+    def _changed(self):
+        self.count.setText(f"{len(self.genes())} genes")
+        self.changed.emit()
+
+    def paste(self):
+        genes, problems = parse_pasted(QApplication.clipboard().text())
+        if not genes:
+            self.status.setText("No gene table found on the clipboard. Copy the table "
+                                "(including the gene and coverage cells) and try again.")
+            self.status.setStyleSheet("color:#c00000;")
+            return
+        msg, color = f"Pasted {len(genes)} genes.", "#1a7f37"
+        if problems:
+            shown = "; ".join(problems[:5]) + (" …" if len(problems) > 5 else "")
+            msg += f" Skipped {len(problems)} cell pair(s) that aren't a gene + coverage: {shown}"
+            color = "#b35c00"
+        self.set_genes(genes, msg, color)
+
+    def keyPressEvent(self, e):
+        if e.matches(QKeySequence.Paste):
+            self.paste()
+        else:
+            super().keyPressEvent(e)
+
+
 class PreviewScroll(QScrollArea):
     resized = Signal()
 
@@ -112,7 +408,12 @@ class MainWindow(QMainWindow):
         self._redraw_timer.timeout.connect(self._redraw)
 
         self._template_defaults: dict[str, str] = {}
+        self._template_genes: list[tuple[str, str]] = []
+        self._last_received = ""
+        self._loading_draft = False
         self._build_ui()
+        # Report date defaults to today; the user can change it.
+        self.fields["report_date"].setText(today_str())
         self._template_changed()
 
     # -- layout ------------------------------------------------------------
@@ -130,16 +431,39 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         lay.addLayout(row)
 
+        # Two tabs: patient demography / the rest of the report inputs.
+        patient_page, report_page = QWidget(), QWidget()
+        play, rlay = QVBoxLayout(patient_page), QVBoxLayout(report_page)
+
         pgrp = QGroupBox("Patient details")
         pf = QFormLayout(pgrp)
-        self.fields: dict[str, QLineEdit] = {}
+        self.fields: dict[str, QLineEdit | ChoiceBox | DateField] = {}
         for key, label, example in PATIENT_FIELDS:
-            le = QLineEdit()
-            le.setPlaceholderText(example)
+            if key in PATIENT_CHOICES:
+                le = ChoiceBox(PATIENT_CHOICES[key])
+            elif key in DATE_FIELDS:
+                le = DateField(example)
+            else:
+                le = QLineEdit()
+                le.setPlaceholderText(example)
             le.textChanged.connect(self._edited)
             self.fields[key] = le
-            pf.addRow(label, le)
-        lay.addWidget(pgrp)
+            if key == "pin":
+                pf.addRow(label, self._pin_row(le))
+                self.fetch_status = QLabel()
+                self.fetch_status.setWordWrap(True)
+                pf.addRow("", self.fetch_status)
+                self._set_fetch_status(
+                    "Enter the PIN (Anderson ID) to fill the details from the patient sheet."
+                    if sheet_client.is_configured() else
+                    "Patient sheet not set up - enter the details manually.", "gray")
+            else:
+                pf.addRow(label, le)
+            if key == "patient_id":
+                self.patient_id_label = pf.labelForField(le)
+        play.addWidget(pgrp)
+        self.fields["received_date"].textChanged.connect(self._received_changed)
+        play.addStretch(1)
 
         hgrp = QGroupBox("Clinical history")
         hl = QVBoxLayout(hgrp)
@@ -151,7 +475,7 @@ class MainWindow(QMainWindow):
             "and has been evaluated for pathogenic variations.")
         self.history_edit.textChanged.connect(self._edited)
         hl.addWidget(self.history_edit)
-        lay.addWidget(hgrp, 1)
+        rlay.addWidget(hgrp, 1)
 
         qgrp = QGroupBox("Sequence data attributes")
         qf = QFormLayout(qgrp)
@@ -161,7 +485,24 @@ class MainWindow(QMainWindow):
             le.textChanged.connect(self._edited)
         qf.addRow("Total Read Generated", self.reads_edit)
         qf.addRow("Data ≥ Q30", self.q30_edit)
-        lay.addWidget(qgrp)
+        rlay.addWidget(qgrp)
+
+        lgrp = QGroupBox("Gene list link (Methodology “Click here”)")
+        ll = QVBoxLayout(lgrp)
+        self.url_edit = QLineEdit(placeholderText="https://…")
+        self.url_edit.setToolTip("Filled with the template's current link; edit it for another run.")
+        self.url_edit.textChanged.connect(self._edited)
+        ll.addWidget(self.url_edit)
+        rlay.addWidget(lgrp)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._scroll_page(patient_page), "Patient Details")
+        self.tabs.addTab(self._scroll_page(report_page), "Report Details")
+        self.gene_editor = GeneTableEditor()
+        self.gene_editor.changed.connect(self._edited)
+        self.gene_editor.restore_btn.clicked.connect(self._restore_gene_table)
+        self.tabs.addTab(self.gene_editor, "Gene Coverage")
+        lay.addWidget(self.tabs, 1)
 
         fgrp = QGroupBox("Export folder")
         fl = QHBoxLayout(fgrp)
@@ -212,16 +553,10 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.scroll, 1)
 
         split = QSplitter(Qt.Horizontal)
-        # Scroll the form on short screens instead of squashing its fields.
-        form_scroll = QScrollArea()
-        form_scroll.setWidgetResizable(True)
-        form_scroll.setFrameShape(QScrollArea.NoFrame)
-        form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        form_scroll.setWidget(form)
-        form_scroll.setMinimumWidth(form.minimumSizeHint().width()
-                                    + form_scroll.verticalScrollBar().sizeHint().width() + 4)
-        split.addWidget(form_scroll)
+        split.addWidget(form)
         split.addWidget(preview)
+        split.setStretchFactor(0, 0)          # extra width goes to the preview
+        split.setStretchFactor(1, 1)
         split.setSizes([520, 880])
         self.setCentralWidget(split)
 
@@ -233,6 +568,8 @@ class MainWindow(QMainWindow):
             clinical_history=self.history_edit.toPlainText().strip(),
             total_reads=self.reads_edit.text().strip(),
             q30=self.q30_edit.text().strip(),
+            gene_list_url=self.url_edit.text().strip(),
+            genes=self.gene_editor.genes(),
         )
 
     def _edited(self, *_):
@@ -243,19 +580,119 @@ class MainWindow(QMainWindow):
         """Pre-fill the chosen template's Hospital/Clinic and Referring
         Clinician. A field is only replaced if it is empty or still holds the
         previous template's default, so the user's own edits are kept."""
-        cfg = get_template(self.template_combo.currentData())
-        new = {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician}
-        for key, value in new.items():
-            le = self.fields[key]
-            if not le.text().strip() or le.text() == self._template_defaults.get(key):
+        key = self.template_combo.currentData()
+        new = self._defaults_for(key)
+        widgets = dict(self.fields, gene_list_url=self.url_edit)
+        for name, value in new.items():
+            le = widgets[name]
+            if not le.text().strip() or le.text() == self._template_defaults.get(name):
                 le.setText(value)
         self._template_defaults = new
+        # "Patient ID" or "Patient name", as the template's table says.
+        cfg = get_template(key)
+        self.patient_id_label.setText(cfg.patient_id_label)
+        self.fields["patient_id"].setPlaceholderText(
+            "e.g. MEL - 00000" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
+        # Same rule for the gene table: follow the template unless it was replaced.
+        genes = template_gene_table(key)
+        current = self.gene_editor.genes()
+        if not current or current == self._template_genes:
+            self.gene_editor.set_genes(genes, "Showing the template's gene table.")
+        self._template_genes = genes
         self._preview()
+
+    def _restore_gene_table(self):
+        self.gene_editor.set_genes(self._template_genes, "Restored the template's gene table.")
+
+    def _received_changed(self, text: str):
+        """Collection date is the same as the received date: keep it in step,
+        unless the user has set a different collection date themselves."""
+        coll = self.fields["collection_date"]
+        if not coll.text().strip() or coll.text() == self._last_received:
+            coll.setText(text)
+        self._last_received = text
+
+    # -- patient sheet lookup ----------------------------------------------
+    @staticmethod
+    def _scroll_page(page: QWidget) -> QScrollArea:
+        """Tab page that scrolls on short screens instead of squashing its fields."""
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QScrollArea.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sc.setWidget(page)
+        sc.setMinimumWidth(page.minimumSizeHint().width()
+                           + sc.verticalScrollBar().sizeHint().width() + 4)
+        return sc
+
+    def _pin_row(self, pin_edit: QLineEdit) -> QWidget:
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        lay.addWidget(pin_edit, 1)
+        self.fetch_btn = QPushButton("Fetch")
+        self.fetch_btn.setToolTip("Fill the patient details from the live patient sheet")
+        self.fetch_btn.setEnabled(sheet_client.is_configured())
+        self.fetch_btn.clicked.connect(lambda: self._fetch(pin_edit.text()))
+        lay.addWidget(self.fetch_btn)
+        pin_edit.returnPressed.connect(lambda: self._fetch(pin_edit.text()))
+        # Look up automatically once a complete PIN has been typed or pasted.
+        pin_edit.textChanged.connect(self._pin_typed)
+        self._fetch_worker: FetchWorker | None = None
+        self._fetched_pin = ""
+        return row
+
+    def _set_fetch_status(self, text: str, color: str):
+        self.fetch_status.setText(text)
+        self.fetch_status.setStyleSheet(f"color:{color};")
+
+    def _pin_typed(self, text: str):
+        pin = text.strip().upper()
+        if PIN_PATTERN.fullmatch(pin) and pin != self._fetched_pin and not self._loading_draft:
+            self._fetch(pin)
+
+    def _fetch(self, pin: str):
+        pin = pin.strip().upper()
+        if not sheet_client.is_configured() or not pin:
+            return
+        if self._fetch_worker is not None and self._fetch_worker.isRunning():
+            return
+        self._fetched_pin = pin
+        self.fetch_btn.setEnabled(False)
+        self._set_fetch_status(f"Looking up {pin} in the patient sheet…", "gray")
+        self._fetch_worker = FetchWorker(pin, self.template_combo.currentData())
+        self._fetch_worker.found.connect(self._fetch_found)
+        self._fetch_worker.missing.connect(lambda p: self._set_fetch_status(
+            f"{p} was not found in the patient sheet - enter the details manually.", "#b35c00"))
+        self._fetch_worker.failed.connect(lambda p, msg: self._fetch_failed(msg))
+        self._fetch_worker.finished.connect(lambda: self.fetch_btn.setEnabled(True))
+        self._fetch_worker.start()
+
+    def _fetch_failed(self, msg: str):
+        self._fetched_pin = ""              # allow retrying the same PIN
+        self._set_fetch_status(msg, "#c00000")
+
+    def _fetch_found(self, pin: str, fields: dict):
+        if self.fields["pin"].text().strip().upper() != pin:
+            return                          # PIN changed while looking up
+        labels = {k: label for k, label, _ in PATIENT_FIELDS}
+        filled = []
+        for key, value in fields.items():
+            if key != "pin" and key in self.fields and value:
+                self.fields[key].setText(value)
+                filled.append(labels[key])
+        not_in_sheet = [labels[k] for k in ("hospital", "referring_clinician")
+                        if k not in fields]
+        msg = f"Filled from the patient sheet: {', '.join(filled)}."
+        if not_in_sheet:
+            msg += f" Not in the sheet (enter or check): {', '.join(not_in_sheet)}."
+        self._set_fetch_status(msg, "#1a7f37")
 
     # -- drafts ------------------------------------------------------------
     def _save_draft(self):
         data = self._collect()
-        pid = re.sub(r"\s+", "", data.patient.patient_id) or "report"
+        pid = self._file_name_part(data.patient.patient_id) or "report"
         folder = self.settings.value("draft_dir", "") or self.folder_edit.text()
         path, _ = QFileDialog.getSaveFileName(
             self, "Save draft", os.path.join(folder, f"{pid}_draft.json"), "Draft (*.json)")
@@ -283,14 +720,31 @@ class MainWindow(QMainWindow):
         self.template_combo.blockSignals(True)
         self.template_combo.setCurrentIndex(max(self.template_combo.findData(cfg.key), 0))
         self.template_combo.blockSignals(False)
-        self._template_defaults = {"hospital": cfg.hospital,
-                                   "referring_clinician": cfg.referring_clinician}
+        self._template_defaults = self._defaults_for(cfg.key)
+        # A draft's saved details win: don't let its PIN trigger a sheet lookup.
+        self._loading_draft = True
         for key, le in self.fields.items():
             le.setText(getattr(data.patient, key, ""))
+        self._loading_draft = False
+        if not self.fields["report_date"].text().strip():
+            self.fields["report_date"].setText(today_str())
+        self._fetched_pin = data.patient.pin.strip().upper()
         self.history_edit.setPlainText(data.clinical_history)
         self.reads_edit.setText(data.total_reads)
         self.q30_edit.setText(data.q30)
+        # Older drafts have no link saved: fall back to the template's own.
+        self.url_edit.setText(data.gene_list_url or self._template_defaults["gene_list_url"])
+        self._template_genes = template_gene_table(cfg.key)
+        self.gene_editor.set_genes(data.genes or self._template_genes,
+                                   "Gene table from the draft." if data.genes
+                                   else "Showing the template's gene table.")
         self._preview()
+
+    @staticmethod
+    def _defaults_for(key: str) -> dict[str, str]:
+        cfg = get_template(key)
+        return {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
+                "gene_list_url": template_gene_list_url(cfg.key)}
 
     def _choose_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -363,14 +817,24 @@ class MainWindow(QMainWindow):
         return count
 
     # -- export ------------------------------------------------------------
+    @staticmethod
+    def _file_name_part(text: str) -> str:
+        """'MEL - 12345' -> 'MEL-12345'; 'Baby. Arun K' -> 'Baby_Arun_K'."""
+        text = re.sub(r"\s*-\s*", "-", text.strip())
+        return re.sub(r"[^A-Za-z0-9-]+", "_", text).strip("_")
+
+    def _file_stem(self, data: ReportData) -> str:
+        cfg = get_template(data.template_key)
+        date = data.patient.report_date or datetime.now().strftime("%d/%m/%Y")
+        return "_".join(filter(None, (self._file_name_part(data.patient.patient_id) or "report",
+                                      cfg.file_suffix,
+                                      date.replace("/", cfg.file_date_sep))))
+
     def _export(self, kind: str):
         if self._export_worker is not None and self._export_worker.isRunning():
             return
         data = self._collect()
-        pid = re.sub(r"\s+", "", data.patient.patient_id) or "report"
-        date = data.patient.report_date.replace("/", "-") or datetime.now().strftime("%d-%m-%Y")
-        stem = re.sub(r'[\\/:*?"<>|]+', "_",
-                      f"{pid}_{get_template(data.template_key).file_suffix}_{date}")
+        stem = self._file_stem(data)
         folder = self.folder_edit.text()
         if not os.path.isdir(folder):
             self._choose_folder()

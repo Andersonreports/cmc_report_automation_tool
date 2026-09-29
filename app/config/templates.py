@@ -22,10 +22,17 @@ class TemplateConfig:
     key: str
     name: str                       # shown in the template picker
     docx_file: str                  # file name inside app/templates/
+    # Label of the first patient-table cell: "Patient ID" or "Patient name".
+    patient_id_label: str = "Patient ID"
     # Pre-filled when the template is chosen (still editable by the user).
     hospital: str = ""
     referring_clinician: str = ""
+    # Patient sheet lookup: when the row's "Client name" contains
+    # patient_id_client, Patient ID becomes "<prefix> - <5 digits from Name>".
+    patient_id_client: str = ""
+    patient_id_prefix: str = ""
     file_suffix: str = "whole_exome_report"   # <PatientID>_<suffix>_<date>
+    file_date_sep: str = "-"                  # 29-09-2026 / 29_09_2026
 
 
 TEMPLATES: dict[str, TemplateConfig] = {
@@ -35,13 +42,23 @@ TEMPLATES: dict[str, TemplateConfig] = {
         docx_file="endocrinology.docx",
         hospital="Christian Medical College - Molecular Endocrinology",
         referring_clinician="Dr. Aaron Chapla",
+        patient_id_client="CHRISTIAN MEDICAL COLLEGE - MOLECULAR ENDOCRINOLOGY",
+        patient_id_prefix="MEL",
     ),
-    # Placeholder: name only for now - renders with the Endocrinology layout
-    # until its own .docx is supplied.
+    # Renders with the Endocrinology layout until its own .docx is supplied.
     "NEPHROLOGY": TemplateConfig(
         key="NEPHROLOGY",
         name="Nephrology",
         docx_file="endocrinology.docx",
+        hospital="Christian Medical College - Nephrology",
+    ),
+    "WES_MITO": TemplateConfig(
+        key="WES_MITO",
+        name="Whole Exome & Mitochondrial",
+        docx_file="whole_exome_mito.docx",
+        patient_id_label="Patient name",
+        file_suffix="Whole_Exome_Whole_mitochondrial_Report",
+        file_date_sep="_",
     ),
 }
 
