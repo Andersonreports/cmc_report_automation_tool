@@ -783,8 +783,25 @@ class MainWindow(QMainWindow):
 
     def _pin_typed(self, text: str):
         pin = text.strip().upper()
-        if PIN_PATTERN.fullmatch(pin) and pin != self._fetched_pin and not self._loading_draft:
+        if self._loading_draft:
+            return
+        if not pin:
+            self._clear_patient()
+        elif PIN_PATTERN.fullmatch(pin) and pin != self._fetched_pin:
             self._fetch(pin)
+
+    def _clear_patient(self):
+        """PIN removed: empty what a Fetch fills (patient details and Sequence
+        data attributes). Hospital/Clinic and Referring Clinician go back to
+        the template's defaults; the report date is kept."""
+        for key, le in self.fields.items():
+            if key not in ("pin", "report_date"):
+                le.setText(self._template_defaults.get(key, ""))
+        self.reads_edit.clear()
+        self.q30_edit.clear()
+        self._fetched_pin = self._last_received = ""
+        self._set_fetch_status("", "gray")
+        self._edited()
 
     def _fetch(self, pin: str):
         pin = pin.strip().upper()
