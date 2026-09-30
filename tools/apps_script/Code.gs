@@ -2,12 +2,15 @@
  * CMC Report Automation — patient lookup (Google Apps Script web app).
  *
  * The desktop app sends a PIN (Anderson ID); this script, running as your
- * Google account, reads the PRIVATE patient sheet and returns only that one
- * patient's demography fields. The sheet itself never has to be shared.
+ * Google account, reads the PRIVATE patient sheet and sequencing QC sheet
+ * and returns only that one patient's demography and QC (After Data / Q30)
+ * fields. Neither sheet has to be shared.
  *
  * SET UP (once)
- *   1. Open the patient sheet → Extensions → Apps Script.
- *   2. Replace everything in Code.gs with this file and click Save.
+ *   1. Open the script project (a standalone project from script.google.com
+ *      works: the sheets are opened by ID below).
+ *   2. Replace everything in Code.gs with this file, fill in
+ *      PATIENT_SPREADSHEET_ID and click Save.
  *   3. Deploy → New deployment → gear icon → Web app.
  *        Description:     CMC patient lookup
  *        Execute as:      Me
@@ -16,20 +19,31 @@
  *      Advanced → Go to project → Allow).
  *   4. Copy the Web app URL (ends in /exec) and send it to be put in the app.
  *   5. Test in a browser:   <Web app URL>?pin=ADK0000001234
- *   6. Then restrict the sheet: Share → General access → Restricted.
+ *   6. Then restrict both sheets: Share → General access → Restricted.
  *
  * AFTER EDITING THIS SCRIPT
  *   Deploy → Manage deployments → pencil → Version: New version → Deploy.
  *   (Keeps the same /exec URL, so the app needs no change.)
  *
  * RESPONSES (JSON)
- *   {"ok": true, "found": true,  "row": {"Anderson ID": "...", ...}}
- *   {"ok": true, "found": false}
+ *   {"ok": true, "found": true,  "row": {"Anderson ID": "...", ...}, "qc": {...}}
+ *   {"ok": true, "found": false, "qc": {"After Data": "9.96 GB", "Q30": "-95.85%"}}
+ *   {"ok": true, "found": false, "qc": null}
  *   {"ok": false, "error": "..."}
+ *   "found" is about the patient sheet; "qc" is null when the PIN isn't in
+ *   the QC sheet. A QC-only problem comes back as "qc_error" next to the row.
  */
 
-// Tab that holds the patient list (the "gid=" number in the sheet's URL).
-var SHEET_GID = 534459671;
+// Patient list: the spreadsheet ID (between /d/ and /edit in its URL) and
+// the tab's "gid=" number.
+var PATIENT_SPREADSHEET_ID = 'PASTE_PATIENT_SPREADSHEET_ID_HERE';
+var PATIENT_GID = 534459671;
+
+// Sequencing QC sheet (Anderson_ID / After Data / Q30).
+var QC_SPREADSHEET_ID = 'PASTE_QC_SPREADSHEET_ID_HERE';
+var QC_GID = 1243772574;
+var QC_PIN_COLUMN = 'Anderson_ID';
+var QC_COLUMNS = ['After Data', 'Q30'];
 
 // The only columns ever returned. Matched by header text (case/space
 // insensitive), so moving columns around doesn't break anything.
@@ -52,52 +66,61 @@ var MAX_LOOKUPS_PER_MINUTE = 60;
 function doGet(e) {
   try {
     var pin = String((e && e.parameter && e.parameter.pin) || '').trim().toUpperCase();
-    if (!/^[A-Z]{2,5}\d{6,14}$/.test(pin)) {
+    if (!/^[A-Z0-9]{3,6}\d{6,14}$/.test(pin)) {
       return json_({ ok: false, error: 'Invalid or missing PIN.' });
     }
     if (!withinRateLimit_()) {
       return json_({ ok: false, error: 'Too many lookups - please wait a minute and try again.' });
     }
 
-    var sheet = findSheet_();
-    if (!sheet) {
-      return json_({ ok: false, error: 'Patient tab not found (check SHEET_GID).' });
+    var qc = null, qcError = '';
+    try {
+      qc = lookup_(QC_SPREADSHEET_ID, QC_GID, QC_PIN_COLUMN, QC_COLUMNS, pin);
+    } catch (err) {
+      qcError = 'QC sheet: ' + (err.message || err);
     }
-
-    // Display values keep dates exactly as shown in the sheet (e.g. 29-08-2026).
-    var values = sheet.getDataRange().getDisplayValues();
-    if (values.length < 2) {
-      return json_({ ok: true, found: false });
-    }
-
-    var header = values[0].map(norm_);
-    var pinCol = header.indexOf(norm_(PIN_COLUMN));
-    if (pinCol < 0) {
-      return json_({ ok: false, error: 'Column "' + PIN_COLUMN + '" not found in the header row.' });
-    }
-
-    for (var r = 1; r < values.length; r++) {
-      if (String(values[r][pinCol]).trim().toUpperCase() !== pin) continue;
-      var row = {};
-      RETURN_COLUMNS.forEach(function (name) {
-        var c = header.indexOf(norm_(name));
-        row[name] = c >= 0 ? String(values[r][c]).trim() : '';
-      });
-      return json_({ ok: true, found: true, row: row });
-    }
-    return json_({ ok: true, found: false });
+    var row = lookup_(PATIENT_SPREADSHEET_ID, PATIENT_GID, PIN_COLUMN, RETURN_COLUMNS, pin);
+    var reply = { ok: true, found: !!row, qc: qc };
+    if (row) reply.row = row;
+    if (qcError) reply.qc_error = qcError;
+    return json_(reply);
   } catch (err) {
-    return json_({ ok: false, error: 'Lookup failed: ' + err });
+    return json_({ ok: false, error: 'Lookup failed: ' + (err.message || err) });
   }
 }
 
 
-function findSheet_() {
-  var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
-  for (var i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId() === SHEET_GID) return sheets[i];
+// The `columns` of the row whose `pinColumn` equals `pin`, or null.
+function lookup_(spreadsheetId, gid, pinColumn, columns, pin) {
+  var sheet = findSheet_(spreadsheetId, gid);
+  // Display values keep dates exactly as shown in the sheet (e.g. 29-08-2026).
+  var values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return null;
+  var header = values[0].map(norm_);
+  var pinCol = header.indexOf(norm_(pinColumn));
+  if (pinCol < 0) {
+    throw new Error('Column "' + pinColumn + '" not found in the header row of ' +
+                    sheet.getName() + '.');
+  }
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][pinCol]).trim().toUpperCase() !== pin) continue;
+    var row = {};
+    columns.forEach(function (name) {
+      var c = header.indexOf(norm_(name));
+      row[name] = c >= 0 ? String(values[r][c]).trim() : '';
+    });
+    return row;
   }
   return null;
+}
+
+
+function findSheet_(spreadsheetId, gid) {
+  var sheets = SpreadsheetApp.openById(spreadsheetId).getSheets();
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].getSheetId() === gid) return sheets[i];
+  }
+  throw new Error('Tab gid=' + gid + ' not found in spreadsheet ' + spreadsheetId + '.');
 }
 
 

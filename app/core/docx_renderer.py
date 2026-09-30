@@ -205,9 +205,14 @@ def template_gene_table(template_key: str) -> list[tuple[str, str]]:
 def _fill_gene_table(doc, data: ReportData):
     """Rebuild the appendix rows from data.genes, filled row by row like the
     template (gene names keep the template's italic style)."""
-    if not data.genes:
-        return                      # keep the template's table as is
     table = _gene_table(doc)
+    if not data.genes:
+        # Keep the template's table, but leave its unused cells empty.
+        for row in table.rows[1:]:
+            for cell in row.cells:
+                if cell.text.strip() in ("-", "–", "—"):
+                    _set_text(cell.paragraphs[0]._p, "")
+        return
     tbl = table._tbl
     rows = tbl.findall(qn("w:tr"))
     proto = copy.deepcopy(rows[1])
@@ -219,8 +224,8 @@ def _fill_gene_table(doc, data: ReportData):
         tcs = tr.findall(qn("w:tc"))
         chunk = data.genes[start:start + per_row]
         for i in range(per_row):
-            # Unused cells in the last row get a dash, as in the template.
-            gene, cov = chunk[i] if i < len(chunk) else ("–", "–")
+            # Unused cells in the last row are left empty.
+            gene, cov = chunk[i] if i < len(chunk) else ("", "")
             _set_text(tcs[2 * i].find(qn("w:p")), gene)
             _set_text(tcs[2 * i + 1].find(qn("w:p")), cov)
         tbl.append(tr)

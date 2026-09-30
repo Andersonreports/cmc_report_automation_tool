@@ -85,8 +85,9 @@ class RenderWorker(QThread):
 
 
 class FetchWorker(QThread):
-    """Look up one PIN in the live patient sheet off the UI thread."""
-    found = Signal(str, dict)       # pin, fields
+    """Look up one PIN in the live patient and sequencing QC sheets off the
+    UI thread."""
+    found = Signal(str, dict, str)  # pin, fields, note ('' when all found)
     missing = Signal(str)           # pin
     failed = Signal(str, str)       # pin, message
 
@@ -95,15 +96,37 @@ class FetchWorker(QThread):
         self.pin, self.template_key = pin, template_key
 
     def run(self):
+        fields, notes = None, []
         try:
-            fields = sheet_client.fetch_patient(self.pin, get_template(self.template_key))
+            if sheet_client.patient_configured():
+                fields = sheet_client.fetch_patient(self.pin, get_template(self.template_key))
         except sheet_client.SheetError as e:
             self.failed.emit(self.pin, str(e))
             return
-        if fields is None:
-            self.missing.emit(self.pin)
-        else:
-            self.found.emit(self.pin, fields)
+        # The QC values are looked up separately: a problem there must not
+        # lose the patient details.
+        qc = None
+        if sheet_client.qc_configured():
+            try:
+                qc = sheet_client.fetch_qc(self.pin)
+            except sheet_client.SheetError as e:
+                notes.append(f"Sequence data attributes: {e}")
+            else:
+                if qc is None:
+                    notes.append(f"{self.pin} is not in the sequencing QC sheet - "
+                                 "enter the Sequence data attributes manually.")
+        if fields is None and qc is None:
+            if notes and not notes[0].startswith(self.pin):
+                self.failed.emit(self.pin, notes[0])
+            else:
+                self.missing.emit(self.pin)
+            return
+        if fields is None and sheet_client.patient_configured():
+            notes.insert(0, f"{self.pin} was not found in the patient sheet - "
+                            "enter the patient details manually.")
+        out = dict(fields or {"pin": self.pin})
+        out.update(qc or {})
+        self.found.emit(self.pin, out, "\n".join(notes))
 
 
 PIN_PATTERN = re.compile(r"ADK\d{10}", re.I)
@@ -741,7 +764,8 @@ class MainWindow(QMainWindow):
         lay.setSpacing(4)
         lay.addWidget(pin_edit, 1)
         self.fetch_btn = QPushButton("Fetch")
-        self.fetch_btn.setToolTip("Fill the patient details from the live patient sheet")
+        self.fetch_btn.setToolTip("Fill the patient details and Sequence data "
+                                  "attributes from the live sheets")
         self.fetch_btn.setEnabled(sheet_client.is_configured())
         self.fetch_btn.clicked.connect(lambda: self._fetch(pin_edit.text()))
         lay.addWidget(self.fetch_btn)
@@ -783,13 +807,18 @@ class MainWindow(QMainWindow):
         self._fetched_pin = ""              # allow retrying the same PIN
         self._set_fetch_status(msg, "#c00000")
 
-    def _fetch_found(self, pin: str, fields: dict):
+    def _fetch_found(self, pin: str, fields: dict, note: str):
         if self.fields["pin"].text().strip().upper() != pin:
             return                          # PIN changed while looking up
         for key, value in fields.items():
             if key != "pin" and key in self.fields and value:
                 self.fields[key].setText(value)
-        self._set_fetch_status("", "gray")          # filled: nothing to report
+        qc_edits = {"total_reads": self.reads_edit, "q30": self.q30_edit}
+        for key, edit in qc_edits.items():
+            if fields.get(key):
+                edit.setText(fields[key])
+        # Filled: nothing to report unless part of it wasn't found.
+        self._set_fetch_status(note, "#b35c00" if note else "gray")
 
     # -- drafts ------------------------------------------------------------
     def _save_draft(self):

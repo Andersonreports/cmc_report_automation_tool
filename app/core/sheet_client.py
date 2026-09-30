@@ -8,6 +8,12 @@ never commit these links; see sheet_config.example.py):
   * SHEET_CSV_URL (fallback): the sheet's CSV export; the sheet must be
     shared as "anyone with the link".
 
+The Sequence data attributes come from the sequencing QC sheet, matched on
+Anderson_ID: returned alongside the patient row by the Apps Script, or read
+from QC_CSV_URL (its CSV export) when no Apps Script is set:
+    After Data -> Total Read Generated   "9.96 GB"
+    Q30        -> Data >= Q30            "-95.85%" -> "95.85 %"
+
 Column mapping (matched by header name):
     Anderson ID        -> PIN (lookup key)
     Sample Number      -> Sample Number
@@ -37,6 +43,8 @@ except ImportError:          # no local config: lookup is disabled
 APPS_SCRIPT_URL = getattr(_cfg, "APPS_SCRIPT_URL", "").strip()
 # Fallback: the sheet's CSV export (needs "anyone with the link" sharing).
 SHEET_CSV_URL = getattr(_cfg, "SHEET_CSV_URL", "").strip()
+# Sequencing QC tab (After Data / Q30), CSV export.
+QC_CSV_URL = getattr(_cfg, "QC_CSV_URL", "").strip()
 
 HOSPITALS = {
     "ENDOCRINOLOGY": "Christian Medical College - Molecular Endocrinology",
@@ -52,6 +60,14 @@ class SheetError(Exception):
 
 
 def is_configured() -> bool:
+    return bool(APPS_SCRIPT_URL or SHEET_CSV_URL or QC_CSV_URL)
+
+
+def qc_configured() -> bool:
+    return bool(APPS_SCRIPT_URL or QC_CSV_URL)
+
+
+def patient_configured() -> bool:
     return bool(APPS_SCRIPT_URL or SHEET_CSV_URL)
 
 
@@ -93,8 +109,13 @@ def _template_patient_id(cfg, name: str, client: str) -> str:
     return f"{cfg.patient_id_prefix} - {digits.group(0)}" if digits else ""
 
 
-def _row_via_apps_script(pin: str, timeout: int) -> dict[str, str] | None:
-    """One patient's row from the Apps Script web app (tools/apps_script/Code.gs)."""
+# The Apps Script reply's QC part, kept for fetch_qc() so one lookup is one
+# request: {pin: (qc row or None, qc error)}.
+_apps_script_qc: dict[str, tuple[dict | None, str]] = {}
+
+
+def _apps_script(pin: str, timeout: int) -> dict:
+    """The Apps Script web app's reply for `pin` (tools/apps_script/Code.gs)."""
     url = f"{APPS_SCRIPT_URL}?{urllib.parse.urlencode({'pin': pin})}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
@@ -106,13 +127,22 @@ def _row_via_apps_script(pin: str, timeout: int) -> dict[str, str] | None:
         raise SheetError(f"Could not reach the patient lookup service: {e}") from e
     if not reply.get("ok"):
         raise SheetError(reply.get("error") or "The patient lookup failed.")
-    return {_norm(k): str(v) for k, v in (reply.get("row") or {}).items()}         if reply.get("found") else None
+    if "qc" in reply:           # older script versions don't send it
+        _apps_script_qc[pin] = (reply["qc"], reply.get("qc_error", ""))
+    return reply
 
 
-def _row_via_csv(pin: str, timeout: int) -> dict[str, str] | None:
-    """One patient's row from the sheet's CSV export (sheet shared by link)."""
+def _row_via_apps_script(pin: str, timeout: int) -> dict[str, str] | None:
+    reply = _apps_script(pin, timeout)
+    return ({_norm(k): str(v) for k, v in (reply.get("row") or {}).items()}
+            if reply.get("found") else None)
+
+
+def _row_via_csv(pin: str, timeout: int, url: str = "",
+                 pin_column: str = "Anderson ID") -> dict[str, str] | None:
+    """One patient's row from a sheet's CSV export (sheet shared by link)."""
     try:
-        with urllib.request.urlopen(SHEET_CSV_URL, timeout=timeout) as resp:
+        with urllib.request.urlopen(url or SHEET_CSV_URL, timeout=timeout) as resp:
             text = resp.read().decode("utf-8-sig", errors="replace")
     except Exception as e:  # noqa: BLE001
         raise SheetError(f"Could not reach the patient sheet: {e}") from e
@@ -125,7 +155,7 @@ def _row_via_csv(pin: str, timeout: int) -> dict[str, str] | None:
     header = [_norm(h) for h in rows[0]]
     for row in rows[1:]:
         cells = {h: (row[i].strip() if i < len(row) else "") for i, h in enumerate(header)}
-        if cells.get(_norm("Anderson ID"), "").upper() == pin:
+        if cells.get(_norm(pin_column), "").upper() == pin:
             return cells
     return None
 
@@ -135,7 +165,7 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
     Only fields the sheet actually has a value for are returned. `cfg` is the
     selected TemplateConfig, whose Patient ID rule is applied.
     Uses the Apps Script service when configured, else the CSV export."""
-    if not is_configured():
+    if not patient_configured():
         raise SheetError("The patient sheet link is not set up "
                          "(app/config/sheet_config.py is missing).")
     key = pin.strip().upper()
@@ -169,3 +199,34 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
         doctor = re.sub(r"^\s*DR\.?\s*", "", doctor, flags=re.I).title()
         out["referring_clinician"] = f"Dr. {doctor}"
     return out
+
+
+def fetch_qc(pin: str, timeout: int = 20) -> dict[str, str] | None:
+    """Return {"total_reads", "q30"} from the sequencing QC sheet for `pin`,
+    or None if the PIN isn't there (or no QC source is set)."""
+    pin = pin.strip().upper()
+    if APPS_SCRIPT_URL:
+        if pin not in _apps_script_qc:
+            _apps_script(pin, timeout)
+        qc, error = _apps_script_qc.pop(pin, (None, "The patient lookup service doesn't "
+                                              "return QC values yet (redeploy Code.gs)."))
+        if error:
+            raise SheetError(error)
+        if not qc:
+            return None
+        cells = {_norm(k): str(v) for k, v in qc.items()}
+    elif QC_CSV_URL:
+        cells = _row_via_csv(pin, timeout, QC_CSV_URL, "Anderson_ID")
+        if cells is None:
+            return None
+    else:
+        return None
+    out = {}
+    reads = " ".join((cells.get(_norm("After Data")) or "").split())
+    if reads:
+        out["total_reads"] = re.sub(r"(?<=\d)(?=[A-Za-z])", " ", reads)   # "9.96GB" -> "9.96 GB"
+    # The sheet writes Q30 as "-95.85%"; the report shows "95.85 %".
+    q30 = re.search(r"\d+(\.\d+)?", cells.get(_norm("Q30")) or "")
+    if q30:
+        out["q30"] = f"{q30.group(0)} %"
+    return out or None

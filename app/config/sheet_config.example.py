@@ -10,3 +10,10 @@ SHEET_CSV_URL = ""
 # tools/apps_script/Code.gs. When set, it is used instead of SHEET_CSV_URL and
 # the sheet can be made private.
 APPS_SCRIPT_URL = ""
+
+# Fallback when APPS_SCRIPT_URL isn't set (the script returns the QC values
+# itself): the sequencing QC tab (Anderson_ID / After Data / Q30), CSV export:
+#     https://docs.google.com/spreadsheets/d/<SHEET_ID>/export?format=csv&gid=<TAB_GID>
+# Fills the Sequence data attributes on Fetch. The tab must be shared as
+# "anyone with the link".
+QC_CSV_URL = ""
