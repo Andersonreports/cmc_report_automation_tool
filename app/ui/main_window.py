@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..config.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template
-from ..core.docx_renderer import template_gene_list_url, template_gene_table
+from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
 from ..core import sheet_client
 from ..core.models import PatientInfo, ReportData, today_str
@@ -622,7 +622,7 @@ class MainWindow(QMainWindow):
         lgrp = QGroupBox("Gene list link (Methodology “Click here”)")
         ll = QVBoxLayout(lgrp)
         self.url_edit = QLineEdit(placeholderText="https://…")
-        self.url_edit.setToolTip("Filled with the template's current link; edit it for another run.")
+        self.url_edit.setToolTip("Paste this run's gene list link.")
         self.url_edit.textChanged.connect(self._edited)
         ll.addWidget(self.url_edit)
         rlay.addWidget(lgrp)
@@ -714,9 +714,8 @@ class MainWindow(QMainWindow):
         previous template's default, so the user's own edits are kept."""
         key = self.template_combo.currentData()
         new = self._defaults_for(key)
-        widgets = dict(self.fields, gene_list_url=self.url_edit)
         for name, value in new.items():
-            le = widgets[name]
+            le = self.fields[name]
             if not le.text().strip() or le.text() == self._template_defaults.get(name):
                 le.setText(value)
         self._template_defaults = new
@@ -880,8 +879,7 @@ class MainWindow(QMainWindow):
         self.history_edit.setPlainText(data.clinical_history)
         self.reads_edit.setText(data.total_reads)
         self.q30_edit.setText(data.q30)
-        # Older drafts have no link saved: fall back to the template's own.
-        self.url_edit.setText(data.gene_list_url or self._template_defaults["gene_list_url"])
+        self.url_edit.setText(data.gene_list_url)
         self._template_genes = template_gene_table(cfg.key)
         self.gene_editor.set_genes(data.genes or self._template_genes,
                                    "Gene table from the draft." if data.genes
@@ -891,8 +889,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _defaults_for(key: str) -> dict[str, str]:
         cfg = get_template(key)
-        return {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
-                "gene_list_url": template_gene_list_url(cfg.key)}
+        return {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician}
 
     def _choose_folder(self):
         folder = QFileDialog.getExistingDirectory(
