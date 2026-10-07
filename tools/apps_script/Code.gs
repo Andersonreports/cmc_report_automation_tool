@@ -19,6 +19,7 @@
  *      Advanced → Go to project → Allow).
  *   4. Copy the Web app URL (ends in /exec) and send it to be put in the app.
  *   5. Test in a browser:   <Web app URL>?pin=ADK0000001234
+ *      and for the Whole Exome Sequencing sheet:  ...?pin=ADK0000001234&sheet=wes
  *   6. Then restrict both sheets: Share → General access → Restricted.
  *
  * AFTER EDITING THIS SCRIPT
@@ -30,6 +31,8 @@
  *   {"ok": true, "found": false, "qc": {"After Data": "9.96 GB", "Q30": "-95.85%"}}
  *   {"ok": true, "found": false, "qc": null}
  *   {"ok": false, "error": "..."}
+ *   With sheet=wes the reply also has "sheet": "wes" and "found"/"row" come
+ *   from the WES sheet (its "Client" column is returned as "Client name").
  *   "found" is about the patient sheet; "qc" is null when the PIN isn't in
  *   the QC sheet. A QC-only problem comes back as "qc_error" next to the row.
  */
@@ -59,6 +62,21 @@ var RETURN_COLUMNS = [
 
 var PIN_COLUMN = 'Anderson ID';
 
+// Whole Exome Sequencing sheet (?sheet=wes). Its header is on row 2, under a
+// group row that heads the otherwise blank client column "Client". A PIN
+// listed more than once gives its latest (lowest) row.
+var WES_SPREADSHEET_ID = 'PASTE_WES_SPREADSHEET_ID_HERE';
+var WES_GID = 0;
+var WES_HEADER_ROW = 2;
+var WES_RETURN_COLUMNS = [
+  'Anderson ID',
+  'Sample Number',
+  'Name',
+  'Received Date',
+  'Sample Type',
+  'Client'
+];
+
 // Protects against someone using the URL to page through every PIN.
 var MAX_LOOKUPS_PER_MINUTE = 60;
 
@@ -79,8 +97,17 @@ function doGet(e) {
     } catch (err) {
       qcError = 'QC sheet: ' + (err.message || err);
     }
-    var row = lookup_(PATIENT_SPREADSHEET_ID, PATIENT_GID, PIN_COLUMN, RETURN_COLUMNS, pin);
+    var wes = String((e.parameter && e.parameter.sheet) || '').toLowerCase() === 'wes';
+    var row = wes
+      ? lookup_(WES_SPREADSHEET_ID, WES_GID, PIN_COLUMN, WES_RETURN_COLUMNS, pin,
+                WES_HEADER_ROW, true)
+      : lookup_(PATIENT_SPREADSHEET_ID, PATIENT_GID, PIN_COLUMN, RETURN_COLUMNS, pin);
+    if (row && wes) {
+      row['Client name'] = row['Client'];
+      delete row['Client'];
+    }
     var reply = { ok: true, found: !!row, qc: qc };
+    if (wes) reply.sheet = 'wes';
     if (row) reply.row = row;
     if (qcError) reply.qc_error = qcError;
     return json_(reply);
@@ -91,18 +118,26 @@ function doGet(e) {
 
 
 // The `columns` of the row whose `pinColumn` equals `pin`, or null.
-function lookup_(spreadsheetId, gid, pinColumn, columns, pin) {
+// headerRow: 1-based row of the column names (default 1); a blank name takes
+// the label in the row above it. last: the PIN's lowest row, not its first.
+function lookup_(spreadsheetId, gid, pinColumn, columns, pin, headerRow, last) {
   var sheet = findSheet_(spreadsheetId, gid);
   // Display values keep dates exactly as shown in the sheet (e.g. 29-08-2026).
   var values = sheet.getDataRange().getDisplayValues();
-  if (values.length < 2) return null;
-  var header = values[0].map(norm_);
+  var top = (headerRow || 1) - 1;
+  if (values.length < top + 2) return null;
+  var above = top > 0 ? values[top - 1] : [];
+  var header = values[top].map(function (h, c) {
+    return norm_(h) || norm_(above[c]);
+  });
   var pinCol = header.indexOf(norm_(pinColumn));
   if (pinCol < 0) {
     throw new Error('Column "' + pinColumn + '" not found in the header row of ' +
                     sheet.getName() + '.');
   }
-  for (var r = 1; r < values.length; r++) {
+  var start = last ? values.length - 1 : top + 1;
+  var step = last ? -1 : 1;
+  for (var r = start; r > top && r < values.length; r += step) {
     if (String(values[r][pinCol]).trim().toUpperCase() !== pin) continue;
     var row = {};
     columns.forEach(function (name) {

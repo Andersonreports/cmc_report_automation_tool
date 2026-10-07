@@ -3,7 +3,8 @@
 Only the user-entered parts are touched: the patient demography table, the
 clinical history paragraph, the Sequence data attributes values, the
 Methodology gene list link ("Click here"), the Methodology opening, which
-follows the chosen specimen, and the Appendix 1 gene coverage table. All other
+follows the chosen specimen, the Appendix 1 gene coverage table and the
+signature block, which follows the chosen clinical reviewer. All other
 content (results, CNV findings, recommendations, methodology, disclaimer,
 references, signatures, appendix) is left exactly as in the template.
 
@@ -24,7 +25,7 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from ..config.templates import get_template
+from ..config.templates import REVIEWERS, get_template
 from .models import ReportData
 from .os_utils import resource_path
 
@@ -361,6 +362,44 @@ def _fix_page_count(doc):
                         break
 
 
+def _fill_signatures(doc, data: ReportData):
+    """Put the chosen clinical reviewer's signature block in place of the
+    template's: the first picture after "This report has been reviewed and
+    approved by". It keeps the template's width; the height follows the image."""
+    reviewer = REVIEWERS.get(data.reviewer or get_template(data.template_key).reviewer)
+    if reviewer is None:
+        return
+    body = list(doc.element.body.iterchildren(qn("w:p")))
+    start = next((i for i, p in enumerate(body)
+                  if _text(p).strip().startswith("This report has been reviewed and approved by")),
+                 None)
+    if start is None:
+        raise TemplateError("Signature block not found in the template.")
+    for p in body[start:]:
+        if p is not body[start] and _text(p).strip().startswith("Appendix"):
+            break
+        blip = next(p.iter(qn("a:blip")), None)
+        if blip is None:
+            continue
+        path = resource_path("app", "templates", "signatures", reviewer.signature_file)
+        old, (rid, image) = blip.get(qn("r:embed")), doc.part.get_or_add_image(path)
+        blip.set(qn("r:embed"), rid)
+        if old != rid:
+            doc.part.drop_rel(old)          # the template's picture, now unused
+        drawing = blip
+        while drawing.tag not in (qn("wp:inline"), qn("wp:anchor")):
+            drawing = drawing.getparent()
+        extent = drawing.find(qn("wp:extent"))
+        cx = int(extent.get("cx"))
+        cy = str(round(cx * image.px_height / image.px_width))
+        extent.set("cy", cy)
+        for ext in drawing.iter(qn("a:ext")):
+            if ext.get("cy") is not None:
+                ext.set("cy", cy)
+        return
+    raise TemplateError("Signature picture not found in the template.")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -380,6 +419,7 @@ def render_report(data: ReportData):
     _fill_gene_list_url(doc, data)
     _fill_methodology(doc, data)
     _fill_gene_table(doc, data)
+    _fill_signatures(doc, data)
     _appendix_page_break(doc)
     _keep_headings_with_next(doc)
     _new_pages(doc, get_template(data.template_key).new_page_before)

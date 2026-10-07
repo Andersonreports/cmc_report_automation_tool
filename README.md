@@ -5,6 +5,9 @@ report (`.docx` / `.pdf`) with a live preview of the real output.
 Templates:
 * **Endocrinology** (CMC - Molecular Endocrinology)
 * **Nephrology** (uses the Endocrinology layout until its own template is added)
+* **Whole Exome Sequencing** (Endocrinology layout; first patient field is
+  *Patient name*; no default Hospital/Clinic or Referring Clinician; Specimen is always Peripheral Blood; patient
+  details come from the WES sheet, see below)
 * **Whole Exome & Mitochondrial** (WES + whole mitochondrial genome; first
   patient field is *Patient name*)
 
@@ -25,6 +28,10 @@ the user and are never pre-filled or generated:
    *Paste table* (or Ctrl+V) to replace it. Accepts the report's layout
    (4 gene/coverage pairs per row) or 2 columns (Gene, Coverage). Starts with
    the template's table; *Restore template table* brings it back.
+6. **Clinical reviewer** (next to *Template*): Dr. Robert Patrick Selvam or
+   Dr. Sarath R.S. Picks the signature block under "This report has been
+   reviewed and approved by" (images in `app/templates/signatures/`). Each
+   template has a default (`reviewer` in `app/config/templates.py`).
 
 **Patient sheet lookup:** typing (or pasting) a complete PIN, the Anderson
 ID such as `ADK0000001234`, fills the demography fields from the live
@@ -52,7 +59,12 @@ Two ways to read the sheet, set in `app/config/sheet_config.py`
 * **`SHEET_CSV_URL` (fallback):** the sheet's CSV export; the sheet must be
   shared as "anyone with the link", and the whole list is downloaded.
 
-After changing either link, rebuild the exe (`build.bat`) - the links are
+The **Whole Exome Sequencing** template looks patients up in the WES sheet
+instead (header on row 2; a PIN listed twice gives its latest row): through
+the Apps Script with `sheet=wes` (fill in `WES_SPREADSHEET_ID` in Code.gs and
+redeploy), or `WES_SHEET_CSV_URL`, its CSV export, when that is set.
+
+After changing any link, rebuild the exe (`build.bat`) - the links are
 built into it.
 
 Everything else (results, CNV findings, recommendations, methodology,

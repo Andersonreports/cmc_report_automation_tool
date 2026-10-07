@@ -44,6 +44,7 @@ class ReportData:
     q30: str = ""                         # Data >= Q30, e.g. "96.34 %"
     gene_list_url: str = ""               # Methodology "Click here"; blank = template's link
     genes: list = field(default_factory=list)   # [(gene, coverage)]; empty = template's table
+    reviewer: str = ""                    # key into config.templates.REVIEWERS; blank = template's
 
     def to_dict(self) -> dict:
         return asdict(self)

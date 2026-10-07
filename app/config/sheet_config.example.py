@@ -17,3 +17,8 @@ APPS_SCRIPT_URL = ""
 # Fills the Sequence data attributes on Fetch. The tab must be shared as
 # "anyone with the link".
 QC_CSV_URL = ""
+
+# The Whole Exome Sequencing sheet, CSV export, read by the "Whole Exome
+# Sequencing" template. When set it is used instead of the Apps Script (sheet=wes);
+# the sheet must then be shared as "anyone with the link".
+WES_SHEET_CSV_URL = ""

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from ..config.templates import DEFAULT_TEMPLATE, TEMPLATES, get_template
+from ..config.templates import DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, get_template
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
 from ..core import sheet_client
@@ -97,9 +97,10 @@ class FetchWorker(QThread):
 
     def run(self):
         fields, notes = None, []
+        cfg = get_template(self.template_key)
         try:
-            if sheet_client.patient_configured():
-                fields = sheet_client.fetch_patient(self.pin, get_template(self.template_key))
+            if sheet_client.patient_configured(cfg):
+                fields = sheet_client.fetch_patient(self.pin, cfg)
         except sheet_client.SheetError as e:
             self.failed.emit(self.pin, str(e))
             return
@@ -121,7 +122,7 @@ class FetchWorker(QThread):
             else:
                 self.missing.emit(self.pin)
             return
-        if fields is None and sheet_client.patient_configured():
+        if fields is None and sheet_client.patient_configured(cfg):
             notes.insert(0, f"{self.pin} was not found in the patient sheet - "
                             "enter the patient details manually.")
         out = dict(fields or {"pin": self.pin})
@@ -540,6 +541,7 @@ class MainWindow(QMainWindow):
         self._redraw_timer.timeout.connect(self._redraw)
 
         self._template_defaults: dict[str, str] = {}
+        self._template_reviewer = ""
         self._template_genes: list[tuple[str, str]] = []
         self._last_received = ""
         self._loading_draft = False
@@ -560,6 +562,14 @@ class MainWindow(QMainWindow):
             self.template_combo.addItem(cfg.name, key)
         self.template_combo.currentIndexChanged.connect(self._template_changed)
         row.addWidget(self.template_combo)
+        row.addSpacing(16)
+        row.addWidget(QLabel("<b>Clinical reviewer:</b>"))
+        self.reviewer_combo = QComboBox()
+        self.reviewer_combo.setToolTip("Whose signature goes in the signature block")
+        for key, rev in REVIEWERS.items():
+            self.reviewer_combo.addItem(rev.name, key)
+        self.reviewer_combo.currentIndexChanged.connect(self._edited)
+        row.addWidget(self.reviewer_combo)
         row.addStretch(1)
         lay.addLayout(row)
 
@@ -702,6 +712,7 @@ class MainWindow(QMainWindow):
             q30=self.q30_edit.text().strip(),
             gene_list_url=self.url_edit.text().strip(),
             genes=self.gene_editor.genes(),
+            reviewer=self.reviewer_combo.currentData() or "",
         )
 
     def _edited(self, *_):
@@ -709,8 +720,8 @@ class MainWindow(QMainWindow):
             self._preview_timer.start()
 
     def _template_changed(self, *_):
-        """Pre-fill the chosen template's Hospital/Clinic and Referring
-        Clinician. A field is only replaced if it is empty or still holds the
+        """Pre-fill the chosen template's Hospital/Clinic, Referring Clinician
+        and Specimen. A field is only replaced if it is empty or still holds the
         previous template's default, so the user's own edits are kept."""
         key = self.template_combo.currentData()
         new = self._defaults_for(key)
@@ -719,11 +730,16 @@ class MainWindow(QMainWindow):
             if not le.text().strip() or le.text() == self._template_defaults.get(name):
                 le.setText(value)
         self._template_defaults = new
-        # "Patient ID" or "Patient name", as the template's table says.
         cfg = get_template(key)
+        # Clinical reviewer: the template's, unless the user picked another.
+        if self.reviewer_combo.currentData() in (None, self._template_reviewer):
+            self._set_reviewer(cfg.reviewer)
+        self._template_reviewer = cfg.reviewer
+        # "Patient ID" or "Patient name", as the template's table says.
         self.patient_id_label.setText(cfg.patient_id_label)
         self.fields["patient_id"].setPlaceholderText(
-            "e.g. MEL - 00000" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
+            f"e.g. {cfg.patient_id_prefix} - 00000" if cfg.patient_id_prefix
+            else "e.g. 12345" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
         # Same rule for the gene table: follow the template unless it was replaced.
         genes = template_gene_table(key)
         current = self.gene_editor.genes()
@@ -731,6 +747,9 @@ class MainWindow(QMainWindow):
             self.gene_editor.set_genes(genes, "Showing the template's gene table.")
         self._template_genes = genes
         self._preview()
+
+    def _set_reviewer(self, key: str):
+        self.reviewer_combo.setCurrentIndex(max(self.reviewer_combo.findData(key), 0))
 
     def _restore_gene_table(self):
         self.gene_editor.set_genes(self._template_genes, "Restored the template's gene table.")
@@ -791,7 +810,7 @@ class MainWindow(QMainWindow):
 
     def _clear_patient(self):
         """PIN removed: empty what a Fetch fills (patient details and Sequence
-        data attributes). Hospital/Clinic and Referring Clinician go back to
+        data attributes). Hospital/Clinic, Referring Clinician and Specimen go back to
         the template's defaults; the report date is kept."""
         for key, le in self.fields.items():
             if key not in ("pin", "report_date"):
@@ -868,6 +887,8 @@ class MainWindow(QMainWindow):
         self.template_combo.setCurrentIndex(max(self.template_combo.findData(cfg.key), 0))
         self.template_combo.blockSignals(False)
         self._template_defaults = self._defaults_for(cfg.key)
+        self._template_reviewer = cfg.reviewer
+        self._set_reviewer(data.reviewer or cfg.reviewer)
         # A draft's saved details win: don't let its PIN trigger a sheet lookup.
         self._loading_draft = True
         for key, le in self.fields.items():
@@ -889,7 +910,8 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _defaults_for(key: str) -> dict[str, str]:
         cfg = get_template(key)
-        return {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician}
+        return {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
+                "specimen": cfg.specimen}
 
     def _choose_folder(self):
         folder = QFileDialog.getExistingDirectory(

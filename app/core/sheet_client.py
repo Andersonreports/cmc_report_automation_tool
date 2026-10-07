@@ -25,6 +25,12 @@ Column mapping (matched by header name):
     Sample Type        -> Specimen                  DNA / PB (Peripheral Blood)
     Client name        -> Hospital/Clinic           matched to the dropdown options
     Client Doctor Name -> Referring Clinician       only when filled in
+
+Templates with patient_sheet "WES" (Whole Exome Sequencing) read the WES
+sheet instead: the Apps Script with sheet=wes, or WES_SHEET_CSV_URL (its CSV
+export). Same columns, except the header is on row 2 under a group row, and
+the client column is headed only by "Client" in that group row. A PIN listed
+more than once there gives its latest (lowest) row.
 """
 from __future__ import annotations
 
@@ -45,6 +51,8 @@ APPS_SCRIPT_URL = getattr(_cfg, "APPS_SCRIPT_URL", "").strip()
 SHEET_CSV_URL = getattr(_cfg, "SHEET_CSV_URL", "").strip()
 # Sequencing QC tab (After Data / Q30), CSV export.
 QC_CSV_URL = getattr(_cfg, "QC_CSV_URL", "").strip()
+# Whole Exome Sequencing sheet, CSV export (fallback to the Apps Script).
+WES_SHEET_CSV_URL = getattr(_cfg, "WES_SHEET_CSV_URL", "").strip()
 
 HOSPITALS = {
     "ENDOCRINOLOGY": "Christian Medical College - Molecular Endocrinology",
@@ -60,14 +68,16 @@ class SheetError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(APPS_SCRIPT_URL or SHEET_CSV_URL or QC_CSV_URL)
+    return bool(APPS_SCRIPT_URL or SHEET_CSV_URL or QC_CSV_URL or WES_SHEET_CSV_URL)
 
 
 def qc_configured() -> bool:
     return bool(APPS_SCRIPT_URL or QC_CSV_URL)
 
 
-def patient_configured() -> bool:
+def patient_configured(cfg=None) -> bool:
+    if cfg is not None and cfg.patient_sheet == "WES":
+        return bool(APPS_SCRIPT_URL or WES_SHEET_CSV_URL)
     return bool(APPS_SCRIPT_URL or SHEET_CSV_URL)
 
 
@@ -77,15 +87,17 @@ def _norm(h: str) -> str:
 
 def _parse_name(name: str) -> dict[str, str]:
     """'MS.12345 (40Y/F)-10' -> patient_id '12345', age '40 Years',
-    gender 'Female'. Titles (MS./MR./MASTER./BABY.) and the '-NN' after the
+    gender 'Female'. '(40YF)' and '( 40Y|F )' are read the same way; tags in
+    square brackets ('MRS.ABINAYA (30YF) [POC]') are dropped. Titles (MS./MR./MASTER./BABY.) and the '-NN' after the
     brackets are dropped; the ID is otherwise kept as written."""
     out: dict[str, str] = {}
-    m = re.search(r"\((\d+)\s*([YMD])\s*/\s*([MF])\)", name, re.I)
+    m = re.search(r"\(\s*(\d+)\s*([YMD])\s*[/|]?\s*([MF])\s*\)", name, re.I)
     if m:
         out["age"] = f"{int(m.group(1))} {AGE_UNITS[m.group(2).upper()]}"
         out["gender"] = GENDERS[m.group(3).upper()]
     core = re.sub(r"\)\s*-\s*\d+\s*$", ")", name.strip())   # "(40Y/F)-10" suffix
-    core = re.sub(r"\(.*?\)", " ", core)
+    core = re.sub(r"\(.*?\)|\[.*?\]", " ", core)
+    core = " ".join(core.split())
     core = re.sub(r"^\s*(MS|MR|MRS|MASTER|BABY|MISS)\.\s*", "", core, flags=re.I).strip()
     if core:
         out["patient_id"] = core
@@ -114,9 +126,11 @@ def _template_patient_id(cfg, name: str, client: str) -> str:
 _apps_script_qc: dict[str, tuple[dict | None, str]] = {}
 
 
-def _apps_script(pin: str, timeout: int) -> dict:
-    """The Apps Script web app's reply for `pin` (tools/apps_script/Code.gs)."""
-    url = f"{APPS_SCRIPT_URL}?{urllib.parse.urlencode({'pin': pin})}"
+def _apps_script(pin: str, timeout: int, sheet: str = "") -> dict:
+    """The Apps Script web app's reply for `pin` (tools/apps_script/Code.gs).
+    sheet "wes" looks the patient up in the WES sheet."""
+    query = {"pin": pin, **({"sheet": sheet} if sheet else {})}
+    url = f"{APPS_SCRIPT_URL}?{urllib.parse.urlencode(query)}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             reply = json.loads(resp.read().decode("utf-8"))
@@ -127,20 +141,25 @@ def _apps_script(pin: str, timeout: int) -> dict:
         raise SheetError(f"Could not reach the patient lookup service: {e}") from e
     if not reply.get("ok"):
         raise SheetError(reply.get("error") or "The patient lookup failed.")
+    if sheet and reply.get("sheet") != sheet:   # older script: wrong sheet
+        raise SheetError("The patient lookup service can't read the WES sheet "
+                         "yet (redeploy Code.gs).")
     if "qc" in reply:           # older script versions don't send it
         _apps_script_qc[pin] = (reply["qc"], reply.get("qc_error", ""))
     return reply
 
 
-def _row_via_apps_script(pin: str, timeout: int) -> dict[str, str] | None:
-    reply = _apps_script(pin, timeout)
+def _row_via_apps_script(pin: str, timeout: int, sheet: str = "") -> dict[str, str] | None:
+    reply = _apps_script(pin, timeout, sheet)
     return ({_norm(k): str(v) for k, v in (reply.get("row") or {}).items()}
             if reply.get("found") else None)
 
 
-def _row_via_csv(pin: str, timeout: int, url: str = "",
-                 pin_column: str = "Anderson ID") -> dict[str, str] | None:
-    """One patient's row from a sheet's CSV export (sheet shared by link)."""
+def _row_via_csv(pin: str, timeout: int, url: str = "", pin_column: str = "Anderson ID",
+                 last: bool = False) -> dict[str, str] | None:
+    """One patient's row from a sheet's CSV export (sheet shared by link).
+    The header is the first row holding `pin_column`; a blank header cell
+    takes the label above it (a group row). `last`: the PIN's lowest row."""
     try:
         with urllib.request.urlopen(url or SHEET_CSV_URL, timeout=timeout) as resp:
             text = resp.read().decode("utf-8-sig", errors="replace")
@@ -150,14 +169,24 @@ def _row_via_csv(pin: str, timeout: int, url: str = "",
         raise SheetError("The patient sheet is not shared for reading "
                          "(Google returned a sign-in page).")
     rows = list(csv.reader(io.StringIO(text)))
-    if not rows:
+    top = next((i for i, r in enumerate(rows[:10])
+                if _norm(pin_column) in map(_norm, r)), None)
+    if top is None:
         return None
-    header = [_norm(h) for h in rows[0]]
-    for row in rows[1:]:
-        cells = {h: (row[i].strip() if i < len(row) else "") for i, h in enumerate(header)}
+    above = rows[top - 1] if top else []
+    header = [_norm(h) or _norm(above[i] if i < len(above) else "")
+              for i, h in enumerate(rows[top])]
+    found = None
+    for row in rows[top + 1:]:
+        cells = {}
+        for i, h in enumerate(header):
+            if h and not cells.get(h):          # first non-blank column of a name
+                cells[h] = row[i].strip() if i < len(row) else ""
         if cells.get(_norm(pin_column), "").upper() == pin:
-            return cells
-    return None
+            found = cells
+            if not last:
+                break
+    return found
 
 
 def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | None:
@@ -165,12 +194,16 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
     Only fields the sheet actually has a value for are returned. `cfg` is the
     selected TemplateConfig, whose Patient ID rule is applied.
     Uses the Apps Script service when configured, else the CSV export."""
-    if not patient_configured():
+    if not patient_configured(cfg):
         raise SheetError("The patient sheet link is not set up "
                          "(app/config/sheet_config.py is missing).")
     key = pin.strip().upper()
-    cells = (_row_via_apps_script(key, timeout) if APPS_SCRIPT_URL
-             else _row_via_csv(key, timeout))
+    if cfg is not None and cfg.patient_sheet == "WES":
+        cells = (_row_via_csv(key, timeout, WES_SHEET_CSV_URL, last=True) if WES_SHEET_CSV_URL
+                 else _row_via_apps_script(key, timeout, "wes"))
+    else:
+        cells = (_row_via_apps_script(key, timeout) if APPS_SCRIPT_URL
+                 else _row_via_csv(key, timeout))
     if cells is None:
         return None
 
@@ -178,8 +211,10 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
         return (cells.get(_norm(header)) or "").strip()
 
     out = {"pin": key}
+    # The WES sheet heads the client column just "Client".
+    client = get("Client name") or get("Client")
     out.update(_parse_name(get("Name")))
-    pid = _template_patient_id(cfg, get("Name"), get("Client name"))
+    pid = _template_patient_id(cfg, get("Name"), client)
     if pid:
         out["patient_id"] = pid
     if get("Sample Number"):
@@ -187,11 +222,11 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
     if get("Received Date"):
         # The lab's collection date is the same as the received date.
         out["received_date"] = out["collection_date"] = _date(get("Received Date"))
-    specimen = SPECIMENS.get(get("Sample Type").upper())
+    specimen = (cfg.specimen if cfg is not None and cfg.specimen
+                else SPECIMENS.get(get("Sample Type").upper()))
     if specimen:
         out["specimen"] = specimen
-    client = get("Client name").upper()
-    hospital = next((v for k, v in HOSPITALS.items() if k in client), "")
+    hospital = next((v for k, v in HOSPITALS.items() if k in client.upper()), "")
     if hospital:
         out["hospital"] = hospital
     doctor = get("Client Doctor Name")

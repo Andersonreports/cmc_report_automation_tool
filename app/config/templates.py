@@ -27,6 +27,12 @@ class TemplateConfig:
     # Pre-filled when the template is chosen (still editable by the user).
     hospital: str = ""
     referring_clinician: str = ""
+    # Specimen for every report of this template (the sheet's Sample Type is
+    # then ignored); "" = take it from the sheet.
+    specimen: str = ""
+    # Which sheet Fetch reads the patient details from: "" = the patient
+    # sheet, "WES" = the Whole Exome Sequencing sheet (see sheet_client).
+    patient_sheet: str = ""
     # Patient sheet lookup: when the row's "Client name" contains
     # patient_id_client, Patient ID becomes "<prefix> - <5 digits from Name>".
     patient_id_client: str = ""
@@ -35,6 +41,23 @@ class TemplateConfig:
     file_date_sep: str = "-"                  # 29-09-2026 / 29_09_2026
     # Section headings that always start on a new page, e.g. ("Disclaimer",).
     new_page_before: tuple[str, ...] = ()
+    # Clinical reviewer whose signature block is used unless the user picks
+    # another one: a key of REVIEWERS.
+    reviewer: str = "ROBERT"
+
+
+@dataclass(frozen=True)
+class Reviewer:
+    name: str                       # shown in the Clinical reviewer picker
+    signature_file: str             # whole signature block, app/templates/signatures/
+
+
+# The signature block under "This report has been reviewed and approved by"
+# is one picture of all five signatures; only the clinical reviewer differs.
+REVIEWERS: dict[str, Reviewer] = {
+    "ROBERT": Reviewer("Dr. Robert Patrick Selvam", "robert.png"),
+    "SARATH": Reviewer("Dr. Sarath R.S", "sarath.jpeg"),
+}
 
 
 TEMPLATES: dict[str, TemplateConfig] = {
@@ -54,6 +77,16 @@ TEMPLATES: dict[str, TemplateConfig] = {
         docx_file="endocrinology.docx",
         hospital="Christian Medical College - Nephrology",
     ),
+    # Endocrinology layout, but no default Hospital/Clinic or Referring
+    # Clinician and no MEL Patient ID rule; patient details from the WES sheet.
+    "WES": TemplateConfig(
+        key="WES",
+        name="Whole Exome Sequencing",
+        docx_file="endocrinology.docx",
+        patient_id_label="Patient name",
+        specimen="Peripheral Blood",
+        patient_sheet="WES",
+    ),
     "WES_MITO": TemplateConfig(
         key="WES_MITO",
         name="Whole Exome & Mitochondrial",
@@ -62,6 +95,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         file_suffix="Whole_Exome_Whole_mitochondrial_Report",
         file_date_sep="_",
         new_page_before=("Disclaimer",),
+        reviewer="SARATH",
     ),
 }
 
