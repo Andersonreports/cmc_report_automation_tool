@@ -2,16 +2,24 @@
 
 PDF conversion uses LibreOffice (headless) when installed, otherwise
 Microsoft Word.
+
+Layout check (build_report): a LAYOUT_CHECKED section that starts near the
+bottom of a page and leaves only its heading or fewer than MIN_LINES lines
+there is moved whole to the next page. If enough lines fit, it flows on.
+Word can't express "at least 3 lines", so the converted PDF is measured and
+the report re-rendered with that section starting a new page.
 """
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import threading
 from pathlib import Path
 
-from .docx_renderer import render_report
+from .docx_renderer import render_report, section_opening
 from .models import ReportData
 from .os_utils import find_soffice
 
@@ -27,10 +35,77 @@ _PROFILE = tempfile.mkdtemp(prefix="cmc_lo_profile_")
 _LOCK = threading.Lock()
 
 
-def render_docx(data: ReportData, out_path: str) -> str:
+LAYOUT_CHECKED = ("Methodology",)
+MIN_LINES = 3
+
+
+def render_docx(data: ReportData, out_path: str, new_pages: tuple[str, ...] = ()) -> str:
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    render_report(data).save(out_path)
+    render_report(data, new_pages).save(out_path)
     return out_path
+
+
+def _squash(text: str) -> str:
+    """Letters and digits only: PDF text differs from the DOCX in spacing and
+    symbols (a hyphen can come out as U+FFFE)."""
+    return re.sub(r"[^0-9A-Za-z]+", "", text)
+
+
+def _stranded(pdf_path: str, openings: dict[str, str]) -> tuple[str, ...]:
+    """The headings in `openings` ({heading: its first paragraph}) that the
+    PDF shows at the foot of a page with fewer than MIN_LINES lines of that
+    paragraph under them, the rest carried over to the next page."""
+    import pypdfium2 as pdfium
+    out = []
+    doc = pdfium.PdfDocument(pdf_path)
+    try:
+        pages = [doc[i].get_textpage().get_text_range().splitlines() for i in range(len(doc))]
+    finally:
+        doc.close()
+    for heading, para in openings.items():
+        para = _squash(para)
+        for lines in pages:
+            idx = next((i for i, ln in enumerate(lines) if ln.strip() == heading), None)
+            if idx is None:
+                continue
+            shown = ""
+            count = 0
+            for ln in lines[idx + 1:]:
+                part = _squash(ln)
+                if not part or (shown + part) not in para:
+                    break
+                shown += part
+                count += 1
+            if len(shown) < len(para) and count < MIN_LINES:
+                out.append(heading)
+            break
+    return tuple(out)
+
+
+def build_report(data: ReportData, docx_path: str, pdf_dir: str | None = None):
+    """Save the report as docx_path and, with pdf_dir, its PDF there.
+    Returns (docx path, pdf path or None). Applies the layout check; without
+    pdf_dir the PDF is only a probe in a temp folder, and if no converter is
+    available the DOCX is saved unchecked."""
+    render_docx(data, docx_path)
+    probe = pdf_dir or tempfile.mkdtemp(prefix="cmc_probe_")
+    try:
+        try:
+            pdf = docx_to_pdf(docx_path, probe)
+        except ReportBuildError:
+            if pdf_dir:
+                raise
+            return docx_path, None
+        doc = render_report(data)
+        openings = {h: section_opening(doc, h) for h in LAYOUT_CHECKED}
+        moved = _stranded(pdf, {h: t for h, t in openings.items() if t})
+        if moved:
+            render_docx(data, docx_path, moved)
+            pdf = docx_to_pdf(docx_path, probe)
+        return docx_path, (pdf if pdf_dir else None)
+    finally:
+        if not pdf_dir:
+            shutil.rmtree(probe, ignore_errors=True)
 
 
 def _via_libreoffice(soffice: str, docx_path: str, out_dir: str) -> None:

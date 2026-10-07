@@ -303,6 +303,18 @@ def _keep_headings_with_next(doc):
             ppr.insert(0, kn)
 
 
+def section_opening(doc, heading: str) -> str:
+    """Text of the first non-empty paragraph after a section heading ('' if
+    the heading isn't there)."""
+    found = False
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        text = _text(p).strip()
+        if found and text:
+            return text
+        found = found or text.rstrip(":").lower() == heading.lower()
+    return ""
+
+
 def _new_pages(doc, headings):
     """Start each of these section headings on a new page."""
     wanted = {h.lower() for h in headings}
@@ -408,7 +420,9 @@ def template_path(template_key: str) -> str:
     return resource_path("app", "templates", get_template(template_key).docx_file)
 
 
-def render_report(data: ReportData):
+def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
+    """The filled template. new_pages: section headings to start on a new
+    page on top of the template's own (see report_builder's layout check)."""
     path = template_path(data.template_key)
     if not os.path.exists(path):
         raise TemplateError(f"Template file not found: {path}")
@@ -422,6 +436,6 @@ def render_report(data: ReportData):
     _fill_signatures(doc, data)
     _appendix_page_break(doc)
     _keep_headings_with_next(doc)
-    _new_pages(doc, get_template(data.template_key).new_page_before)
+    _new_pages(doc, get_template(data.template_key).new_page_before + tuple(new_pages))
     _fix_page_count(doc)
     return doc

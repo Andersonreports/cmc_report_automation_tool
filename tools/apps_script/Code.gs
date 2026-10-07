@@ -42,9 +42,9 @@
 var PATIENT_SPREADSHEET_ID = 'PASTE_PATIENT_SPREADSHEET_ID_HERE';
 var PATIENT_GID = 534459671;
 
-// Sequencing QC sheet (Anderson_ID / After Data / Q30).
+// Sequencing QC sheet (Anderson_ID / After Data / Q30). Every tab whose
+// header row has QC_PIN_COLUMN is searched (one tab per batch), left to right.
 var QC_SPREADSHEET_ID = 'PASTE_QC_SPREADSHEET_ID_HERE';
-var QC_GID = 1243772574;
 var QC_PIN_COLUMN = 'Anderson_ID';
 var QC_COLUMNS = ['After Data', 'Q30'];
 
@@ -93,7 +93,7 @@ function doGet(e) {
 
     var qc = null, qcError = '';
     try {
-      qc = lookup_(QC_SPREADSHEET_ID, QC_GID, QC_PIN_COLUMN, QC_COLUMNS, pin);
+      qc = lookupAllTabs_(QC_SPREADSHEET_ID, QC_PIN_COLUMN, QC_COLUMNS, pin);
     } catch (err) {
       qcError = 'QC sheet: ' + (err.message || err);
     }
@@ -117,17 +117,38 @@ function doGet(e) {
 }
 
 
+// Finder for a cell holding exactly `pin` (surrounding spaces allowed).
+// Searching with Find is much faster than reading the whole sheet.
+function pinFinder_(range, pin) {
+  return range.createTextFinder('^\\s*' + pin + '\\s*$')
+    .useRegularExpression(true).matchCase(false);
+}
+
+
+// `columns` (by header name) from one row's values.
+function pick_(header, values, columns) {
+  var row = {};
+  columns.forEach(function (name) {
+    var c = header.indexOf(norm_(name));
+    row[name] = c >= 0 ? String(values[c]).trim() : '';
+  });
+  return row;
+}
+
+
 // The `columns` of the row whose `pinColumn` equals `pin`, or null.
 // headerRow: 1-based row of the column names (default 1); a blank name takes
 // the label in the row above it. last: the PIN's lowest row, not its first.
 function lookup_(spreadsheetId, gid, pinColumn, columns, pin, headerRow, last) {
   var sheet = findSheet_(spreadsheetId, gid);
+  var top = headerRow || 1;
+  var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+  if (lastRow <= top || lastCol < 1) return null;
   // Display values keep dates exactly as shown in the sheet (e.g. 29-08-2026).
-  var values = sheet.getDataRange().getDisplayValues();
-  var top = (headerRow || 1) - 1;
-  if (values.length < top + 2) return null;
-  var above = top > 0 ? values[top - 1] : [];
-  var header = values[top].map(function (h, c) {
+  var head = sheet.getRange(top > 1 ? top - 1 : 1, 1, top > 1 ? 2 : 1, lastCol)
+    .getDisplayValues();
+  var above = top > 1 ? head[0] : [];
+  var header = head[head.length - 1].map(function (h, c) {
     return norm_(h) || norm_(above[c]);
   });
   var pinCol = header.indexOf(norm_(pinColumn));
@@ -135,16 +156,24 @@ function lookup_(spreadsheetId, gid, pinColumn, columns, pin, headerRow, last) {
     throw new Error('Column "' + pinColumn + '" not found in the header row of ' +
                     sheet.getName() + '.');
   }
-  var start = last ? values.length - 1 : top + 1;
-  var step = last ? -1 : 1;
-  for (var r = start; r > top && r < values.length; r += step) {
-    if (String(values[r][pinCol]).trim().toUpperCase() !== pin) continue;
-    var row = {};
-    columns.forEach(function (name) {
-      var c = header.indexOf(norm_(name));
-      row[name] = c >= 0 ? String(values[r][c]).trim() : '';
-    });
-    return row;
+  var hits = pinFinder_(sheet.getRange(top + 1, pinCol + 1, lastRow - top, 1), pin).findAll();
+  if (!hits.length) return null;
+  var r = hits[last ? hits.length - 1 : 0].getRow();
+  return pick_(header, sheet.getRange(r, 1, 1, lastCol).getDisplayValues()[0], columns);
+}
+
+
+// The same over every tab of a spreadsheet: the first cell holding `pin`
+// (tabs left to right) that sits in a column headed `pinColumn` in row 1.
+function lookupAllTabs_(spreadsheetId, pinColumn, columns, pin) {
+  var hits = pinFinder_(SpreadsheetApp.openById(spreadsheetId), pin).findAll();
+  for (var i = 0; i < hits.length; i++) {
+    var sheet = hits[i].getSheet();
+    var lastCol = sheet.getLastColumn();
+    var header = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(norm_);
+    if (header[hits[i].getColumn() - 1] !== norm_(pinColumn)) continue;
+    return pick_(header, sheet.getRange(hits[i].getRow(), 1, 1, lastCol)
+                           .getDisplayValues()[0], columns);
   }
   return null;
 }

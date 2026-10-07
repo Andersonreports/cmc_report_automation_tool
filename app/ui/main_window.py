@@ -63,19 +63,19 @@ class RenderWorker(QThread):
 
     def run(self):
         try:
-            from ..core.report_builder import docx_to_pdf, render_docx
+            from ..core.report_builder import build_report
             if self.kind == "docx":
-                self.done.emit(render_docx(self.data, self.out_path))
+                self.done.emit(build_report(self.data, self.out_path)[0])
                 return
             if self.kind == "both":
-                docx = render_docx(self.data, self.out_path)
-                pdf = docx_to_pdf(docx, os.path.dirname(docx))
+                docx, pdf = build_report(self.data, self.out_path,
+                                         os.path.dirname(os.path.abspath(self.out_path)))
                 self.done.emit(f"{docx}\n{pdf}")
                 return
             tmp = tempfile.mkdtemp(prefix="cmc_render_")
             try:
                 stem = os.path.splitext(os.path.basename(self.out_path))[0]
-                pdf = docx_to_pdf(render_docx(self.data, os.path.join(tmp, stem + ".docx")), tmp)
+                _, pdf = build_report(self.data, os.path.join(tmp, stem + ".docx"), tmp)
                 shutil.move(pdf, self.out_path)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)

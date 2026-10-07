@@ -9,7 +9,7 @@ Templates:
   *Patient name*; no default Hospital/Clinic or Referring Clinician; Specimen is always Peripheral Blood; patient
   details come from the WES sheet, see below)
 * **Whole Exome & Mitochondrial** (WES + whole mitochondrial genome; first
-  patient field is *Patient name*)
+  patient field is *Patient name*; patient details come from the WES sheet)
 
 ## What the user enters
 
@@ -59,7 +59,8 @@ Two ways to read the sheet, set in `app/config/sheet_config.py`
 * **`SHEET_CSV_URL` (fallback):** the sheet's CSV export; the sheet must be
   shared as "anyone with the link", and the whole list is downloaded.
 
-The **Whole Exome Sequencing** template looks patients up in the WES sheet
+The **Whole Exome Sequencing** and **Whole Exome & Mitochondrial** templates
+look patients up in the WES sheet
 instead (header on row 2; a PIN listed twice gives its latest row): through
 the Apps Script with `sheet=wes` (fill in `WES_SPREADSHEET_ID` in Code.gs and
 redeploy), or `WES_SHEET_CSV_URL`, its CSV export, when that is set.

@@ -22,7 +22,7 @@ Column mapping (matched by header name):
                           TemplateConfig.patient_id_prefix)
     Received Date      -> Sample Received Date and Sample Collection Date
                           (the same date), dd-mm-yyyy -> dd/mm/yyyy
-    Sample Type        -> Specimen                  DNA / PB (Peripheral Blood)
+    Sample Type        -> Specimen                  DNA / PB or BLOOD (Peripheral Blood)
     Client name        -> Hospital/Clinic           matched to the dropdown options
     Client Doctor Name -> Referring Clinician       only when filled in
 
@@ -58,7 +58,8 @@ HOSPITALS = {
     "ENDOCRINOLOGY": "Christian Medical College - Molecular Endocrinology",
     "NEPHROLOGY": "Christian Medical College - Nephrology",
 }
-SPECIMENS = {"DNA": "DNA", "PB": "Peripheral Blood", "PERIPHERAL BLOOD": "Peripheral Blood"}
+SPECIMENS = {"DNA": "DNA", "PB": "Peripheral Blood", "PERIPHERAL BLOOD": "Peripheral Blood",
+             "BLOOD": "Peripheral Blood"}
 AGE_UNITS = {"Y": "Years", "M": "Months", "D": "Days"}
 GENDERS = {"F": "Female", "M": "Male"}
 
@@ -189,7 +190,7 @@ def _row_via_csv(pin: str, timeout: int, url: str = "", pin_column: str = "Ander
     return found
 
 
-def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | None:
+def fetch_patient(pin: str, cfg=None, timeout: int = 45) -> dict[str, str] | None:
     """Return the demography fields found for `pin`, or None if not in the sheet.
     Only fields the sheet actually has a value for are returned. `cfg` is the
     selected TemplateConfig, whose Patient ID rule is applied.
@@ -214,6 +215,10 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
     # The WES sheet heads the client column just "Client".
     client = get("Client name") or get("Client")
     out.update(_parse_name(get("Name")))
+    if cfg is not None and cfg.patient_id_label == "Patient name" and "patient_id" in out:
+        # A patient name reads "Aksha Dahiya", not the sheet's "AKSHA DAHIYA".
+        out["patient_id"] = re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(),
+                                   out["patient_id"])
     pid = _template_patient_id(cfg, get("Name"), client)
     if pid:
         out["patient_id"] = pid
@@ -236,7 +241,7 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 20) -> dict[str, str] | Non
     return out
 
 
-def fetch_qc(pin: str, timeout: int = 20) -> dict[str, str] | None:
+def fetch_qc(pin: str, timeout: int = 45) -> dict[str, str] | None:
     """Return {"total_reads", "q30"} from the sequencing QC sheet for `pin`,
     or None if the PIN isn't there (or no QC source is set)."""
     pin = pin.strip().upper()

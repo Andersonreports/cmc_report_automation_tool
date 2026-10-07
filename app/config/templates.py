@@ -96,6 +96,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         file_date_sep="_",
         new_page_before=("Disclaimer",),
         reviewer="SARATH",
+        patient_sheet="WES",
     ),
 }
 
