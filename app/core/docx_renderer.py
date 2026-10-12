@@ -20,10 +20,15 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 
 from docx import Document
 from docx.oxml import OxmlElement
+from docx.shared import Cm, Pt
+from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph
 
 from ..config.templates import REVIEWERS, get_template
 from .models import ReportData
@@ -108,6 +113,28 @@ def _fill_patient(doc, data: ReportData):
             label = id_label          # "Patient ID" or "Patient name"
         value = (getattr(data.patient, attr, "") or "").strip()
         _set_text(table.rows[row].cells[col].paragraphs[0]._p, f"{label}: {value}")
+    # No paragraph indentation or spacing inside the demography table; the gap
+    # to the cell borders comes from the table's cell margins instead, so the
+    # text doesn't touch the lines.
+    tbl_pr = table._tbl.tblPr
+    old = tbl_pr.find(qn("w:tblCellMar"))
+    if old is not None:
+        tbl_pr.remove(old)
+    mar = OxmlElement("w:tblCellMar")
+    for side in ("left", "right"):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:w"), "113")            # 0.2 cm
+        el.set(qn("w:type"), "dxa")
+        mar.append(el)
+    tbl_pr.append(mar)
+    for row in table.rows:
+        for cell in row.cells:
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            for p in cell.paragraphs:
+                pf = p.paragraph_format
+                pf.left_indent = pf.right_indent = pf.first_line_indent = 0
+                pf.space_before = pf.space_after = 0
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
 def _fill_history(doc, data: ReportData):
@@ -117,7 +144,19 @@ def _fill_history(doc, data: ReportData):
         body = body.getnext()
     if body is None:
         raise TemplateError("Template is missing the clinical history paragraph")
-    _set_text(body, data.clinical_history.strip())
+    # One flowing, justified paragraph: a single line break (e.g. from pasted,
+    # pre-wrapped text) becomes a space, as a forced break would stretch the
+    # line before it. A blank line still starts a new paragraph.
+    paragraphs = [" ".join(part.split())
+                  for part in re.split(r"\n\s*\n", data.clinical_history.strip())]
+    paragraphs = [p for p in paragraphs if p] or [""]
+    _set_text(body, paragraphs[0])
+    anchor = body
+    for text in paragraphs[1:]:
+        extra = copy.deepcopy(body)
+        _set_text(extra, text)
+        anchor.addnext(extra)
+        anchor = extra
 
 
 def _gene_list_link(doc):
@@ -236,6 +275,16 @@ def _fill_qc(doc, data: ReportData):
     table = _find_table(doc, "Total Read", "'Sequence data attributes' table")
     for row, value in ((0, data.total_reads), (1, data.q30)):
         _set_text(table.rows[row].cells[1].paragraphs[0]._p, value.strip())
+    # Indent 0.2 cm left and right, 3 pt before and after, in every cell.
+    for row in table.rows:
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                pf = p.paragraph_format
+                pf.left_indent = pf.right_indent = Cm(0.2)
+                pf.first_line_indent = 0
+                pf.space_before = pf.space_after = Pt(3)
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +350,177 @@ def _keep_headings_with_next(doc):
             style.addnext(kn)
         else:
             ppr.insert(0, kn)
+
+
+def _tidy_classification_table(doc):
+    """Classification column: one paragraph per label, centred vertically.
+    The template has an empty paragraph above 'Variant of Uncertain
+    Significance' and splits 'Likely Pathogenic' over two paragraphs, which
+    leaves uneven space in the cells."""
+    try:
+        table = _find_table(doc, "Classification", "classification table")
+    except TemplateError:
+        return
+    for row in table.rows[1:]:
+        cell = row.cells[0]
+        texts = [p.text.strip() for p in cell.paragraphs if p.text.strip()]
+        if not texts:
+            continue
+        paras = cell.paragraphs
+        _set_text(paras[next(i for i, p in enumerate(paras) if p.text.strip())]._p,
+                  " ".join(texts))
+        keep = next(p for p in paras if p.text.strip())
+        for p in paras:
+            if p is not keep:
+                p._p.getparent().remove(p._p)
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    # Breathing room between the text and the cell lines, and every cell
+    # centred vertically, so a wrapped label never touches the border.
+    tbl_pr = table._tbl.tblPr
+    old = tbl_pr.find(qn("w:tblCellMar"))
+    if old is not None:
+        tbl_pr.remove(old)
+    mar = OxmlElement("w:tblCellMar")
+    for side, w in (("top", 180), ("left", 50), ("bottom", 180), ("right", 50)):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:w"), str(w))
+        el.set(qn("w:type"), "dxa")
+        mar.append(el)
+    tbl_pr.append(mar)
+    for row in table.rows[1:]:
+        # The template's fixed row heights pad some rows more than others;
+        # let the text plus the cell margins set every row's height.
+        trpr = row._tr.trPr
+        height = trpr.find(qn("w:trHeight")) if trpr is not None else None
+        if height is not None:
+            trpr.remove(height)
+        for cell in row.cells:
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    # Interpretation column: heading centred, the descriptions justified.
+    for i, row in enumerate(table.rows):
+        for p in row.cells[1].paragraphs:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if i == 0 else WD_ALIGN_PARAGRAPH.JUSTIFY
+
+
+def _title_size(doc, points: int = 20):
+    """The report title ('Whole Exome Sequencing Analysis ...') in one size."""
+    half = str(points * 2)
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        ppr = p.find(qn("w:pPr"))
+        style = ppr.find(qn("w:pStyle")) if ppr is not None else None
+        if style is None or style.get(qn("w:val")) != "Title":
+            continue
+        for r in p.iterchildren(qn("w:r")):
+            rpr = r.find(qn("w:rPr"))
+            if rpr is None:
+                rpr = OxmlElement("w:rPr")
+                r.insert(0, rpr)
+            for tag in ("w:sz", "w:szCs"):
+                el = rpr.find(qn(tag))
+                if el is None:
+                    el = OxmlElement(tag)
+                    rpr.append(el)      # sz/szCs sit late in CT_RPr order
+                el.set(qn("w:val"), half)
+        break
+
+
+def _result_tag_size(doc, points: int = 10):
+    """The boxed result line ('No pathogenic or likely pathogenic variant(s)
+    causative of ...') in one size; the templates mix 9, 9.5 and 10 pt."""
+    half = str(points * 2)
+    for p in doc.element.body.iter(qn("w:p")):
+        text = _text(p).strip().lower()
+        if not (text.startswith("no pathogenic") and "causative" in text):
+            continue
+        for r in p.iterchildren(qn("w:r")):
+            rpr = r.find(qn("w:rPr"))
+            if rpr is None:
+                continue
+            for tag in ("w:sz", "w:szCs"):
+                el = rpr.find(qn(tag))
+                if el is not None:
+                    el.set(qn("w:val"), half)
+        _fit_result_box(doc, p)
+
+
+def _fit_result_box(doc, p):
+    """At 10 pt the line no longer fits the template's text box beside the
+    paragraph's left indent (it wraps and the second line is cut off). Keep the
+    template's box narrower than the text area, so it stays inset from the section
+    headings, and drop the paragraph's left indent and space before, centred."""
+    box = p
+    while box is not None and box.tag != qn("w:txbxContent"):
+        box = box.getparent()
+    if box is None:
+        return                      # plain paragraph, not in a text box
+    anchor = box
+    while anchor is not None and anchor.tag != qn("wp:anchor"):
+        anchor = anchor.getparent()
+    if anchor is not None:
+        # Wide enough for the 10 pt line, but 0.5 cm in from the text margins
+        # on each side, so the box is inset from the section headings.
+        sec = doc.sections[0]
+        width = str(int(sec.page_width - sec.left_margin - sec.right_margin - Cm(1)))
+        anchor.find(qn("wp:extent")).set("cx", width)
+        for ext in anchor.iter("{http://schemas.openxmlformats.org/drawingml/2006/main}ext"):
+            ext.set("cx", width)
+        body_pr = anchor.find(".//{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}bodyPr")
+        if body_pr is not None:
+            body_pr.set("anchor", "ctr")
+    for para in box.iterchildren(qn("w:p")):
+        pf = Paragraph(para, None).paragraph_format
+        pf.left_indent = pf.first_line_indent = 0
+        pf.space_before = 0
+        pf.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
+def _justify_section(doc, heading: str):
+    """Justify every paragraph of a section (up to the next section heading)."""
+    wanted = heading.lower()
+    others = {h.lower() for h in SECTION_HEADINGS} - {wanted}
+    inside = False
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        text = _text(p).strip().rstrip(":").lower()
+        if text in others:
+            inside = False
+        if inside and text:
+            Paragraph(p, None).alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        if text == wanted:
+            inside = True
+
+
+# Section layout taken from the reference report (MEL_17139): headings flush
+# left, bullets and the disclaimer with the same hanging indents, whichever
+# template is used. Values are EMU (python-docx lengths).
+_LEFT_HEADINGS = ("clinical history", "results", "cnv findings", "recommendations",
+                  "methodology", "sequence data attributes", "disclaimer", "references",
+                  "this report has been reviewed and approved by")
+
+
+def _match_reference_layout(doc):
+    section = ""
+    for el in doc.element.body.iterchildren(qn("w:p")):
+        text = _text(el).strip().rstrip(":").lower()
+        para = Paragraph(el, None)
+        if text in _LEFT_HEADINGS:
+            section = text
+            para.paragraph_format.left_indent = 0
+            para.paragraph_format.first_line_indent = None
+            continue
+        if text.startswith(("whole exome sequencing", "whole mitochondrial", "appendix")):
+            section = ""
+            continue
+        if not text:
+            continue
+        pf = para.paragraph_format
+        if section == "disclaimer":
+            pf.left_indent, pf.first_line_indent, pf.line_spacing = 255270, -226695, 1.3
+        elif section == "recommendations" and el.pPr is not None and el.pPr.numPr is not None:
+            pf.left_indent, pf.first_line_indent, pf.line_spacing = 228600, -228600, 1.3
+        elif section == "results" and text.startswith(("*genetic test", "no other variant")):
+            pf.left_indent = 27940
+        elif section == "references" and el.pPr is not None and el.pPr.numPr is not None:
+            pf.left_indent = 27940
 
 
 def section_opening(doc, heading: str) -> str:
@@ -412,6 +632,20 @@ def _fill_signatures(doc, data: ReportData):
     raise TemplateError("Signature picture not found in the template.")
 
 
+def _tighten_signature_gap(doc):
+    """Drop the empty paragraphs between 'This report has been reviewed and
+    approved by' and the signature picture."""
+    heading = next((p for p in doc.element.body.iterchildren(qn("w:p"))
+                    if _text(p).strip().startswith("This report has been reviewed and approved by")),
+                   None)
+    if heading is None:
+        return
+    nxt = heading.getnext()
+    while nxt is not None and nxt.tag == qn("w:p") and not _text(nxt).strip()             and next(nxt.iter(qn("w:drawing"), qn("w:pict"), qn("w:sectPr")), None) is None:
+        gone, nxt = nxt, nxt.getnext()
+        gone.getparent().remove(gone)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -434,7 +668,13 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _fill_methodology(doc, data)
     _fill_gene_table(doc, data)
     _fill_signatures(doc, data)
+    _tighten_signature_gap(doc)
     _appendix_page_break(doc)
+    _tidy_classification_table(doc)
+    _result_tag_size(doc)
+    _title_size(doc)
+    _justify_section(doc, "Disclaimer")
+    _match_reference_layout(doc)
     _keep_headings_with_next(doc)
     _new_pages(doc, get_template(data.template_key).new_page_before + tuple(new_pages))
     _fix_page_count(doc)

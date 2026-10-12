@@ -76,6 +76,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         name="Nephrology",
         docx_file="endocrinology.docx",
         hospital="Christian Medical College - Nephrology",
+        referring_clinician="Dr. Suceena Alexander, MD., DM., FRCP(Lon), FASN, PhD.",
     ),
     # Endocrinology layout, but no default Hospital/Clinic or Referring
     # Clinician and no MEL Patient ID rule; patient details from the WES sheet.

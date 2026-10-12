@@ -35,6 +35,8 @@ more than once there gives its latest (lowest) row.
 from __future__ import annotations
 
 import csv
+import threading
+import time
 import io
 import json
 import re
@@ -156,20 +158,37 @@ def _row_via_apps_script(pin: str, timeout: int, sheet: str = "") -> dict[str, s
             if reply.get("found") else None)
 
 
+# Downloaded sheets are kept for a minute: a bulk upload looks up many PINs in
+# the same sheet, which would otherwise be downloaded again for every row.
+_CSV_TTL = 60.0
+_csv_cache: dict[str, tuple[float, list]] = {}
+_csv_lock = threading.Lock()
+
+
+def _csv_rows(url: str, timeout: int) -> list:
+    with _csv_lock:
+        hit = _csv_cache.get(url)
+        if hit and time.monotonic() - hit[0] < _CSV_TTL:
+            return hit[1]
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                text = resp.read().decode("utf-8-sig", errors="replace")
+        except Exception as e:  # noqa: BLE001
+            raise SheetError(f"Could not reach the patient sheet: {e}") from e
+        if text.lstrip().startswith("<"):
+            raise SheetError("The patient sheet is not shared for reading "
+                             "(Google returned a sign-in page).")
+        rows = list(csv.reader(io.StringIO(text)))
+        _csv_cache[url] = (time.monotonic(), rows)
+        return rows
+
+
 def _row_via_csv(pin: str, timeout: int, url: str = "", pin_column: str = "Anderson ID",
                  last: bool = False) -> dict[str, str] | None:
     """One patient's row from a sheet's CSV export (sheet shared by link).
     The header is the first row holding `pin_column`; a blank header cell
     takes the label above it (a group row). `last`: the PIN's lowest row."""
-    try:
-        with urllib.request.urlopen(url or SHEET_CSV_URL, timeout=timeout) as resp:
-            text = resp.read().decode("utf-8-sig", errors="replace")
-    except Exception as e:  # noqa: BLE001
-        raise SheetError(f"Could not reach the patient sheet: {e}") from e
-    if text.lstrip().startswith("<"):
-        raise SheetError("The patient sheet is not shared for reading "
-                         "(Google returned a sign-in page).")
-    rows = list(csv.reader(io.StringIO(text)))
+    rows = _csv_rows(url or SHEET_CSV_URL, timeout)
     top = next((i for i, r in enumerate(rows[:10])
                 if _norm(pin_column) in map(_norm, r)), None)
     if top is None:

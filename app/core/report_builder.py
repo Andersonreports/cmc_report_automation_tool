@@ -28,10 +28,10 @@ class ReportBuildError(Exception):
     pass
 
 
-# One LibreOffice profile reused for the whole session: only the first
-# conversion pays LibreOffice's start-up cost. A profile can be used by one
-# soffice at a time, so conversions are serialised.
-_PROFILE = tempfile.mkdtemp(prefix="cmc_lo_profile_")
+# One LibreOffice profile kept between sessions: building a fresh one costs
+# ~10 s, so only the very first conversion ever pays it. A profile can be used
+# by one soffice at a time, so conversions are serialised.
+_PROFILE = os.path.join(tempfile.gettempdir(), "cmc_lo_profile")
 _LOCK = threading.Lock()
 
 

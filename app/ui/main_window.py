@@ -19,17 +19,18 @@ from datetime import datetime
 from PySide6.QtCore import QDate, QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QComboBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
-    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton,
+    QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton, QScrollArea,
+    QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QTabBar, QTabWidget, QToolButton,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from ..config.templates import DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, get_template
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
-from ..core import sheet_client
+from ..core import bulk, sheet_client
+from . import style
 from ..core.models import PatientInfo, ReportData, today_str
 
 APP_NAME = "CMC Report Automation"
@@ -228,7 +229,7 @@ def calendar_icon() -> QIcon:
         p = QPainter(px)
         p.setRenderHint(QPainter.Antialiasing)
         u = size / 16.0                      # drawn on a 16-unit grid
-        blue, grey = QColor("#1A467D"), QColor("#5A6270")
+        blue, grey = QColor("#0f4c5c"), QColor("#5A6270")
         # page
         p.setPen(QPen(grey, max(1.0, u)))
         p.setBrush(QColor("white"))
@@ -289,8 +290,8 @@ class DatePicker(QWidget):
         color: #111827; font-size: 9.5pt; }
     QToolButton#day:hover { background: #e8eef7; }
     QToolButton#day[other="true"] { color: #c0c6cf; }
-    QToolButton#day[today="true"] { border: 1.5px solid #1A467D; color: #1A467D; font-weight: 600; }
-    QToolButton#day[selected="true"] { background: #1A467D; color: white; font-weight: 600; }
+    QToolButton#day[today="true"] { border: 1.5px solid #0f4c5c; color: #0f4c5c; font-weight: 600; }
+    QToolButton#day[selected="true"] { background: #0f4c5c; color: white; font-weight: 600; }
     """
 
     def __init__(self):
@@ -436,19 +437,11 @@ class GeneTableEditor(QWidget):
     def __init__(self):
         super().__init__()
         lay = QVBoxLayout(self)
-        info = QLabel("Copy the whole gene coverage table (from Word, Excel or the "
-                      "coverage report) and click <b>Paste table</b> to replace the "
-                      "table in Appendix 1. Both layouts work: 4 gene/coverage pairs "
-                      "per row, or 2 columns (Gene, Coverage).")
-        info.setWordWrap(True)
-        lay.addWidget(info)
         row = QHBoxLayout()
         paste = QPushButton("Paste table")
         paste.setToolTip("Replace the table with the one on the clipboard (Ctrl+V)")
         paste.clicked.connect(self.paste)
         row.addWidget(paste)
-        self.restore_btn = QPushButton("Restore template table")
-        row.addWidget(self.restore_btn)
         row.addStretch(1)
         self.count = QLabel()
         row.addWidget(self.count)
@@ -516,6 +509,475 @@ class PreviewScroll(QScrollArea):
         self.resized.emit()
 
 
+class PrepareWorker(QThread):
+    """Look up every Excel row's patient off the UI thread. Nothing is saved."""
+    progress = Signal(int, int, object)     # done so far, total, bulk.Prepared
+
+    def __init__(self, rows, template_key, reviewer, report_date):
+        super().__init__()
+        self.rows, self.args = rows, (template_key, reviewer, report_date)
+
+    def run(self):
+        # Several patients are looked up at once (the wait is the network);
+        # results are still listed in the Excel's order.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(bulk.prepare, row, *self.args) for row in self.rows]
+            for i, fut in enumerate(futures, start=1):
+                self.progress.emit(i, len(self.rows), fut.result())
+
+
+class BulkExportWorker(QThread):
+    """Save the chosen reports off the UI thread."""
+    progress = Signal(int, str)             # done so far, line for the details
+    finished_all = Signal(int, int)         # reports saved, reports failed
+
+    def __init__(self, items, stems, folder, kind):
+        super().__init__()
+        self.items, self.stems, self.folder, self.kind = items, stems, folder, kind
+        self.cancelled = False
+
+    def run(self):
+        made = failed = 0
+        for i, (item, stem) in enumerate(zip(self.items, self.stems), start=1):
+            if self.cancelled:
+                break
+            label = f"Row {item.row.number} {item.row.pin}"
+            try:
+                saved = bulk.export(item.data, self.folder, stem, self.kind)
+                made += 1
+                self.progress.emit(i, f"{label}: saved {saved}")
+            except Exception as e:  # noqa: BLE001 - reported per report, the rest go on
+                failed += 1
+                self.progress.emit(i, f"{label}: FAILED - {type(e).__name__}: {e}")
+        self.finished_all.emit(made, failed)
+
+
+class DropZone(QFrame):
+    """Dashed "click to browse or drag & drop" box for the Excel file."""
+    chosen = Signal(str)            # dropped file path, or "" to open the file dialog
+
+    EXTS = (".xlsx", ".xlsm")
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("dropzone")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAcceptDrops(True)
+        self.setFixedHeight(40)
+        self.setToolTip("Choose the filled Excel file with the patients' details")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 2, 14, 2)
+        lay.setSpacing(12)
+        lay.addStretch(1)
+        icon = QLabel()
+        icon.setPixmap(self._icon(20))
+        lay.addWidget(icon)
+        text = QLabel("Click to browse or drag & drop the Excel file (.xlsx)")
+        text.setObjectName("dropText")
+        lay.addWidget(text)
+        lay.addStretch(1)
+        for w in (icon, text):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    @staticmethod
+    def _icon(size: int) -> QPixmap:
+        px = QPixmap(size, size)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#1f8a4c"))
+        p.drawRoundedRect(3, 1, size - 6, size - 2, 4, 4)
+        p.setPen(QPen(QColor("white"), size / 9, c=Qt.RoundCap))
+        a, b = size * 0.34, size * 0.66
+        p.drawLine(QPoint(int(a), int(size * .32)), QPoint(int(b), int(size * .68)))
+        p.drawLine(QPoint(int(b), int(size * .32)), QPoint(int(a), int(size * .68)))
+        p.end()
+        return px
+
+    def _hover(self, on: bool):
+        self.setProperty("hover", on)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def enterEvent(self, e):
+        self._hover(True)
+
+    def leaveEvent(self, e):
+        self._hover(False)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.chosen.emit("")
+
+    def dragEnterEvent(self, e):
+        if any(u.toLocalFile().lower().endswith(self.EXTS) for u in e.mimeData().urls()):
+            e.acceptProposedAction()
+            self._hover(True)
+
+    def dragLeaveEvent(self, e):
+        self._hover(False)
+
+    def dropEvent(self, e):
+        self._hover(False)
+        for u in e.mimeData().urls():
+            path = u.toLocalFile()
+            if path.lower().endswith(self.EXTS):
+                self.chosen.emit(path)
+                return
+
+
+class BulkPanel(QWidget):
+    """The patients of an uploaded Excel file, looked up and listed inside the
+    main window. Nothing is saved until the user ticks the ones they want and
+    uses the window's Export buttons; clicking a row previews that report."""
+    COLS = ("Patients",)
+    shown = Signal(object)          # ReportData of the clicked row, or None
+    edited = Signal()               # the patient editor changed the shown report
+    upload = Signal(str)            # the Excel file dropped on the box, or "" to browse
+
+    def __init__(self):
+        super().__init__()
+        self.items: list = []
+        self.worker: PrepareWorker | None = None
+        self.export_worker: BulkExportWorker | None = None
+        self._export_log: list[str] = []
+        self._total = 0
+        self._built = None          # (template key, reviewer key) the list was built with
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setSpacing(10)
+
+        zone = DropZone()
+        zone.chosen.connect(self.upload)
+        lay.addWidget(zone)
+        self.search = QLineEdit(placeholderText="Search patients…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(10)
+        ll.addWidget(self.search)
+
+        bar = QHBoxLayout()
+        self.select_all = QCheckBox("Select all")
+        self.select_all.setCursor(Qt.PointingHandCursor)
+        self.select_all.setEnabled(False)
+        self.select_all.clicked.connect(self._select_all)     # ticked = all, cleared = none
+        bar.addSpacing(8)
+        bar.addWidget(self.select_all)
+        bar.addStretch(1)
+        self.count_label = QLabel("0 selected")
+        self.count_label.setObjectName("chip")
+        bar.addWidget(self.count_label)
+        ll.addLayout(bar)
+        self._show_tools(False)             # only once a file has been uploaded
+
+        self.info = QLabel()                # only shown for the stale-template warning
+        self.info.setWordWrap(True)
+        self.info.setVisible(False)
+        lay.addWidget(self.info)
+        self.status = QLabel()
+        self.status.setObjectName("hint")
+        self.status.setVisible(False)
+        lay.addWidget(self.status)
+
+        self.table = QTableWidget(0, len(self.COLS))
+        self.table.horizontalHeader().setVisible(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.table.setShowGrid(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.itemChanged.connect(lambda *_: self._count())
+        self.table.itemSelectionChanged.connect(self._clicked)
+
+        empty = QLabel("<div style='text-align:center'><p style='font-size:13pt;font-weight:600'>"
+                       "No patients yet</p></div>")
+        empty.setAlignment(Qt.AlignCenter)
+        empty.setWordWrap(True)
+        empty.setObjectName("hint")
+        self.body = QStackedWidget()
+        self.body.addWidget(empty)
+        self.body.addWidget(self.table)
+        ll.addWidget(self.body, 1)
+
+        # Patient editor: the clicked patient's details, edited in place.
+        self.editor_fields: dict[str, QLineEdit | OtherChoiceBox] = {}
+        form = QWidget()
+        fl = QFormLayout(form)
+        fl.setVerticalSpacing(8)
+        fl.setHorizontalSpacing(12)
+        title = QLabel("Patient editor")
+        title.setObjectName("caption")
+        fl.addRow(title)
+        for key, label in (("patient_id", "Patient ID"), ("pin", "PIN"), ("age", "Age"),
+                           ("gender", "Gender"), ("hospital", "Hospital/Clinic"),
+                           ("sample_number", "Sample Number"),
+                           ("referring_clinician", "Referring Clinician"),
+                           ("specimen", "Specimen"), ("collection_date", "Collection Date"),
+                           ("received_date", "Received Date"), ("report_date", "Report Date")):
+            if key in ("hospital", "specimen"):     # dropdown + "Other", as in Manual entry
+                le = OtherChoiceBox(PATIENT_CHOICES[key], OTHER_PLACEHOLDERS[key])
+            else:
+                le = QLineEdit()
+            le.textChanged.connect(self._field_edited)
+            self.editor_fields[key] = le
+            fl.addRow(label, le)
+        self.ed_history = QPlainTextEdit()
+        self.ed_history.setMinimumHeight(90)
+        self.ed_history.setTabChangesFocus(True)
+        self.ed_history.textChanged.connect(self._field_edited)
+        fl.addRow("Clinical History", self.ed_history)
+        self.ed_reads, self.ed_q30, self.ed_url = QLineEdit(), QLineEdit(), QLineEdit()
+        for le in (self.ed_reads, self.ed_q30, self.ed_url):
+            le.textChanged.connect(self._field_edited)
+        fl.addRow("Total Read Generated", self.ed_reads)
+        fl.addRow("Data ≥ Q30", self.ed_q30)
+        fl.addRow("Gene list link", self.ed_url)
+        self._editing = None            # the ReportData being edited
+        self.editor = QScrollArea()
+        self.editor.setWidgetResizable(True)
+        self.editor.setFrameShape(QScrollArea.NoFrame)
+        self.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.editor.setWidget(form)
+        self.editor.setVisible(False)
+
+        split = QSplitter(Qt.Horizontal)
+        split.addWidget(left)
+        split.addWidget(self.editor)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 2)
+        split.setChildrenCollapsible(False)
+        lay.addWidget(split, 1)
+
+
+    def _show_tools(self, on: bool):
+        for w in (self.search, self.select_all, self.count_label,
+                  getattr(self, "editor", None)):
+            if w is not None:
+                w.setVisible(on)
+
+    def check_current(self, template_key: str, reviewer: str):
+        """Warn when the template or reviewer chosen at the top is no longer
+        the one the list was built with."""
+        if self._built is None:
+            return
+        stale = self._built != (template_key, reviewer)
+        self.info.setText("<span style='color:#b35c00'>The template or reviewer has "
+                          "changed - upload the Excel again to use it.</span>")
+        self.info.setVisible(stale)
+
+    @property
+    def busy(self) -> bool:
+        return any(w is not None and w.isRunning() for w in (self.worker, self.export_worker))
+
+    # -- listing -----------------------------------------------------------
+    def load(self, rows, template_key, reviewer, reviewer_name, report_date):
+        self._built = (template_key, reviewer)
+        self.info.setVisible(False)
+        self.items = []
+        self.table.setRowCount(0)
+        self._total = len(rows)
+        self.count_label.setText("0 selected")
+        self.select_all.setChecked(False)
+        self._show_tools(True)
+        self.body.setCurrentWidget(self.table)
+        self.status.setVisible(True)
+        self.status.setText(f"Looking up the patients… 0 of {self._total}")
+        self.worker = PrepareWorker(rows, template_key, reviewer, report_date)
+        self.worker.progress.connect(self._added)
+        self.worker.start()
+
+    def restore(self, datas, template_key, reviewer):
+        """List reports loaded from a draft file (already looked up)."""
+        self._built = (template_key, reviewer)
+        self.info.setVisible(False)
+        self.items = []
+        self.table.setRowCount(0)
+        self._total = len(datas)
+        self.select_all.setChecked(False)
+        self._show_tools(True)
+        self.body.setCurrentWidget(self.table)
+        for i, d in enumerate(datas, start=1):
+            self._added(i, len(datas), bulk.Prepared(bulk.BulkRow(i, d.patient.pin), d))
+
+    def set_reviewer(self, key: str):
+        """Sign every listed report with this reviewer."""
+        for item in self.items:
+            if item.data:
+                item.data.reviewer = key
+        if self._built is not None:
+            self._built = (self._built[0], key)
+        self.info.setVisible(False)
+
+    def draft_reports(self) -> list:
+        """The ticked reports, or every report that looked up fine if none is ticked."""
+        rows = self._checked() or [r for r, i in enumerate(self.items) if i.data]
+        return [self.items[r].data for r in rows]
+
+    def _added(self, done: int, total: int, item):
+        self.items.append(item)
+        self.table.blockSignals(True)
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        p = item.data.patient if item.data else None
+        name = (p.patient_id if p and p.patient_id else "") or item.row.pin or f"Row {item.row.number}"
+        it = QTableWidgetItem(name)
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if item.data:
+            it.setFlags(flags | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Unchecked)
+            if item.notes:
+                it.setForeground(QColor(style.WARN))
+        else:
+            it.setFlags(flags)
+            it.setForeground(QColor(style.BAD))
+            name = f"{name} - {item.error}"
+            it.setText(name)
+        it.setToolTip(name if item.data else item.error or "")
+        if item.data and item.notes:
+            it.setToolTip("; ".join(item.notes))
+        self.table.setItem(r, 0, it)
+        self.table.blockSignals(False)
+        if done < total:
+            self.status.setText(f"Looking up the patients… {done} of {total}")
+            return
+        self.status.setVisible(False)   # the Status column says what needs attention
+        first = next((r for r, i in enumerate(self.items) if i.data), None)
+        if first is not None:
+            self.table.selectRow(first)
+        self._count()
+
+    def _clicked(self):
+        rows = self.table.selectionModel().selectedRows()
+        item = self.items[rows[0].row()] if rows and rows[0].row() < len(self.items) else None
+        if item is not None and item.data:
+            self._load_editor(item.data)
+            self.shown.emit(item.data)
+
+    def _load_editor(self, data):
+        self._editing = None            # filling the boxes must not count as an edit
+        for key, le in self.editor_fields.items():
+            le.setText(getattr(data.patient, key, ""))
+        self.ed_history.setPlainText(data.clinical_history)
+        self.ed_reads.setText(data.total_reads)
+        self.ed_q30.setText(data.q30)
+        self.ed_url.setText(data.gene_list_url)
+        self._editing = data
+
+    def _field_edited(self, *_):
+        data = self._editing
+        if data is None:
+            return
+        for key, le in self.editor_fields.items():
+            setattr(data.patient, key, le.text().strip())
+        data.clinical_history = self.ed_history.toPlainText().strip()
+        data.total_reads = self.ed_reads.text().strip()
+        data.q30 = self.ed_q30.text().strip()
+        data.gene_list_url = self.ed_url.text().strip()
+        item = next((i for i in self.items if i.data is data), None)
+        if item is not None:
+            r = self.items.index(item)
+            name = data.patient.patient_id or data.patient.pin or f"Row {item.row.number}"
+            self.table.item(r, 0).setText(name)
+        self.edited.emit()
+
+    def _checked(self) -> list[int]:
+        return [r for r in range(self.table.rowCount())
+                if self.table.item(r, 0).checkState() == Qt.Checked]
+
+    def _filter(self, text: str):
+        text = text.strip().lower()
+        for r in range(self.table.rowCount()):
+            self.table.setRowHidden(r, bool(text) and text not in self.table.item(r, 0).text().lower())
+
+    def _select_all(self, state: bool):
+        self.table.blockSignals(True)
+        for r, item in enumerate(self.items[:self.table.rowCount()]):
+            if item.data:
+                self.table.item(r, 0).setCheckState(Qt.Checked if state else Qt.Unchecked)
+        self.table.blockSignals(False)
+        self._count()
+
+    def _count(self):
+        checked = len(self._checked())
+        self.count_label.setText(f"{checked} selected")
+        usable = sum(1 for i in self.items[:self.table.rowCount()] if i.data)
+        self.select_all.setEnabled(usable > 0)
+        self.select_all.blockSignals(True)
+        self.select_all.setChecked(usable > 0 and checked == usable)
+        self.select_all.blockSignals(False)
+
+    # -- export ------------------------------------------------------------
+    def export(self, kind: str, folder_edit: QLineEdit):
+        """Save the ticked reports into the export folder."""
+        win = self.window()
+        if self.busy:
+            return
+        if len(self.items) < self._total:
+            QMessageBox.information(win, "Bulk upload", "Still looking up the patients.")
+            return
+        chosen = [self.items[r] for r in self._checked()]
+        if not chosen:
+            QMessageBox.information(win, "Bulk upload",
+                                    "Tick the patients whose reports you want to export.")
+            return
+        folder = folder_edit.text()
+        if not os.path.isdir(folder):
+            folder = QFileDialog.getExistingDirectory(win, "Choose export folder", folder)
+            if not folder:
+                return
+            folder = os.path.normpath(folder)
+            folder_edit.setText(folder)
+        stems = bulk.stems(chosen)
+        exts = ["docx", "pdf"] if kind == "both" else [kind]
+        existing = [f"{s}.{e}" for s in stems for e in exts
+                    if os.path.exists(os.path.join(folder, f"{s}.{e}"))]
+        if existing and QMessageBox.question(
+                win, "Files exist", "Already in the folder:\n" + "\n".join(existing[:15])
+                + ("\n…" if len(existing) > 15 else "") + "\n\nReplace?") != QMessageBox.Yes:
+            return
+        self._export_log = []
+        self._folder = folder
+        self._progress = QProgressDialog("Saving reports…", "Stop", 0, len(chosen), win)
+        self._progress.setWindowTitle("Bulk upload")
+        self._progress.setWindowModality(Qt.WindowModal)
+        self._progress.setMinimumDuration(0)
+        self._progress.setValue(0)
+        self.export_worker = BulkExportWorker(chosen, stems, folder, kind)
+        self._progress.canceled.connect(lambda: setattr(self.export_worker, "cancelled", True))
+        self.export_worker.progress.connect(self._export_step)
+        self.export_worker.finished_all.connect(self._export_done)
+        self.export_worker.start()
+
+    def _export_step(self, done: int, line: str):
+        self._progress.setValue(done)
+        self._progress.setLabelText(f"Saving reports… {done} of {self._progress.maximum()}")
+        self._export_log.append(line)
+
+    def _export_done(self, made: int, failed: int):
+        self._progress.close()
+        box = QMessageBox(QMessageBox.Warning if failed else QMessageBox.Information,
+                          "Bulk upload", f"{made} report(s) saved"
+                          f"{f', {failed} failed' if failed else ''}.\n\n{self._folder}",
+                          QMessageBox.Ok, self.window())
+        box.setDetailedText("\n".join(self._export_log))
+        box.exec()
+
+    def shutdown(self):
+        if self.export_worker is not None:
+            self.export_worker.cancelled = True
+        for w in (self.worker, self.export_worker):
+            if w is not None:
+                w.wait(60000)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -528,14 +990,16 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("AndersonDiagnostics", "CMCReportAutomation")
         self._preview_dir = tempfile.mkdtemp(prefix="cmc_preview_")
         self._preview_pdf = ""
+        self._preview_snapshot: dict | None = None
         self._preview_seq = 0
         self._preview_worker: RenderWorker | None = None
         self._export_worker: RenderWorker | None = None
+        self._bulk_data: ReportData | None = None   # the bulk row being previewed
         self._pending = False            # an edit arrived while a preview was rendering
 
         # Short delay so several keystrokes share one render; not restarted by
         # further typing, so the preview keeps updating while you type.
-        self._preview_timer = QTimer(self, singleShot=True, interval=300)
+        self._preview_timer = QTimer(self, singleShot=True, interval=150)
         self._preview_timer.timeout.connect(self._preview)
         self._redraw_timer = QTimer(self, singleShot=True, interval=120)
         self._redraw_timer.timeout.connect(self._redraw)
@@ -551,26 +1015,56 @@ class MainWindow(QMainWindow):
         self._template_changed()
 
     # -- layout ------------------------------------------------------------
+    @staticmethod
+    def _caption(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("caption")
+        return label
+
+    @staticmethod
+    def _button(text: str, primary: bool = False, link: bool = False,
+                solid: bool = False) -> QPushButton:
+        b = QPushButton(text)
+        b.setCursor(Qt.PointingHandCursor)
+        if primary:
+            b.setProperty("primary", True)
+        if link:
+            b.setProperty("link", True)
+        if solid:
+            b.setProperty("solid", True)
+        return b
+
+    @staticmethod
+    def _shrinkable(combo: QComboBox, chars: int) -> None:
+        """Let a dropdown narrow below its longest entry, so the form column
+        can be made slimmer and the preview gets the room."""
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMaxVisibleItems(12)        # show the whole list, no scroll arrows
+        combo.setMinimumContentsLength(chars)
+
     def _build_ui(self):
         form = QWidget()
         lay = QVBoxLayout(form)
+        lay.setContentsMargins(14, 12, 8, 14)
+        lay.setSpacing(12)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("<b>Template:</b>"))
+        row.setSpacing(10)
+        row.addWidget(self._caption("Template"))
         self.template_combo = QComboBox()
         for key, cfg in TEMPLATES.items():
             self.template_combo.addItem(cfg.name, key)
         self.template_combo.currentIndexChanged.connect(self._template_changed)
-        row.addWidget(self.template_combo)
-        row.addSpacing(16)
-        row.addWidget(QLabel("<b>Clinical reviewer:</b>"))
-        self.reviewer_combo = QComboBox()
-        self.reviewer_combo.setToolTip("Whose signature goes in the signature block")
-        for key, rev in REVIEWERS.items():
-            self.reviewer_combo.addItem(rev.name, key)
-        self.reviewer_combo.currentIndexChanged.connect(self._edited)
-        row.addWidget(self.reviewer_combo)
-        row.addStretch(1)
+        self.template_combo.currentIndexChanged.connect(self._bulk_stale)
+        self._shrinkable(self.template_combo, 14)
+        row.addWidget(self.template_combo, 1)
+        row.addSpacing(14)
+        self.mode_bar = QTabBar()          # Manual entry / Bulk upload, drives mode_tabs
+        self.mode_bar.setDrawBase(False)
+        self.mode_bar.setExpanding(False)
+        self.mode_bar.addTab("Manual entry")
+        self.mode_bar.addTab("Bulk upload")
+        row.addWidget(self.mode_bar)
         lay.addLayout(row)
 
         # Two tabs: patient demography / the rest of the report inputs.
@@ -579,6 +1073,8 @@ class MainWindow(QMainWindow):
 
         pgrp = QGroupBox("Patient details")
         pf = QFormLayout(pgrp)
+        pf.setVerticalSpacing(10)
+        pf.setHorizontalSpacing(14)
         self.fields: dict[str, QLineEdit | ChoiceBox | DateField] = {}
         for key, label, example in PATIENT_FIELDS:
             if key in PATIENT_CHOICES:     # dropdown + "Other" (typed by the user)
@@ -596,8 +1092,7 @@ class MainWindow(QMainWindow):
                 self.fetch_status.setWordWrap(True)
                 pf.addRow("", self.fetch_status)
                 self._set_fetch_status(
-                    "Enter the PIN (Anderson ID) to fill the details from the patient sheet."
-                    if sheet_client.is_configured() else
+                    "" if sheet_client.is_configured() else
                     "Patient sheet not set up - enter the details manually.", "gray")
             else:
                 pf.addRow(label, le)
@@ -638,55 +1133,88 @@ class MainWindow(QMainWindow):
         rlay.addWidget(lgrp)
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("innerTabs")
+        self.tabs.tabBar().setExpanding(True)     # tabs share the full width evenly
+        self.tabs.tabBar().setDrawBase(False)
         self.tabs.addTab(self._scroll_page(patient_page), "Patient Details")
         self.tabs.addTab(self._scroll_page(report_page), "Report Details")
         self.gene_editor = GeneTableEditor()
         self.gene_editor.changed.connect(self._edited)
-        self.gene_editor.restore_btn.clicked.connect(self._restore_gene_table)
         self.tabs.addTab(self.gene_editor, "Gene Coverage")
-        lay.addWidget(self.tabs, 1)
+        # Manual entry and bulk upload are separate tabs.
+        self.bulk_panel = BulkPanel()
+        self.bulk_panel.shown.connect(self._bulk_show)
+        self.bulk_panel.edited.connect(self._edited)
+        self.bulk_panel.upload.connect(self._bulk_upload)
+        self.mode_tabs = QTabWidget()
+        self.mode_tabs.addTab(self.tabs, "Manual entry")
+        self.mode_tabs.addTab(self.bulk_panel, "Bulk upload")
+        self.mode_tabs.tabBar().hide()
+        self.mode_bar.currentChanged.connect(self.mode_tabs.setCurrentIndex)
+        self.mode_tabs.currentChanged.connect(self.mode_bar.setCurrentIndex)
+        self.mode_tabs.currentChanged.connect(lambda _: self._preview())
+        lay.addWidget(self.mode_tabs, 1)
 
-        fgrp = QGroupBox("Export folder")
-        fl = QHBoxLayout(fgrp)
+        foot = QFrame()
+        foot.setObjectName("card")
+        fl = QVBoxLayout(foot)
+        fl.setContentsMargins(14, 12, 14, 14)
+        fl.setSpacing(10)
+        row = QHBoxLayout()
+        row.addWidget(self._caption("Save to"))
         self.folder_edit = QLineEdit(self.settings.value("out_dir", "") or
                                      os.path.join(os.path.expanduser("~"), "Downloads"))
         self.folder_edit.setReadOnly(True)
-        fl.addWidget(self.folder_edit, 1)
-        browse = QPushButton("Browse…")
+        row.addWidget(self.folder_edit, 1)
+        browse = self._button("Change folder…")
         browse.clicked.connect(self._choose_folder)
-        fl.addWidget(browse)
-        lay.addWidget(fgrp)
-
+        row.addWidget(browse)
+        fl.addLayout(row)
         row = QHBoxLayout()
-        for text, kind in (("Export DOCX", "docx"), ("Export PDF", "pdf"),
-                           ("Export DOCX + PDF", "both")):
-            b = QPushButton(text)
-            b.setMinimumHeight(32)
-            b.clicked.connect(lambda _=False, k=kind: self._export(k))
-            row.addWidget(b)
-        lay.addLayout(row)
-
-        row = QHBoxLayout()
-        for text, slot in (("Save Draft", self._save_draft), ("Load Draft", self._load_draft)):
-            b = QPushButton(text)
-            b.setMinimumHeight(32)
+        row.setSpacing(10)
+        row.addWidget(self._caption("Clinical reviewer"))
+        self.reviewer_combo = QComboBox()
+        self.reviewer_combo.setToolTip("Whose signature goes in the signature block")
+        for key, rev in REVIEWERS.items():
+            self.reviewer_combo.addItem(rev.name, key)
+        self.reviewer_combo.currentIndexChanged.connect(self._edited)
+        self.reviewer_combo.currentIndexChanged.connect(self._reviewer_changed)
+        self._shrinkable(self.reviewer_combo, 16)
+        row.addWidget(self.reviewer_combo, 1)
+        for text, slot, tip in (("Save draft", self._save_draft,
+                                 "Save this report's details to a file to continue later"),
+                                ("Load draft", self._load_draft,
+                                 "Open a report you saved earlier")):
+            b = self._button(text)
+            b.setToolTip(tip)
             b.clicked.connect(slot)
             row.addWidget(b)
-        lay.addLayout(row)
+        fl.addLayout(row)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        for text, kind, primary in (("Export DOCX", "docx", False), ("Export PDF", "pdf", False),
+                                    ("Export DOCX + PDF", "both", True)):
+            b = self._button(text, primary=primary, solid=not primary)
+            b.setMinimumHeight(38)
+            b.clicked.connect(lambda _=False, k=kind: self._export(k))
+            row.addWidget(b, 1)
+        fl.addLayout(row)
+        lay.addWidget(foot)
 
         preview = QWidget()
         pl = QVBoxLayout(preview)
         bar = QHBoxLayout()
-        refresh = QPushButton("Refresh Preview")
-        refresh.clicked.connect(self._preview)
+        refresh = self._button("Refresh preview")
+        refresh.clicked.connect(lambda: self._preview(force=True))
         bar.addWidget(refresh)
         self.preview_status = QLabel()
-        self.preview_status.setStyleSheet("color:gray;font-style:italic;")
+        self.preview_status.setObjectName("hint")
         bar.addWidget(self.preview_status, 1)
         pl.addLayout(bar)
         self.scroll = PreviewScroll()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("background:#606060;")
+        self.scroll.setStyleSheet("QScrollArea { background:#e5e7eb; border:1px solid #d1d5db; "
+                                  "border-radius:8px; }")
         self.scroll.resized.connect(self._redraw_timer.start)
         pages = QWidget()
         self.pages = QVBoxLayout(pages)
@@ -697,9 +1225,10 @@ class MainWindow(QMainWindow):
         split = QSplitter(Qt.Horizontal)
         split.addWidget(form)
         split.addWidget(preview)
-        split.setStretchFactor(0, 0)          # extra width goes to the preview
+        split.setStretchFactor(0, 1)          # form and preview share the width equally
         split.setStretchFactor(1, 1)
-        split.setSizes([520, 880])
+        split.setSizes([1000, 1000])
+        split.setChildrenCollapsible(False)
         self.setCentralWidget(split)
 
     # -- data --------------------------------------------------------------
@@ -751,12 +1280,11 @@ class MainWindow(QMainWindow):
     def _set_reviewer(self, key: str):
         self.reviewer_combo.setCurrentIndex(max(self.reviewer_combo.findData(key), 0))
 
-    def _restore_gene_table(self):
-        self.gene_editor.set_genes(self._template_genes, "Restored the template's gene table.")
-
     def _received_changed(self, text: str):
         """Collection date is the same as the received date: keep it in step,
         unless the user has set a different collection date themselves."""
+        if self._loading_draft:             # a draft carries its own collection date
+            return
         coll = self.fields["collection_date"]
         if not coll.text().strip() or coll.text() == self._last_received:
             coll.setText(text)
@@ -857,17 +1385,29 @@ class MainWindow(QMainWindow):
 
     # -- drafts ------------------------------------------------------------
     def _save_draft(self):
-        data = self._collect()
-        pid = self._file_name_part(data.patient.patient_id) or "report"
+        """Manual entry: this report. Bulk upload: the ticked reports (all of
+        them when none is ticked) go into one draft file."""
+        if self._in_bulk():
+            reports = self.bulk_panel.draft_reports()
+            if not reports:
+                QMessageBox.information(self, "Save draft", "There are no reports to save yet.")
+                return
+            payload, pid = {"reports": [r.to_dict() for r in reports]}, "bulk"
+        else:
+            data = self._collect()
+            payload = data.to_dict()
+            pid = self._file_name_part(data.patient.patient_id) or "report"
         folder = self.settings.value("draft_dir", "") or self.folder_edit.text()
         path, _ = QFileDialog.getSaveFileName(
             self, "Save draft", os.path.join(folder, f"{pid}_draft.json"), "Draft (*.json)")
         if not path:
             return
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data.to_dict(), fh, indent=2, ensure_ascii=False)
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
         self.settings.setValue("draft_dir", os.path.dirname(path))
-        QMessageBox.information(self, "Draft saved", f"Saved:\n{os.path.normpath(path)}")
+        count = len(payload["reports"]) if "reports" in payload else 1
+        QMessageBox.information(self, "Draft saved", f"Saved {count} report"
+                                f"{'s' if count != 1 else ''}:\n{os.path.normpath(path)}")
 
     def _load_draft(self):
         folder = self.settings.value("draft_dir", "") or self.folder_edit.text()
@@ -876,11 +1416,21 @@ class MainWindow(QMainWindow):
             return
         try:
             with open(path, encoding="utf-8") as fh:
-                data = ReportData.from_dict(json.load(fh))
+                raw = json.load(fh)
+            if isinstance(raw, dict) and "reports" in raw:
+                reports = [ReportData.from_dict(r) for r in raw["reports"]]
+            else:
+                reports = [ReportData.from_dict(raw)]
+            if not reports:
+                raise ValueError("the draft holds no reports")
         except Exception as e:  # noqa: BLE001
             QMessageBox.critical(self, "Load draft", f"Could not read the draft:\n{e}")
             return
         self.settings.setValue("draft_dir", os.path.dirname(path))
+        if len(reports) > 1:
+            self._load_bulk_draft(reports)
+            return
+        data = reports[0]
         # Select the draft's template without its defaults overwriting the draft.
         cfg = get_template(data.template_key)
         self.template_combo.blockSignals(True)
@@ -889,11 +1439,18 @@ class MainWindow(QMainWindow):
         self._template_defaults = self._defaults_for(cfg.key)
         self._template_reviewer = cfg.reviewer
         self._set_reviewer(data.reviewer or cfg.reviewer)
+        self.patient_id_label.setText(cfg.patient_id_label)
+        self.fields["patient_id"].setPlaceholderText(
+            f"e.g. {cfg.patient_id_prefix} - 00000" if cfg.patient_id_prefix
+            else "e.g. 12345" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
+        self.mode_tabs.setCurrentWidget(self.tabs)      # a draft is a manual-entry report
         # A draft's saved details win: don't let its PIN trigger a sheet lookup.
         self._loading_draft = True
         for key, le in self.fields.items():
             le.setText(getattr(data.patient, key, ""))
         self._loading_draft = False
+        self._last_received = self.fields["received_date"].text()
+        self._set_fetch_status("", "gray")
         if not self.fields["report_date"].text().strip():
             self.fields["report_date"].setText(today_str())
         self._fetched_pin = data.patient.pin.strip().upper()
@@ -907,11 +1464,66 @@ class MainWindow(QMainWindow):
                                    else "Showing the template's gene table.")
         self._preview()
 
+    def _load_bulk_draft(self, reports: list):
+        """A draft of several reports: list them in the Bulk upload tab to
+        pick one, edit it in Manual entry, or export the ticked ones."""
+        first = reports[0]
+        cfg = get_template(first.template_key)
+        self.template_combo.blockSignals(True)
+        self.template_combo.setCurrentIndex(max(self.template_combo.findData(cfg.key), 0))
+        self.template_combo.blockSignals(False)
+        self._template_defaults = self._defaults_for(cfg.key)
+        self._template_reviewer = cfg.reviewer
+        self._set_reviewer(first.reviewer or cfg.reviewer)
+        self._bulk_data = None
+        self.mode_tabs.setCurrentWidget(self.bulk_panel)
+        self.bulk_panel.restore(reports, cfg.key, self.reviewer_combo.currentData() or "")
+
     @staticmethod
     def _defaults_for(key: str) -> dict[str, str]:
         cfg = get_template(key)
         return {"hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
                 "specimen": cfg.specimen}
+
+    def _bulk_upload(self, path: str = ""):
+        """Pick an Excel file: its patients are looked up and listed in the
+        Bulk Upload tab; only the ones the user ticks are exported."""
+        if self.bulk_panel.busy:
+            return
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Choose the Excel file", "",
+                                                  "Excel files (*.xlsx *.xlsm)")
+        if not path:
+            return
+        try:
+            rows = bulk.read_rows(path)
+        except bulk.BulkError as e:
+            QMessageBox.warning(self, "Bulk upload", str(e))
+            return
+        self._bulk_data = None
+        self.bulk_panel.load(rows, self.template_combo.currentData() or DEFAULT_TEMPLATE,
+                             self.reviewer_combo.currentData() or "",
+                             self.reviewer_combo.currentText(),
+                             self.fields["report_date"].text().strip())
+
+    def _reviewer_changed(self, *_):
+        """The signature follows the chosen reviewer in the bulk list too."""
+        key = self.reviewer_combo.currentData() or ""
+        self.bulk_panel.set_reviewer(key)
+        if self._in_bulk():
+            self._preview()
+
+    def _bulk_stale(self, *_):
+        self.bulk_panel.check_current(self.template_combo.currentData() or DEFAULT_TEMPLATE,
+                                      self.reviewer_combo.currentData() or "")
+
+    def _bulk_show(self, data):
+        self._bulk_data = data
+        if self.mode_tabs.currentWidget() is self.bulk_panel:
+            self._preview()
+
+    def _in_bulk(self) -> bool:
+        return self.mode_tabs.currentWidget() is self.bulk_panel
 
     def _choose_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -922,15 +1534,21 @@ class MainWindow(QMainWindow):
             self.settings.setValue("out_dir", folder)
 
     # -- preview -----------------------------------------------------------
-    def _preview(self):
+    def _preview(self, force: bool = False):
         if self._preview_worker is not None and self._preview_worker.isRunning():
             self._pending = True           # re-render once this one finishes
             return
         self._pending = False
+        data = (self._bulk_data if self._in_bulk() else None) or self._collect()
+        snapshot = data.to_dict()
+        if (not force and snapshot == self._preview_snapshot and self._preview_pdf
+                and os.path.exists(self._preview_pdf)):
+            return                         # nothing changed since the last render
+        self._preview_snapshot = snapshot
         self._preview_seq += 1
         out = os.path.join(self._preview_dir, f"preview_{self._preview_seq}.pdf")
         self.preview_status.setText("Rendering preview…")
-        self._preview_worker = RenderWorker(self._collect(), out, "pdf")
+        self._preview_worker = RenderWorker(data, out, "pdf")
         self._preview_worker.done.connect(self._preview_ready)
         self._preview_worker.failed.connect(self._preview_failed)
         self._preview_worker.finished.connect(
@@ -949,6 +1567,7 @@ class MainWindow(QMainWindow):
                 pass        # still open elsewhere; the temp folder is removed on exit
 
     def _preview_failed(self, tb: str):
+        self._preview_snapshot = None       # retry on the next change
         self.preview_status.setText("Preview failed: " + tb.strip().splitlines()[-1])
 
     def _redraw(self) -> int:
@@ -960,7 +1579,7 @@ class MainWindow(QMainWindow):
         vbar = self.scroll.verticalScrollBar()
         pos = vbar.value() / vbar.maximum() if vbar.maximum() else 0.0
         dpr = self.scroll.devicePixelRatioF() or 1.0
-        width = max(self.scroll.viewport().width() - 28, 240)
+        width = max(self.scroll.viewport().width() - 12, 240)
         doc = pdfium.PdfDocument(self._preview_pdf)
         try:
             count = len(doc)
@@ -968,7 +1587,7 @@ class MainWindow(QMainWindow):
                 self.pages.takeAt(self.pages.count() - 1).widget().deleteLater()
             while self.pages.count() < count:
                 lbl = QLabel(alignment=Qt.AlignHCenter)
-                lbl.setStyleSheet("background:white;margin:6px 0;")
+                lbl.setStyleSheet("background:white;margin:8px 0;border:1px solid #d1d5db;")
                 self.pages.addWidget(lbl)
             for i in range(count):
                 page = doc[i]
@@ -984,20 +1603,16 @@ class MainWindow(QMainWindow):
         return count
 
     # -- export ------------------------------------------------------------
-    @staticmethod
-    def _file_name_part(text: str) -> str:
-        """'MEL - 12345' -> 'MEL-12345'; 'Baby. Arun K' -> 'Baby_Arun_K'."""
-        text = re.sub(r"\s*-\s*", "-", text.strip())
-        return re.sub(r"[^A-Za-z0-9-]+", "_", text).strip("_")
+    _file_name_part = staticmethod(bulk.file_name_part)
 
-    def _file_stem(self, data: ReportData) -> str:
-        cfg = get_template(data.template_key)
-        date = data.patient.report_date or datetime.now().strftime("%d/%m/%Y")
-        return "_".join(filter(None, (self._file_name_part(data.patient.patient_id) or "report",
-                                      cfg.file_suffix,
-                                      date.replace("/", cfg.file_date_sep))))
+    @staticmethod
+    def _file_stem(data: ReportData) -> str:
+        return bulk.file_stem(data)
 
     def _export(self, kind: str):
+        if self._in_bulk():
+            self.bulk_panel.export(kind, self.folder_edit)
+            return
         if self._export_worker is not None and self._export_worker.isRunning():
             return
         data = self._collect()
@@ -1031,6 +1646,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Export failed", tb)
 
     def closeEvent(self, e):
+        self.bulk_panel.shutdown()
         for w in (self._preview_worker, self._export_worker):
             if w is not None:
                 w.wait(15000)
@@ -1045,6 +1661,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
+    style.apply(app)
     win = MainWindow()
     win.showMaximized()
     sys.exit(app.exec())

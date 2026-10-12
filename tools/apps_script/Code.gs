@@ -37,10 +37,10 @@
  *   the QC sheet. A QC-only problem comes back as "qc_error" next to the row.
  */
 
-// Patient list: the spreadsheet ID (between /d/ and /edit in its URL) and
-// the tab's "gid=" number.
+// Patient list: the spreadsheet ID (between /d/ and /edit in its URL). Every
+// tab (one per month) whose header row has PIN_COLUMN is searched, left to
+// right; the first tab holding the PIN gives the row.
 var PATIENT_SPREADSHEET_ID = 'PASTE_PATIENT_SPREADSHEET_ID_HERE';
-var PATIENT_GID = 534459671;
 
 // Sequencing QC sheet (Anderson_ID / After Data / Q30). Every tab whose
 // header row has QC_PIN_COLUMN is searched (one tab per batch), left to right.
@@ -101,7 +101,7 @@ function doGet(e) {
     var row = wes
       ? lookup_(WES_SPREADSHEET_ID, WES_GID, PIN_COLUMN, WES_RETURN_COLUMNS, pin,
                 WES_HEADER_ROW, true)
-      : lookup_(PATIENT_SPREADSHEET_ID, PATIENT_GID, PIN_COLUMN, RETURN_COLUMNS, pin);
+      : lookupAllTabs_(PATIENT_SPREADSHEET_ID, PIN_COLUMN, RETURN_COLUMNS, pin);
     if (row && wes) {
       row['Client name'] = row['Client'];
       delete row['Client'];
