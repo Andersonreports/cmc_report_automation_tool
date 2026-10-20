@@ -971,7 +971,7 @@ def _keep_headings_with_next(doc):
             ppr.insert(0, kn)
 
 
-def _tidy_classification_table(doc):
+def _tidy_classification_table(doc, pad: int = 180):
     """Classification column: one paragraph per label, centred vertically.
     The template has an empty paragraph above 'Variant of Uncertain
     Significance' and splits 'Likely Pathogenic' over two paragraphs, which
@@ -1000,7 +1000,7 @@ def _tidy_classification_table(doc):
     if old is not None:
         tbl_pr.remove(old)
     mar = OxmlElement("w:tblCellMar")
-    for side, w in (("top", 180), ("left", 50), ("bottom", 180), ("right", 50)):
+    for side, w in (("top", pad), ("left", 50), ("bottom", pad), ("right", 50)):
         el = OxmlElement(f"w:{side}")
         el.set(qn("w:w"), str(w))
         el.set(qn("w:type"), "dxa")
@@ -1254,6 +1254,25 @@ def _fill_signatures(doc, data: ReportData):
     raise TemplateError("Signature picture not found in the template.")
 
 
+def _space_after_tables(doc):
+    """A little room under the Sequence data attributes table and the variant
+    tables: the note under them and the 'Abbreviation:' line otherwise touch
+    the table's bottom border (often through a nearly empty spacer paragraph)."""
+    notes = ("Abbreviation:", "Genetic test results are reported")
+    for tbl in doc.element.body.iterchildren(qn("w:tbl")):
+        nxt = tbl.getnext()
+        gap = None
+        while nxt is not None and nxt.tag == qn("w:p") and not _text(nxt).strip():
+            gap = gap if gap is not None else nxt
+            nxt = nxt.getnext()
+        if nxt is None or nxt.tag != qn("w:p") or not _text(nxt).strip().startswith(notes):
+            continue
+        para = gap if gap is not None else nxt
+        pf = Paragraph(para, None).paragraph_format
+        if pf.space_before is None or pf.space_before < Pt(8):
+            pf.space_before = Pt(8)
+
+
 def _tighten_signature_gap(doc):
     """Drop the empty paragraphs between 'This report has been reviewed and
     approved by' and the signature picture."""
@@ -1307,6 +1326,15 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         _title_size(doc)
         _justify_section(doc, "Disclaimer")
         _match_reference_layout(doc)
+    else:
+        # Laid out as the finished report, but the same table padding, sizes
+        # and alignment as every other template. The pages are packed tight, so
+        # the classification rows get less padding than elsewhere.
+        _tidy_classification_table(doc, pad=70)
+        _result_tag_size(doc)
+        _title_size(doc)
+        _justify_section(doc, "Disclaimer")
+    _space_after_tables(doc)
     _keep_headings_with_next(doc)
     _new_pages(doc, get_template(data.template_key).new_page_before + tuple(new_pages))
     _fix_page_count(doc)

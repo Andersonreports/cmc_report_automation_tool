@@ -626,6 +626,8 @@ class DropZone(QFrame):
         return px
 
     def _hover(self, on: bool):
+        if bool(self.property("hover")) == on:
+            return                  # already in that state: no restyle
         self.setProperty("hover", on)
         self.style().unpolish(self)
         self.style().polish(self)
@@ -640,24 +642,66 @@ class DropZone(QFrame):
         if e.button() == Qt.LeftButton:
             self.chosen.emit("")
 
+    @classmethod
+    def _excel_in(cls, mime) -> str:
+        """The first Excel file in a drag / drop, '' if there is none."""
+        for u in mime.urls():
+            path = u.toLocalFile()
+            if path.lower().endswith(cls.EXTS):
+                return path
+        return ""
+
     def dragEnterEvent(self, e):
-        if any(u.toLocalFile().lower().endswith(self.EXTS) for u in e.mimeData().urls()):
+        if self._excel_in(e.mimeData()):
             e.acceptProposedAction()
             self._hover(True)
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        # Without this the cursor flickers between "allowed" and "blocked" while moving.
+        if self._excel_in(e.mimeData()):
+            e.acceptProposedAction()
+        else:
+            e.ignore()
 
     def dragLeaveEvent(self, e):
         self._hover(False)
 
     def dropEvent(self, e):
         self._hover(False)
-        for u in e.mimeData().urls():
-            path = u.toLocalFile()
-            if path.lower().endswith(self.EXTS):
-                self.chosen.emit(path)
-                return
+        path = self._excel_in(e.mimeData())
+        if not path:
+            e.ignore()
+            return
+        e.acceptProposedAction()
+        # Handle the file after the drop has finished: the handlers can open
+        # dialogs or start work, which would freeze Explorer's drag until done.
+        QTimer.singleShot(0, lambda: self.chosen.emit(path))
 
 
-class VariantsPanel(QWidget):
+class ExcelDropPanel:
+    """Mixin for a panel holding a DropZone: an Excel file can be dropped
+    anywhere on the panel, not only on the small dashed box."""
+
+    def _accept_excel_drops(self, zone: DropZone) -> None:
+        self._drop_zone = zone
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, e):
+        self._drop_zone.dragEnterEvent(e)
+
+    def dragMoveEvent(self, e):
+        self._drop_zone.dragMoveEvent(e)
+
+    def dragLeaveEvent(self, e):
+        self._drop_zone.dragLeaveEvent(e)
+
+    def dropEvent(self, e):
+        self._drop_zone.dropEvent(e)
+
+
+class VariantsPanel(ExcelDropPanel, QWidget):
     """Variants of an uploaded listed-variants Excel: tick the ones the report
     should show (CMC - Pathogenic template)."""
     changed = Signal()
@@ -688,6 +732,7 @@ class VariantsPanel(QWidget):
         zone = DropZone("Click to browse or drag & drop the listed-variants Excel (.xlsx)",
                         "Choose the VarSeq listed-variants Excel for this patient")
         zone.chosen.connect(self.upload_requested)
+        self._accept_excel_drops(zone)
         top = QHBoxLayout()                 # the upload box and the search box side by side
         top.addWidget(zone, 3)
         self.search = QLineEdit(placeholderText="Search variants…")
@@ -1201,7 +1246,7 @@ class VariantsPanel(QWidget):
             self.table.item(r).setHidden(bool(text) and text not in hay)
 
 
-class BulkPanel(QWidget):
+class BulkPanel(ExcelDropPanel, QWidget):
     """The patients of an uploaded Excel file, looked up and listed inside the
     main window. Nothing is saved until the user ticks the ones they want and
     uses the window's Export buttons; clicking a row previews that report."""
@@ -1224,6 +1269,7 @@ class BulkPanel(QWidget):
 
         zone = DropZone()
         zone.chosen.connect(self.upload)
+        self._accept_excel_drops(zone)
         lay.addWidget(zone)
         self.search = QLineEdit(placeholderText="Search patients…")
         self.search.setClearButtonEnabled(True)
