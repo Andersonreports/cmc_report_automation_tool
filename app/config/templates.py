@@ -9,8 +9,10 @@ A new template must therefore keep: the patient table (first cell starting
 
 To add a template:
   1. Drop the .docx into app/templates/.
-  2. Add a TemplateConfig to TEMPLATES below.
-The UI's template picker lists it automatically.
+  2. Add a TemplateConfig to TEMPLATES below (pathogenic=True for a report with
+     a pathogenic result).
+The UI's template picker lists it automatically, under "No pathogenic" or
+"Pathogenic".
 """
 from __future__ import annotations
 
@@ -44,6 +46,18 @@ class TemplateConfig:
     # Clinical reviewer whose signature block is used unless the user picks
     # another one: a key of REVIEWERS.
     reviewer: str = "ROBERT"
+    # The template has the variant tables, which can be filled from an uploaded
+    # listed-variants Excel (the UI's Variants tab).
+    variants: bool = False
+    # A report with a pathogenic result: the picker lists it under "Pathogenic",
+    # every other template under "No pathogenic".
+    pathogenic: bool = False
+    # The .docx is already laid out exactly as the finished report: its classification
+    # table, headings, notes and spacing are left as they are (no layout fixes).
+    keep_layout: bool = False
+    # The template has a second set of tables for the Excel's Secondary Findings; the
+    # result tag and its classification then apply to the other variants only.
+    secondary_findings: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +101,40 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_id_label="Patient name",
         specimen="Peripheral Blood",
         patient_sheet="WES",
+    ),
+    # Endocrinology layout with a pathogenic result: red result line, variant
+    # list, a Variant Interpretation page and the parents-testing recommendation.
+    # The variant tables hold the sample variant and are edited in the .docx.
+    "CMC_PATHO": TemplateConfig(
+        key="CMC_PATHO",
+        name="CMC - Pathogenic",
+        docx_file="whole_exome_patho.docx",
+        hospital="Christian Medical College - Molecular Endocrinology",
+        referring_clinician="Dr. Aaron Chapla",
+        patient_id_client="CHRISTIAN MEDICAL COLLEGE - MOLECULAR ENDOCRINOLOGY",
+        patient_id_prefix="MEL",
+        specimen="Peripheral Blood",
+        new_page_before=("Variant Interpretation",),
+        variants=True,
+        pathogenic=True,
+    ),
+    # Whole Exome + Mitochondrial report with a result: the exome part has two sets of
+    # variant tables, the primary and the Secondary findings (the Excel's
+    # "Secondary Findings" block); the mitochondrial result stays as in the template.
+    "WES_MITO_PATHO": TemplateConfig(
+        key="WES_MITO_PATHO",
+        name="Whole Exome & Mitochondrial - Pathogenic",
+        docx_file="whole_exome_mito_patho.docx",
+        patient_id_label="Patient name",
+        specimen="Peripheral Blood",
+        file_suffix="WES_&_Mito_report",
+        new_page_before=("Variant Interpretation",),
+        keep_layout=True,
+        secondary_findings=True,
+        reviewer="SARATH",
+        patient_sheet="WES",
+        variants=True,
+        pathogenic=True,
     ),
     "WES_MITO": TemplateConfig(
         key="WES_MITO",

@@ -6,8 +6,8 @@ sheets, exactly as Fetch does; the other columns are what the user supplies:
 
     Anderson ID | Clinical History | Total Read Generated | Data ≥ Q30 | Methodology link
 
-A blank Total Read Generated / Data ≥ Q30 is taken from the sequencing QC
-sheet; a blank Methodology link keeps the template's link. The gene coverage
+Total Read Generated / Data ≥ Q30 are taken from the sequencing QC sheet (the
+Excel columns are only a fallback when the PIN is not there); a blank Methodology link keeps the template's link. The gene coverage
 table is the template's.
 """
 from __future__ import annotations
@@ -86,7 +86,8 @@ def read_rows(path: str) -> list[BulkRow]:
         raise BulkError("The Excel file is empty.")
     header = [_ALIASES.get(re.sub(r"\s+", " ", _cell_text(c).lower()), "") for c in rows[0]]
     if "pin" not in header:
-        raise BulkError("The first row must have the headings: " + ", ".join(COLUMNS) + ".")
+        raise BulkError("The first row must have the heading Anderson ID (optional: "
+                        + ", ".join(COLUMNS[1:]) + ").")
     out = []
     for i, cells in enumerate(rows[1:], start=2):
         values = {}
@@ -142,14 +143,16 @@ def build_data(row: BulkRow, template_key: str, reviewer: str, report_date: str)
         fields["collection_date"] = fields.get("received_date", "")
     fields["report_date"] = report_date
 
-    reads, q30 = row.reads, row.q30
-    if (not reads or not q30) and sheet_client.qc_configured():
+    # The sequencing QC sheet is the source; the Excel's own values are only a fallback.
+    reads, q30 = "", ""
+    if sheet_client.qc_configured():
         try:
             qc = sheet_client.fetch_qc(row.pin) or {}
         except sheet_client.SheetError as e:
             qc = {}
             notes.append(f"QC sheet: {e}")
-        reads, q30 = reads or qc.get("total_reads", ""), q30 or qc.get("q30", "")
+        reads, q30 = qc.get("total_reads", ""), qc.get("q30", "")
+    reads, q30 = reads or row.reads, q30 or row.q30
     if not reads:
         notes.append("Total Read Generated is blank")
     if not q30:

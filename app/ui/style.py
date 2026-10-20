@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtCore import QPoint, Qt
 
 ACCENT = "#0f4c5c"
@@ -39,7 +39,47 @@ def _arrow_png() -> str:
     return path.replace("\\", "/")
 
 
+def chevrons_icon(direction: str, color: str = ACCENT) -> QIcon:
+    """A double chevron (« or ») drawn here, so the collapse / expand buttons do not
+    depend on a font having the arrow characters."""
+    px = QPixmap(48, 48)
+    px.fill(Qt.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(color), 5, c=Qt.RoundCap, j=Qt.RoundJoin))
+    sign = -1 if direction == "left" else 1
+    for x in (17, 31):                      # two chevrons, left or right pointing
+        tip, back = (x + 7 * sign, x - 7 * sign)
+        p.drawPolyline([QPoint(back, 12), QPoint(tip, 24), QPoint(back, 36)])
+    p.end()
+    return QIcon(px)
+
+
+def _box_pngs() -> tuple[str, str]:
+    """Round-cornered tick boxes (empty / ticked) for the variant list."""
+    folder = os.path.join(tempfile.gettempdir(), "cmc_report_ui")
+    os.makedirs(folder, exist_ok=True)
+    paths = []
+    for name, ticked in (("box_off.png", False), ("box_on.png", True)):
+        path = os.path.join(folder, name)
+        px = QPixmap(36, 36)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(ACCENT if ticked else "#9fb3c8"), 3))
+        p.setBrush(QColor(ACCENT) if ticked else QColor(SURFACE))
+        p.drawRoundedRect(3, 3, 30, 30, 8, 8)
+        if ticked:
+            p.setPen(QPen(QColor("white"), 4.2, c=Qt.RoundCap, j=Qt.RoundJoin))
+            p.drawPolyline([QPoint(10, 19), QPoint(16, 25), QPoint(27, 12)])
+        p.end()
+        px.save(path, "PNG")
+        paths.append(path.replace("\\", "/"))
+    return paths[0], paths[1]
+
+
 def stylesheet() -> str:
+    box_off, box_on = _box_pngs()
     return f"""
 * {{ font-family: "Segoe UI", "Noto Sans", sans-serif; font-size: 10pt; color: {INK}; }}
 QMainWindow, QDialog, QMessageBox, QProgressDialog {{ background: {BG}; }}
@@ -47,6 +87,23 @@ QToolTip {{ background: {INK}; color: white; border: none; padding: 5px 8px; }}
 QLabel:disabled {{ color: #9ca3af; }}
 QLabel#caption {{ color: {MUTED}; font-weight: 600; }}
 QLabel#hint {{ color: {MUTED}; }}
+QFrame#listhead {{ background: #eef3f9; border: 1px solid {LINE}; border-bottom: none;
+                  border-top-left-radius: 8px; border-top-right-radius: 8px; }}
+QFrame#listhead QPushButton {{ background: transparent; padding: 2px 6px; color: {ACCENT}; }}
+QFrame#listhead QPushButton:hover {{ background: #dde7f1; }}
+QListWidget#variantlist {{ background: {SURFACE}; border: 1px solid {LINE}; border-top: none;
+    border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; padding: 4px; outline: 0; }}
+QListWidget#variantlist::item {{ padding: 7px 6px; margin: 1px 0; border-radius: 7px; }}
+QListWidget#variantlist::item:hover {{ background: #eef3f9; }}
+QListWidget#variantlist::item:selected {{ background: {ACCENT}; color: white; }}
+QListWidget#variantlist::indicator, QCheckBox#selectall::indicator {{ width: 18px; height: 18px; }}
+QListWidget#variantlist::indicator:unchecked, QCheckBox#selectall::indicator:unchecked {{
+    image: url({box_off}); }}
+QListWidget#variantlist::indicator:checked, QCheckBox#selectall::indicator:checked {{
+    image: url({box_on}); }}
+QCheckBox#selectall {{ spacing: 8px; font-weight: 600; }}
+QLabel#section {{ color: {ACCENT}; font-weight: 700; font-size: 11pt;
+                 border-bottom: 2px solid {LINE}; padding: 10px 0 4px 0; }}
 QLabel#chip {{ background: {TINT}; color: {ACCENT}; border-radius: 11px;
               padding: 3px 12px; font-weight: 600; }}
 
@@ -60,10 +117,12 @@ QComboBox {{ padding-right: 30px; combobox-popup: 0; }}
 QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
     width: 28px; border: none; }}
 QComboBox::down-arrow {{ image: url({_arrow_png()}); width: 12px; height: 12px; }}
-QComboBox QLineEdit {{ border: none; padding: 0; background: transparent; }}
+QComboBox QLineEdit, QComboBox QLineEdit:focus, QComboBox QLineEdit:hover {{
+    border: none; padding: 0; background: transparent; }}
 QComboBox QAbstractItemView {{ background: {SURFACE}; border: 1px solid {LINE}; outline: 0;
     padding: 4px; selection-background-color: {TINT}; selection-color: #111827; }}
 QComboBox QAbstractItemView::item {{ min-height: 30px; padding: 2px 8px; border-radius: 6px; }}
+QComboBox QAbstractItemView::item:disabled {{ background: #dcebee; color: {ACCENT}; font-weight: 700; }}
 
 QPushButton {{ background: #edf4f5; border: none; border-radius: 10px;
     padding: 8px 18px; color: {ACCENT_DARK}; font-weight: 600; }}

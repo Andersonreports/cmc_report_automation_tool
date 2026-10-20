@@ -25,3 +25,9 @@ dist/
 
 # Link to the live patient sheet (patient details) - local only, never commit
 app/config/sheet_config.py
+
+# Tesseract OCR bundled into the local exe build (164 MB; not source)
+tesseract/
+
+# duplicate of app/data/omim_genemap2.txt
+/omim_genemap2.txt

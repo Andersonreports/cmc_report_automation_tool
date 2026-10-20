@@ -8,6 +8,15 @@ Templates:
 * **Whole Exome Sequencing** (Endocrinology layout; first patient field is
   *Patient name*; no default Hospital/Clinic or Referring Clinician; Specimen is always Peripheral Blood; patient
   details come from the WES sheet, see below)
+* **CMC - Pathogenic** (Endocrinology layout for a report with a pathogenic
+  finding: red result line, variant list, *Variant Interpretation* page and the
+  parents-testing recommendation. Its **Variants** tab takes the VarSeq
+  listed-variants Excel (S.NO / GENE / VARIANT / ACMG / ZYGOSITY / OMIM … columns):
+  every variant is listed and the ticked ones fill the Results table, the
+  Variant Interpretation blocks and their evidence / OMIM paragraphs. With none
+  ticked the template's sample variant stays. Not in the Excel, so left as
+  "-" or blank for the user to edit in the .docx: gene strand, ACMG criteria,
+  CADD/MT2/LRT, PhyloP/GERP++, PubMed ids)
 * **Whole Exome & Mitochondrial** (WES + whole mitochondrial genome; first
   patient field is *Patient name*; patient details come from the WES sheet)
 
@@ -100,6 +109,12 @@ run.bat            (or:  python -m app.main)
 
 PDF export and the preview need **LibreOffice** (found on PATH or in
 Program Files) or **Microsoft Word** as a fallback.
+
+The Variants tab's **From image...** button (backup for the NC id in the Genomic
+Position) reads a screenshot with **Tesseract OCR** (`winget install
+UB-Mannheim.TesseractOCR`; found on PATH, in `%LOCALAPPDATA%\Programs\Tesseract-OCR`,
+Program Files, or a `tesseract/` folder next to the exe). Without it, it falls back to
+the text recognition built into Windows, which is less reliable.
 
 ## Project layout
 

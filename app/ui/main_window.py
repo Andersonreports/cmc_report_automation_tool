@@ -17,11 +17,11 @@ import traceback
 from datetime import datetime
 
 from PySide6.QtCore import QDate, QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton, QScrollArea,
+    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton, QScrollArea,
     QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QTabBar, QTabWidget, QToolButton,
     QVBoxLayout, QWidget, QWidgetAction,
 )
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from ..config.templates import DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, get_template
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
-from ..core import bulk, sheet_client
+from ..core import bulk, gnomad, ocr, sheet_client, variants as variants_core
 from . import style
 from ..core.models import PatientInfo, ReportData, today_str
 
@@ -131,7 +131,7 @@ class FetchWorker(QThread):
         self.found.emit(self.pin, out, "\n".join(notes))
 
 
-PIN_PATTERN = re.compile(r"ADK\d{10}", re.I)
+PIN_PATTERN = re.compile(r"ADK\d{10}|PH\d{11}", re.I)    # patient sheet / WES sheet PINs
 
 
 class ChoiceBox(QComboBox):
@@ -163,6 +163,29 @@ class ChoiceBox(QComboBox):
             super().wheelEvent(e)
         else:
             e.ignore()
+
+
+class NarrativeEdit(QPlainTextEdit):
+    """Paragraph box for the report: pasted text (e.g. copied from a PDF) is cleaned -
+    line breaks joined and the notes that follow it in the report dropped."""
+
+    def insertFromMimeData(self, source):
+        if source.hasText():
+            self.insertPlainText(variants_core.clean_narrative(source.text()))
+        else:
+            super().insertFromMimeData(source)
+
+
+class StableCombo(QComboBox):
+    """Dropdown the mouse wheel never changes (even when it has focus), so
+    scrolling a form can't alter the value by accident; the scroll passes on to the form."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, e):
+        e.ignore()
 
 
 class OtherChoiceBox(ChoiceBox):
@@ -420,11 +443,16 @@ class DateField(QWidget):
 # Patient fields shown as dropdowns / date pickers instead of plain text.
 PATIENT_CHOICES = {
     "hospital": ["Christian Medical College - Molecular Endocrinology",
-                 "Christian Medical College - Nephrology"],
+                 "Christian Medical College - Nephrology",
+                 "Rajiv Gandhi Government General Hospital, MMC - Chennai"],
+    "referring_clinician": ["Dr. Aaron Chapla",
+                            "Dr. Suceena Alexander, MD., DM., FRCP(Lon), FASN, PhD.",
+                            "Dr. N. Sheik Sulthan Alavudeen MD., DM.,"],
     "specimen": ["DNA", "Peripheral Blood"],
 }
 OTHER_PLACEHOLDERS = {
     "hospital": "Type the hospital / clinic name",
+    "referring_clinician": "Type the clinician name",
     "specimen": "Type the specimen",
 }
 DATE_FIELDS = {"collection_date", "received_date", "report_date"}
@@ -559,13 +587,14 @@ class DropZone(QFrame):
 
     EXTS = (".xlsx", ".xlsm")
 
-    def __init__(self):
+    def __init__(self, label: str = "Click to browse or drag & drop the Excel file (.xlsx)",
+                 tip: str = "Choose the filled Excel file with the patients' details"):
         super().__init__()
         self.setObjectName("dropzone")
         self.setCursor(Qt.PointingHandCursor)
         self.setAcceptDrops(True)
         self.setFixedHeight(40)
-        self.setToolTip("Choose the filled Excel file with the patients' details")
+        self.setToolTip(tip)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 2, 14, 2)
         lay.setSpacing(12)
@@ -573,7 +602,7 @@ class DropZone(QFrame):
         icon = QLabel()
         icon.setPixmap(self._icon(20))
         lay.addWidget(icon)
-        text = QLabel("Click to browse or drag & drop the Excel file (.xlsx)")
+        text = QLabel(label)
         text.setObjectName("dropText")
         lay.addWidget(text)
         lay.addStretch(1)
@@ -626,6 +655,550 @@ class DropZone(QFrame):
             if path.lower().endswith(self.EXTS):
                 self.chosen.emit(path)
                 return
+
+
+class VariantsPanel(QWidget):
+    """Variants of an uploaded listed-variants Excel: tick the ones the report
+    should show (CMC - Pathogenic template)."""
+    changed = Signal()
+    upload_requested = Signal(str)  # the Excel file dropped on the box, or "" to browse
+    CHECK_NC_CHROMOSOME = True         # refuse an image's NC id of another chromosome
+    RESULT_COLORS = {"pathogenic": "#d00000", "likely": "#d00000",    # as in the report
+                     "vus_related": "#0070C0"}
+    RESULT_CLASS = {"pathogenic": "Pathogenic", "likely": "Likely Pathogenic",   # classification each
+                    "vus_related": "Variant of Uncertain Significance"}      # result tag sets
+    LIST_COLS = ("Gene", "Variant")      # the picker: every variant of the Excel
+    DETAIL_COLS = ("Gene", "Classification", "Disease or Disorder", "Criteria",
+                   "Variant Frequency")  # the typed-in details of the ticked variants
+    TYPED = {2: "disease", 3: "criteria", 4: "frequency"}      # detail columns filled in by the user
+    TYPED_TIPS = {2: "Type the disease with its braces, e.g. {Breast-ovarian cancer, familial, 2}. The (OMIM#id) line is added from the Excel",
+                  3: "Type the criteria, e.g. PVS1, PM2_Supp",
+                  4: "Type the number before the sentence, e.g. 0.012; the wording can be edited too"}
+    SEARCH_KEYS = ("gene", "variant", "protein", "zygosity", "exon", "inheritance",
+                   "classification", "disease", "criteria", "frequency")
+
+    def __init__(self):
+        super().__init__()
+        self._variants: list[dict] = []
+        self._current = -1                    # variant index shown in the detail form
+        self.secondary_separate = False       # the template has its own Secondary findings set
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setSpacing(10)
+        zone = DropZone("Click to browse or drag & drop the listed-variants Excel (.xlsx)",
+                        "Choose the VarSeq listed-variants Excel for this patient")
+        zone.chosen.connect(self.upload_requested)
+        top = QHBoxLayout()                 # the upload box and the search box side by side
+        top.addWidget(zone, 3)
+        self.search = QLineEdit(placeholderText="Search variants…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        top.addWidget(self.search, 2, Qt.AlignVCenter)
+        lay.addLayout(top)
+        self.status = QLabel("Upload the listed-variants Excel, then tick the variants "
+                             "to show in the report. With none ticked the template's "
+                             "sample variant is kept.")
+        self.status.setObjectName("hint")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        self.result_row = QWidget()         # the report's result tag (boxed line under Results)
+        rr = QHBoxLayout(self.result_row)
+        rr.setContentsMargins(0, 0, 0, 0)
+        rr.addWidget(QLabel("Result:"))
+        self.f_result = StableCombo()
+        self.f_result.addItem("Automatic (from the classifications)", "")
+        for key, text in variants_core.RESULT_TAGS:
+            self.f_result.addItem(text, key)
+            self.f_result.setItemData(self.f_result.count() - 1,
+                                      QColor(self.RESULT_COLORS[key]), Qt.ForegroundRole)
+        self.f_result.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.f_result.setMinimumContentsLength(12)
+        self.f_result.currentIndexChanged.connect(self._result_changed)
+        rr.addWidget(self.f_result, 1)
+        lay.addWidget(self.result_row)
+        self.select_all = QCheckBox("Select all")      # sits on top of the variant list
+        self.select_all.setObjectName("selectall")
+        self.select_all.setCursor(Qt.PointingHandCursor)
+        self.select_all.clicked.connect(self._select_all)
+
+        # Left: the variants to tick. Right: the details of the highlighted one.
+        self.body = QSplitter(Qt.Horizontal)
+        self.table = QListWidget()
+        self.table.setObjectName("variantlist")
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.setMinimumWidth(220)
+        self.table.itemChanged.connect(self._ticked)
+        self.table.currentRowChanged.connect(self._show_detail)
+        self.list_box = QWidget()           # the variant list with its collapse symbol
+        ll = QVBoxLayout(self.list_box)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(0)
+        head_bar = QFrame()                 # header of the list: Select all + collapse symbol
+        head_bar.setObjectName("listhead")
+        head = QHBoxLayout(head_bar)
+        head.setContentsMargins(8, 2, 4, 2)
+        head.addWidget(self.select_all)
+        head.addStretch(1)
+        self.hide_list = self._symbol_button("left", "Hide the variant list (more room for the details)")
+        head.addWidget(self.hide_list)
+        ll.addWidget(head_bar)
+        ll.addWidget(self.table, 1)
+        self.body.addWidget(self.list_box)
+
+        self.detail = QWidget()
+        dl = QFormLayout(self.detail)
+        dl.setVerticalSpacing(10)
+        dl.setHorizontalSpacing(12)
+        dl.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        dl.setRowWrapPolicy(QFormLayout.WrapAllRows)     # label above, the box gets the full width
+        self.detail_title = QLabel()        # stays above the scrolling form: which variant is open
+        self.detail_title.setObjectName("hint")
+        self.detail_title.setWordWrap(True)
+        self.f_gene = QLineEdit()
+        self.f_gene.setReadOnly(True)
+        self.f_variant = QLineEdit()
+        self.f_variant.setReadOnly(True)
+        self.f_class = StableCombo()
+        self.f_class.setToolTip("Classification shown in the report: Franklin / ACMG / ClinVar")
+        self.f_class.currentTextChanged.connect(self._classified)
+        self.f_typed: dict[str, QLineEdit] = {}
+        def section(title: str):
+            head = QLabel(title)
+            head.setObjectName("section")
+            dl.addRow(head)
+
+        section("Variant Interpretation")
+        dl.addRow("Gene:", self.f_gene)
+        dl.addRow("Variant:", self.f_variant)
+        dl.addRow("Classification:", self.f_class)
+        omim_tip = ("OMIM number(s) shown as (OMIM#id); the Excel lists every phenotype of "
+                    "the gene; delete the ones that do not apply")
+        inh_tip = "e.g. AD, AR (duplicates are merged)"
+
+        def typed_row(key: str, label: str, tip: str):
+            edit = QLineEdit()
+            edit.setToolTip(tip)
+            edit.textEdited.connect(lambda text, k=key: self._typed(k, text))
+            self.f_typed[key] = edit
+            if key == "genomic_position":       # + a backup: read the NC id from an image
+                row = QWidget()
+                rl2 = QHBoxLayout(row)
+                rl2.setContentsMargins(0, 0, 0, 0)
+                rl2.addWidget(edit, 1)
+                btn = QPushButton("From image…")
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.setToolTip("Pick a screenshot / photo that shows the NC accession "
+                               "(e.g. NC_000013.11); it replaces the one built from the Excel")
+                btn.clicked.connect(self._nc_from_image)
+                rl2.addWidget(btn)
+                dl.addRow(row)                  # the section heading already says what it is
+                return
+            if key != "frequency":
+                dl.addRow(label, edit)
+                return
+            combo = StableCombo()           # the sentence to start from; still editable
+            combo.setEditable(True)
+            combo.setLineEdit(edit)
+            combo.setInsertPolicy(QComboBox.NoInsert)
+            combo.addItems([variants_core.FREQUENCY_TEXT, variants_core.FREQUENCY_ALL,
+                            variants_core.FREQUENCY_ABSENT])
+            combo.textActivated.connect(lambda text: (self._typed("frequency", text),
+                                                      edit.setCursorPosition(0)))
+            row = QWidget()                 # + a button that looks the number up on gnomAD
+            rl2 = QHBoxLayout(row)
+            rl2.setContentsMargins(0, 0, 0, 0)
+            rl2.addWidget(combo, 1)
+            btn = QPushButton("From gnomAD")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip("Look the variant up on the gnomAD website (v4 exomes + genomes) and fill in "
+                           "the South Asian frequency = allele count / allele number x 100")
+            btn.clicked.connect(self._frequency_from_gnomad)
+            rl2.addWidget(btn)
+            dl.addRow(label, row)
+
+        typed_row("omim_id", "OMIM ID:", omim_tip)          # above the disease it fills
+        for c, key in self.TYPED.items():
+            typed_row(key, self.DETAIL_COLS[c] + ":", self.TYPED_TIPS[c])
+        typed_row("inheritance", "Inheritance:", inh_tip)
+        self.detail_form = dl
+        self.f_silico: dict[str, QLineEdit] = {}       # shown by the variant's Sequence Ontology
+        for title, group in (("In Silico Predictions", variants_core.SILICO),
+                             ("Conservation Scores", variants_core.CONSERVATION)):
+            section(title)
+            for label, key in group:
+                edit = QLineEdit()
+                edit.setToolTip(f"{label} value for the report, e.g. D / T / a score")
+                edit.textEdited.connect(lambda text, e=edit: self._upper(e, text))
+                edit.textEdited.connect(lambda text, k=key: self._typed(k, text.upper()))
+                self.f_typed[key] = edit
+                dl.addRow(f"{label}:", edit)
+                if group is variants_core.SILICO:
+                    self.f_silico[key] = edit
+        section("Genomic Position")
+        typed_row("genomic_position", "Genomic Position:",
+                  "Built from the Excel (chromosome, position, ref/alt, GRCh38 NC accession) with the "
+                  "transcript in brackets at the end, which the report puts on its own line; "
+                  "edit it to replace it, e.g. for an insertion that is a duplication")
+        section("Evidence Links")
+        for key, label in (("clinvar_link", "ClinVar link:"), ("pubmed_link", "PubMed link:")):
+            edit = QLineEdit()
+            edit.setPlaceholderText("Paste the link (or just the number)")
+            edit.setToolTip("The report shows the evidence number as a hyperlink to this link")
+            edit.textEdited.connect(lambda text, k=key: self._typed(k, text))
+            self.f_typed[key] = edit
+            dl.addRow(label, edit)
+        self.f_notes: dict[str, QPlainTextEdit] = {}      # the report's free-text paragraphs
+        section("Narrative")
+        for key, label in (("evidence", "Clinical and Literature Evidences:"),
+                           ("omim_phenotype", "OMIM phenotype:")):
+            box = NarrativeEdit()
+            box.setFixedHeight(90)
+            box.setTabChangesFocus(True)
+            box.textChanged.connect(lambda k=key, b=box: self._typed(k, b.toPlainText()))
+            self.f_notes[key] = box
+            dl.addRow(label, box)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(self.detail)
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(6)
+        title_row = QHBoxLayout()
+        self.show_list = self._symbol_button("right", "Show the variant list")
+        self.show_list.hide()
+        title_row.addWidget(self.show_list)
+        title_row.addWidget(self.detail_title, 1)
+        rl.addLayout(title_row)
+        rl.addWidget(scroll, 1)
+        self.body.addWidget(right)
+        self._detail_box = right
+        self.body.setStretchFactor(0, 2)
+        self.body.setStretchFactor(1, 3)
+        lay.addWidget(self.body, 1)
+        self._detail_scroll = scroll
+        self._show_tools(False)
+
+    def _show_tools(self, on: bool):
+        for w in (self.search, self.result_row, self.body):
+            w.setVisible(on)
+        if on:
+            self._toggle_list(shown=True)
+
+    def _symbol_button(self, direction: str, tip: str) -> QPushButton:
+        """A small » / « button; the one that brings the list back is solid, so it
+        stands out beside the form."""
+        btn = QPushButton()
+        shown = direction == "right"
+        btn.setIcon(style.chevrons_icon(direction, "white" if shown else style.ACCENT))
+        btn.setIconSize(QSize(18, 18))
+        btn.setFixedSize(34, 30)
+        if shown:
+            btn.setProperty("solid", True)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(tip)
+        btn.clicked.connect(lambda *_: self._toggle_list())
+        return btn
+
+    def _toggle_list(self, *_, shown: bool | None = None):
+        """Hide / show the variant list (the picker) next to the details form."""
+        if shown is None:
+            shown = not self.list_box.isVisible()
+        for w in (self.list_box, self.search):
+            w.setVisible(shown)
+        self.show_list.setVisible(not shown)
+
+    def set_variants(self, variants: list[dict]):
+        """List these variants (each carries its own "selected" flag)."""
+        self._variants = [dict(v) for v in variants]
+        self.table.blockSignals(True)
+        self.table.clear()
+        for v in self._variants:
+            it = QListWidgetItem(f"{v.get('gene', '')}  {v.get('variant', '')}")
+            it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if v.get("selected") else Qt.Unchecked)
+            self.table.addItem(it)
+        self.table.blockSignals(False)
+        self.search.clear()
+        self._show_tools(bool(self._variants))
+        self.status.setVisible(not self._variants)   # the hint is only for the empty tab
+        self._count()
+        self.table.setCurrentRow(0 if self._variants else -1)
+        self._show_detail(self.table.currentRow())
+
+    def _show_detail(self, idx: int):
+        """Fill the form with the highlighted variant's details."""
+        self._current = idx if 0 <= idx < len(self._variants) else -1
+        self._detail_box.setVisible(self._current >= 0)
+        if self._current < 0:
+            return
+        v = self._variants[self._current]
+        self.detail_title.setText(
+            f"<b>{v.get('gene', '')} {v.get('variant', '')}</b> &mdash; "
+            + ("ticked: its details go in the report." if v.get("selected")
+               else "not ticked: tick it in the list to include it in the report."))
+        self.f_gene.setText(v.get("gene", ""))
+        self.f_variant.setText(v.get("variant", ""))
+        options = variants_core.classification_options(v) or [""]
+        if v.get("classification") and v["classification"] not in options:
+            options.append(v["classification"])
+        self.f_class.blockSignals(True)
+        self.f_class.clear()
+        self.f_class.addItems(options)
+        self.f_class.setCurrentText(v.get("classification", options[0]))
+        self.f_class.blockSignals(False)
+        for key, edit in self.f_typed.items():
+            edit.setText(v.get(key, ""))
+        freq = self.f_typed["frequency"]
+        if not v.get("frequency"):      # the sentence for this variant; only the number is typed
+            freq.setText(variants_core.default_frequency(v))
+            freq.setCursorPosition(0)
+        freq.setToolTip(f"{self.TYPED_TIPS[4]}. Excel counts: South Asian "
+                        f"{v.get('gnomad_sa') or '-'}, all {v.get('gnomad_all') or '-'}")
+        for key, box in self.f_notes.items():
+            box.blockSignals(True)
+            text = v.get(key, "")
+            if key == "omim_phenotype" and text and text == v.get("omim_phenotype_prefix"):
+                text += " "                 # so the typed sentence continues after it
+            box.setPlainText(text)
+            box.blockSignals(False)
+        shown = {key for _, key in variants_core.insilico_tools(v)}
+        for key, edit in self.f_silico.items():
+            self.detail_form.setRowVisible(edit, key in shown)
+        if not v.get("genomic_position"):       # show the built value so it can be edited
+            self.f_typed["genomic_position"].setText(variants_core.genomic_text(v))
+        opts = v.get("omim_options", "")
+        self.f_typed["omim_id"].setPlaceholderText(f"Sheet has: {opts}" if opts else "")
+
+    def variants(self) -> list[dict]:
+        return [dict(v) for v in self._variants]
+
+    def _nc_from_image(self):
+        """Backup for the Genomic Position: the NC accession read from an image
+        replaces the built-in one. It must belong to the variant's chromosome."""
+        if not 0 <= self._current < len(self._variants):
+            return
+        v = self._variants[self._current]
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Image showing the NC accession", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            nc = ocr.nc_from_image(path, variants_core.expected_nc_number(v))
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Genomic Position", f"Could not read the image.\n\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        if not nc:
+            QMessageBox.information(
+                self, "Genomic Position",
+                "No NC accession (like NC_000013.11) was found in the image.\n\n"
+                "Use a clearer or larger picture of the part of the screen that shows it, "
+                "or type the Genomic Position yourself.")
+            return
+        want = variants_core.expected_nc_number(v)
+        if self.CHECK_NC_CHROMOSOME and want and int(nc[3:9]) != want:
+            QMessageBox.warning(
+                self, "Genomic Position",
+                f"The image shows {nc}, which is not the chromosome of {v.get('gene', '')} "
+                f"{v.get('variant', '')} (chromosome {v.get('chrom_pos', '').partition(':')[0]}). "
+                "It was not used - check the image.")
+            return
+        text = variants_core.genomic_text(v, nc)
+        v["genomic_position"] = text
+        self.f_typed["genomic_position"].setText(text)
+        self.changed.emit()
+
+    def _frequency_from_gnomad(self):
+        """Fill the Variant Frequency of the shown variant from the gnomAD website."""
+        if not 0 <= self._current < len(self._variants):
+            return
+        v = self._variants[self._current]
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            text = gnomad.frequency_text(v)
+        except gnomad.GnomadError as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Variant Frequency", str(e))
+            return
+        QApplication.restoreOverrideCursor()
+        v["frequency"] = text
+        freq = self.f_typed["frequency"]
+        freq.setText(text)
+        freq.setCursorPosition(0)
+        self.changed.emit()
+
+    @staticmethod
+    def _upper(edit: QLineEdit, text: str):
+        """Capitals as the user types (D, DA, C ...), keeping the cursor where it is."""
+        if text != text.upper():
+            pos = edit.cursorPosition()
+            edit.setText(text.upper())
+            edit.setCursorPosition(pos)
+
+    RESULT_TINTS = {"pathogenic": "#fdeeee", "likely": "#fdeeee", "vus_related": "#eaf4fc"}
+
+    def _result_changed_style(self):
+        """The box looks like the report's result tag: the tag's colour for the text
+        and a 2 px frame, on a light tint of it."""
+        key = self.result_tag()
+        color = self.RESULT_COLORS.get(key)
+        self.f_result.setStyleSheet(
+            f"QComboBox {{ color: {color}; font-weight: 700; background: {self.RESULT_TINTS[key]};"
+            f" border: 2px solid {color}; border-radius: 8px; padding: 6px 30px 6px 12px; }}"
+            f"QComboBox:hover, QComboBox:focus {{ border: 2px solid {color}; padding: 6px 30px 6px 12px; }}"
+            if color else "")
+
+    def _result_changed(self, *_):
+        """Picking a result also sets the classification of the ticked variants
+        (the open one when none is ticked) to match it."""
+        self._result_changed_style()
+        label = self.RESULT_CLASS.get(self.result_tag())
+        if label:
+            ticked = [v for v in self._variants if v.get("selected")]
+            targets = ticked or ([self._variants[self._current]]
+                                 if 0 <= self._current < len(self._variants) else [])
+            if self.secondary_separate:     # Secondary findings keep their own classification
+                targets = [v for v in targets if not variants_core.is_secondary(v)]
+            for v in targets:
+                v["classification"] = label
+            if 0 <= self._current < len(self._variants) and                     self._variants[self._current] in targets:
+                self.f_class.blockSignals(True)
+                if self.f_class.findText(label) < 0:
+                    self.f_class.addItem(label)
+                self.f_class.setCurrentText(label)
+                self.f_class.blockSignals(False)
+        self.changed.emit()
+
+    def result_tag(self) -> str:
+        return self.f_result.currentData() or ""
+
+    def set_result_tag(self, key: str):
+        self.f_result.blockSignals(True)
+        self.f_result.setCurrentIndex(max(0, self.f_result.findData(key or "")))
+        self.f_result.blockSignals(False)
+        self._result_changed_style()
+
+    def _classified(self, text: str):
+        if 0 <= self._current < len(self._variants):
+            self._variants[self._current]["classification"] = text
+            self.changed.emit()
+
+    def _ticked(self, item):
+        r = self.table.row(item)
+        if r >= len(self._variants):
+            return
+        self._variants[r]["selected"] = item.checkState() == Qt.Checked
+        self._count()
+        if r == self._current:
+            self._show_detail(r)
+        self.changed.emit()
+
+    def _typed(self, key: str, text: str):
+        if 0 <= self._current < len(self._variants):
+            v = self._variants[self._current]
+            v[key] = text.strip()
+            if key == "disease":        # typed by hand: stop auto-filling (until cleared)
+                v["disease_manual"] = bool(text.strip())
+                self._sync_omim_to_disease()
+            elif key == "inheritance":
+                v["inheritance_manual"] = bool(text.strip())
+            elif key == "omim_id":
+                self._refresh_disease()
+            if key == "evidence":       # typed by hand: stop auto-filling (until cleared)
+                v["evidence_manual"] = bool(text.strip())
+            elif key in ("clinvar_link", "pubmed_link"):
+                self._refresh_evidence()
+            if key in ("disease", "omim_id"):
+                self._refresh_omim_phenotype()
+            self.changed.emit()
+
+    def _refresh_omim_phenotype(self):
+        """The OMIM phenotype paragraph starts with '{Disease} (OMIM#id)'. When the
+        disease or OMIM number changes, that start is replaced and the sentence the
+        user typed after it is kept."""
+        v = self._variants[self._current]
+        new, old = variants_core.omim_phenotype_prefix(v), v.get("omim_phenotype_prefix", "")
+        cur = v.get("omim_phenotype", "")
+        if cur and not (old and cur.startswith(old)):
+            return                          # the user wrote the paragraph themselves
+        text = new + (cur[len(old):] if cur else "")
+        v["omim_phenotype"], v["omim_phenotype_prefix"] = text, new
+        box = self.f_notes["omim_phenotype"]
+        box.blockSignals(True)
+        box.setPlainText(text + (" " if text and text == new else ""))
+        box.blockSignals(False)
+
+    def _sync_omim_to_disease(self):
+        """Diseases deleted from the Disease box: keep only the OMIM numbers (and their
+        inheritance) of the ones that remain."""
+        v = self._variants[self._current]
+        kept = variants_core.omim_ids_in(v, v["disease"])
+        if not kept:
+            return
+        v["omim_id"] = ", ".join(kept)
+        self.f_typed["omim_id"].setText(v["omim_id"])
+        inh = variants_core.suggested_inheritance(v)
+        if inh and not v.get("inheritance_manual"):
+            v["inheritance"] = inh
+            self.f_typed["inheritance"].setText(inh)
+
+    def _refresh_disease(self):
+        """Fill Disease or Disorder and Inheritance from the chosen OMIM number(s),
+        unless the user has typed their own."""
+        v = self._variants[self._current]
+        inh = variants_core.suggested_inheritance(v)
+        if inh and not v.get("inheritance_manual"):
+            v["inheritance"] = inh
+            self.f_typed["inheritance"].setText(inh)
+        if v.get("disease_manual"):
+            return
+        v["disease"] = variants_core.suggested_disease(v)
+        self.f_typed["disease"].setText(v["disease"])
+        if not v.get("evidence_manual") and v.get("pubmed_link"):
+            self._refresh_evidence()
+
+    def _refresh_evidence(self):
+        """Fill the evidence paragraph from the ClinVar / PubMed links, unless the
+        user has written their own text."""
+        v = self._variants[self._current]
+        if v.get("evidence_manual"):
+            return
+        v["evidence"] = variants_core.suggested_evidence(v)
+        box = self.f_notes["evidence"]
+        box.blockSignals(True)
+        box.setPlainText(v["evidence"])
+        box.blockSignals(False)
+
+    def _count(self):
+        n = sum(1 for v in self._variants if v.get("selected"))
+        self.select_all.blockSignals(True)
+        self.select_all.setChecked(bool(self._variants) and n == len(self._variants))
+        self.select_all.blockSignals(False)
+
+    def _select_all(self, state: bool):
+        """Tick / clear every variant that is currently listed (the search hides the rest)."""
+        self.table.blockSignals(True)
+        for r, v in enumerate(self._variants):
+            if not self.table.item(r).isHidden():
+                v["selected"] = state
+                self.table.item(r).setCheckState(Qt.Checked if state else Qt.Unchecked)
+        self.table.blockSignals(False)
+        self._count()
+        self._show_detail(self._current)
+        self.changed.emit()
+
+
+    def _filter(self, text: str):
+        text = text.strip().lower()
+        for r, v in enumerate(self._variants):
+            hay = " ".join(v.get(k, "") for k in self.SEARCH_KEYS).lower()
+            self.table.item(r).setHidden(bool(text) and text not in hay)
 
 
 class BulkPanel(QWidget):
@@ -722,7 +1295,7 @@ class BulkPanel(QWidget):
                            ("referring_clinician", "Referring Clinician"),
                            ("specimen", "Specimen"), ("collection_date", "Collection Date"),
                            ("received_date", "Received Date"), ("report_date", "Report Date")):
-            if key in ("hospital", "specimen"):     # dropdown + "Other", as in Manual entry
+            if key in ("hospital", "referring_clinician", "specimen"):   # dropdown + "Other", as in Manual entry
                 le = OtherChoiceBox(PATIENT_CHOICES[key], OTHER_PLACEHOLDERS[key])
             else:
                 le = QLineEdit()
@@ -1052,8 +1625,21 @@ class MainWindow(QMainWindow):
         row.setSpacing(10)
         row.addWidget(self._caption("Template"))
         self.template_combo = QComboBox()
-        for key, cfg in TEMPLATES.items():
-            self.template_combo.addItem(cfg.name, key)
+        for heading, patho in (("No pathogenic", False), ("Pathogenic", True)):
+            group = [(key, cfg) for key, cfg in TEMPLATES.items() if cfg.pathogenic == patho]
+            if not group:
+                continue
+            self.template_combo.addItem(f"— {heading} —")     # a heading, not a choice
+            item = self.template_combo.model().item(self.template_combo.count() - 1)
+            item.setFlags(item.flags() & ~(Qt.ItemIsSelectable | Qt.ItemIsEnabled))
+            head_font = QFont(self.template_combo.font())      # highlighted, so it reads as a title
+            head_font.setBold(True)
+            item.setData(head_font, Qt.FontRole)
+            item.setData(QColor(style.ACCENT), Qt.ForegroundRole)
+            item.setData(QColor("#e3eef0"), Qt.BackgroundRole)
+            for key, cfg in group:
+                self.template_combo.addItem(cfg.name, key)
+        self.template_combo.setCurrentIndex(max(self.template_combo.findData(DEFAULT_TEMPLATE), 0))
         self.template_combo.currentIndexChanged.connect(self._template_changed)
         self.template_combo.currentIndexChanged.connect(self._bulk_stale)
         self._shrinkable(self.template_combo, 14)
@@ -1123,6 +1709,7 @@ class MainWindow(QMainWindow):
         qf.addRow("Total Read Generated", self.reads_edit)
         qf.addRow("Data ≥ Q30", self.q30_edit)
         rlay.addWidget(qgrp)
+        self.qc_group = qgrp
 
         lgrp = QGroupBox("Gene list link (Methodology “Click here”)")
         ll = QVBoxLayout(lgrp)
@@ -1141,6 +1728,11 @@ class MainWindow(QMainWindow):
         self.gene_editor = GeneTableEditor()
         self.gene_editor.changed.connect(self._edited)
         self.tabs.addTab(self.gene_editor, "Gene Coverage")
+        # Variants: only for templates with the variant tables (CMC - Pathogenic).
+        self.variants_panel = VariantsPanel()
+        self.variants_panel.changed.connect(self._edited)
+        self.variants_panel.upload_requested.connect(self._upload_variants)
+        self._variants_tab = self.tabs.addTab(self.variants_panel, "Variants")
         # Manual entry and bulk upload are separate tabs.
         self.bulk_panel = BulkPanel()
         self.bulk_panel.shown.connect(self._bulk_show)
@@ -1199,7 +1791,17 @@ class MainWindow(QMainWindow):
             b.clicked.connect(lambda _=False, k=kind: self._export(k))
             row.addWidget(b, 1)
         fl.addLayout(row)
+        self.actions_toggle = QToolButton()
+        self.actions_toggle.setCursor(Qt.PointingHandCursor)
+        self.actions_toggle.setToolTip("Hide or show the export / draft bar")
+        self.actions_toggle.setStyleSheet("QToolButton { border: none; color: #5A6270; "
+                                          "padding: 2px 6px; font-weight: 600; }")
+        self.actions_toggle.clicked.connect(
+            lambda: self._set_actions_shown(foot.isHidden()))
+        lay.addWidget(self.actions_toggle, 0, Qt.AlignRight)
         lay.addWidget(foot)
+        self._actions_bar = foot
+        self._set_actions_shown(str(self.settings.value("actions_shown", "true")).lower() != "false")
 
         preview = QWidget()
         pl = QVBoxLayout(preview)
@@ -1242,6 +1844,8 @@ class MainWindow(QMainWindow):
             gene_list_url=self.url_edit.text().strip(),
             genes=self.gene_editor.genes(),
             reviewer=self.reviewer_combo.currentData() or "",
+            variants=self.variants_panel.variants(),
+            result_tag=self.variants_panel.result_tag(),
         )
 
     def _edited(self, *_):
@@ -1260,6 +1864,7 @@ class MainWindow(QMainWindow):
                 le.setText(value)
         self._template_defaults = new
         cfg = get_template(key)
+        self._show_variants_tab(cfg.variants)
         # Clinical reviewer: the template's, unless the user picked another.
         if self.reviewer_combo.currentData() in (None, self._template_reviewer):
             self._set_reviewer(cfg.reviewer)
@@ -1276,6 +1881,35 @@ class MainWindow(QMainWindow):
             self.gene_editor.set_genes(genes, "Showing the template's gene table.")
         self._template_genes = genes
         self._preview()
+
+    def _set_actions_shown(self, shown: bool):
+        """Show or hide the Save to / reviewer / export bar (remembered)."""
+        self._actions_bar.setVisible(shown)
+        self.actions_toggle.setText("Hide actions ▾" if shown else "Show actions ▴")
+        self.settings.setValue("actions_shown", "true" if shown else "false")
+
+    def _show_variants_tab(self, on: bool):
+        self.variants_panel.secondary_separate = get_template(
+            self.template_combo.currentData()).secondary_findings
+        self.tabs.setTabVisible(self._variants_tab, on)
+        if not on and self.tabs.currentIndex() == self._variants_tab:
+            self.tabs.setCurrentIndex(0)
+
+    def _upload_variants(self, path: str = ""):
+        """Pick the listed-variants Excel: its variants are listed in the
+        Variants tab for the user to tick."""
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Choose the listed-variants Excel", "", "Excel files (*.xlsx *.xlsm)")
+        if not path:
+            return
+        try:
+            found = variants_core.read_variants(path)
+        except variants_core.VariantError as e:
+            QMessageBox.warning(self, "Variants", str(e))
+            return
+        self.variants_panel.set_variants(found)
+        self._edited()
 
     def _set_reviewer(self, key: str):
         self.reviewer_combo.setCurrentIndex(max(self.reviewer_combo.findData(key), 0))
@@ -1462,6 +2096,9 @@ class MainWindow(QMainWindow):
         self.gene_editor.set_genes(data.genes or self._template_genes,
                                    "Gene table from the draft." if data.genes
                                    else "Showing the template's gene table.")
+        self._show_variants_tab(cfg.variants)
+        self.variants_panel.set_variants(data.variants)
+        self.variants_panel.set_result_tag(data.result_tag)
         self._preview()
 
     def _load_bulk_draft(self, reports: list):

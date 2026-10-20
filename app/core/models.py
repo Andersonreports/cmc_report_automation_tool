@@ -45,6 +45,10 @@ class ReportData:
     gene_list_url: str = ""               # Methodology "Click here"; blank = template's link
     genes: list = field(default_factory=list)   # [(gene, coverage)]; empty = template's table
     reviewer: str = ""                    # key into config.templates.REVIEWERS; blank = template's
+    # Listed variants (core.variants) with a "selected" flag; only the selected
+    # ones are written, and none selected keeps the template's sample variant.
+    variants: list = field(default_factory=list)
+    result_tag: str = ""                  # variants.RESULT_TAGS key; blank = from the classifications
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -55,4 +59,5 @@ class ReportData:
         data = _from_dict(cls, {k: v for k, v in d.items() if k != "patient"})
         data.patient = _from_dict(PatientInfo, d.get("patient", {}))
         data.genes = [(str(g), str(c)) for g, c in d.get("genes", [])]
+        data.variants = [dict(v) for v in d.get("variants", [])]
         return data

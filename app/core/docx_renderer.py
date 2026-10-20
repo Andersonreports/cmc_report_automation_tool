@@ -27,7 +27,9 @@ from docx.oxml import OxmlElement
 from docx.shared import Cm, Pt
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.text.run import Run
 from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as _RT
 from docx.text.paragraph import Paragraph
 
 from ..config.templates import REVIEWERS, get_template
@@ -52,6 +54,9 @@ class TemplateError(Exception):
 # ---------------------------------------------------------------------------
 # XML helpers
 # ---------------------------------------------------------------------------
+
+_HYPERLINK = _RT.HYPERLINK
+
 
 def _runs(p_el):
     return [r for r in p_el.iter(qn("w:r")) if r.find(qn("w:t")) is not None]
@@ -242,11 +247,13 @@ def template_gene_table(template_key: str) -> list[tuple[str, str]]:
     return out
 
 
-def _fill_gene_table(doc, data: ReportData):
+def _fill_gene_table(doc, data: ReportData, blank_unused: bool = True):
     """Rebuild the appendix rows from data.genes, filled row by row like the
     template (gene names keep the template's italic style)."""
     table = _gene_table(doc)
     if not data.genes:
+        if not blank_unused:
+            return
         # Keep the template's table, but leave its unused cells empty.
         for row in table.rows[1:]:
             for cell in row.cells:
@@ -271,10 +278,622 @@ def _fill_gene_table(doc, data: ReportData):
         tbl.append(tr)
 
 
-def _fill_qc(doc, data: ReportData):
+def _set_cell_lines(tc, lines: list[str]) -> None:
+    """Write one paragraph per line into a table cell. Each keeps the formatting
+    of the template paragraph at the same position (the last one is cloned when
+    there are more lines); unused template paragraphs are removed."""
+    paras = tc.findall(qn("w:p"))
+    for i, line in enumerate(lines):
+        if i >= len(paras):
+            extra = copy.deepcopy(paras[-1])
+            paras[-1].addnext(extra)
+            paras.append(extra)
+        _set_text(paras[i], line)
+    for p in paras[max(len(lines), 1):]:
+        tc.remove(p)
+
+
+def _set_pairs(p_el, pairs: list[tuple[str, "str | tuple[str, str]"]], part=None,
+               bold: bool = False) -> None:
+    """'Label: value' pairs in one paragraph, the first run's style for the
+    labels and the second's (bold) for the values, as in the template. A value
+    given as (text, url) becomes a hyperlink to `url` (needs the document `part`)."""
+    runs = _runs(p_el)
+    real = [r for r in runs if _text(r).strip()] or runs     # not the spacing runs
+    label_proto = real[0]
+    value_proto = real[1] if len(real) > 1 else real[0]
+    protos = [copy.deepcopy(label_proto), copy.deepcopy(value_proto)]
+    for r in runs:
+        p_el.remove(r)
+    for i, (label, value) in enumerate(pairs):
+        for n, (proto, text) in enumerate(((protos[0], ("      " if i else "") + f"{label}: "),
+                                           (protos[1], value))):
+            url = ""
+            if isinstance(text, tuple):
+                text, url = text
+            r = copy.deepcopy(proto)
+            for child in list(r):
+                if child.tag != qn("w:rPr"):
+                    r.remove(child)
+            t = OxmlElement("w:t")
+            t.text = text
+            t.set(qn("xml:space"), "preserve")
+            r.append(t)
+            if bold and n == 1:         # the values bold, the labels as in the template
+                Run(r, None).bold = True
+            if url and part is not None:
+                rpr = r.get_or_add_rPr()
+                color = OxmlElement("w:color")          # schema order: ... color, sz, szCs, u
+                color.set(qn("w:val"), "0563C1")
+                sz = rpr.find(qn("w:sz"))
+                (sz.addprevious(color) if sz is not None else rpr.append(color))
+                under = OxmlElement("w:u")
+                under.set(qn("w:val"), "single")
+                rpr.append(under)
+                link = OxmlElement("w:hyperlink")
+                link.set(qn("r:id"), part.relate_to(url, _HYPERLINK, is_external=True))
+                link.append(r)
+                p_el.append(link)
+            else:
+                p_el.append(r)
+
+
+def _center_line(p_el) -> None:
+    """Center a paragraph on one line: no tab stops, no indent."""
+    pf = Paragraph(p_el, None).paragraph_format
+    for tabs in p_el.findall(qn("w:pPr") + "/" + qn("w:tabs")):
+        tabs.getparent().remove(tabs)
+    pf.left_indent = pf.right_indent = pf.first_line_indent = 0
+    pf.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
+def _spacer_row(tbl):
+    """An empty, borderless row across the whole table (a gap between blocks)."""
+    cols = len(tbl.findall(qn("w:tblGrid") + "/" + qn("w:gridCol"))) or 1
+    tr = OxmlElement("w:tr")
+    trpr = OxmlElement("w:trPr")
+    cant = OxmlElement("w:cantSplit")
+    height = OxmlElement("w:trHeight")
+    height.set(qn("w:val"), "160")
+    height.set(qn("w:hRule"), "exact")
+    trpr.extend([cant, height])
+    tr.append(trpr)
+    tc = OxmlElement("w:tc")
+    tcpr = OxmlElement("w:tcPr")
+    span = OxmlElement("w:gridSpan")
+    span.set(qn("w:val"), str(cols))
+    borders = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "nil")
+        borders.append(el)
+    tcpr.extend([span, borders])
+    tc.append(tcpr)
+    para = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:before"), "0")
+    spacing.set(qn("w:after"), "0")
+    spacing.set(qn("w:line"), "20")
+    spacing.set(qn("w:lineRule"), "exact")
+    ppr.append(spacing)
+    para.append(ppr)
+    tc.append(para)
+    tr.append(tc)
+    return tr
+
+
+def _no_split(tr) -> None:
+    """Keep a table row on one page."""
+    trpr = tr.get_or_add_trPr()
+    if trpr.find(qn("w:cantSplit")) is None:
+        trpr.insert(0, OxmlElement("w:cantSplit"))
+
+
+_BANNER = "Pathogenic variant related to the given phenotype was identified"
+
+
+OMIM_URL = "https://www.omim.org/entry/{}"
+
+
+def _link_omim(tc, part) -> None:
+    """The '(OMIM#id, id)' line of a Disease cell: each number a hyperlink to its
+    OMIM entry (blue, underlined), the rest as in the template."""
+    p = tc.findall(qn("w:p"))[-1]
+    m = re.fullmatch(r"\(OMIM#([\d,\s]+)\)", _text(p).strip())
+    runs = _runs(p)
+    if not m or not runs:
+        return
+    ids = [i for i in re.split(r"[,\s]+", m.group(1)) if i]
+    proto = copy.deepcopy(runs[0])
+    for r in runs:
+        r.getparent().remove(r)
+    pieces = [("(OMIM#", "")]
+    for n, i in enumerate(ids):
+        pieces += ([(", ", "")] if n else []) + [(i, OMIM_URL.format(i))]
+    pieces.append((")", ""))
+    for text, url in pieces:
+        r = copy.deepcopy(proto)
+        for child in list(r):
+            if child.tag != qn("w:rPr"):
+                r.remove(child)
+        t = OxmlElement("w:t")
+        t.text = text
+        t.set(qn("xml:space"), "preserve")
+        r.append(t)
+        if not url:
+            p.append(r)
+            continue
+        rpr = r.get_or_add_rPr()
+        for color in rpr.findall(qn("w:color")):
+            rpr.remove(color)
+        color = OxmlElement("w:color")          # schema order: ... color, sz, szCs, u
+        color.set(qn("w:val"), "0563C1")
+        sz = rpr.find(qn("w:sz"))
+        (sz.addprevious(color) if sz is not None else rpr.append(color))
+        under = OxmlElement("w:u")
+        under.set(qn("w:val"), "single")
+        rpr.append(under)
+        link = OxmlElement("w:hyperlink")
+        link.set(qn("r:id"), part.relate_to(url, _HYPERLINK, is_external=True))
+        link.append(r)
+        p.append(link)
+
+
+def _color_class(tc, v) -> None:
+    """The classification text in the cell's first paragraph: blue for an uncertain
+    significance (the template's red stays for Pathogenic / Likely Pathogenic)."""
+    from . import variants as vr
+    if vr.classification(v) != "Variant of Uncertain Significance":
+        return
+    for r in tc.find(qn("w:p")).iter(qn("w:r")):
+        rpr = r.get_or_add_rPr()
+        color = rpr.find(qn("w:color"))
+        if color is None:
+            color = OxmlElement("w:color")
+            sz = rpr.find(qn("w:sz"))
+            (sz.addprevious(color) if sz is not None else rpr.append(color))
+        color.set(qn("w:val"), "0070C0")
+
+
+def _set_banner(doc, mode: str) -> None:
+    """The boxed result line under 'Results' (it exists twice in the XML: the
+    DrawingML shape and its VML fallback)."""
+    if mode == "pathogenic":
+        return
+    if mode == "none":              # as the template's own no-variant result line
+        mito = next((p for p in doc.element.body.iter(qn("w:p"))
+                     if p.getparent().tag == qn("w:txbxContent")
+                     and "".join(t.text or "" for t in p.iter(qn("w:t"))).startswith(
+                         "No pathogenic or likely pathogenic")), None)
+        if mito is None:
+            return
+        text = "".join(t.text or "" for t in mito.iter(qn("w:t")))
+        found = mito.find(qn("w:r")).get_or_add_rPr().find(qn("w:color"))
+        color = found.get(qn("w:val")) if found is not None else "0070C0"
+    else:
+        text, color = {
+            "likely": ("Likely pathogenic variant related to the given phenotype was identified",
+                       "FF0000"),
+            "vus_related": ("Variant of uncertain significance related to the given phenotype "
+                            "was identified", "0070C0"),
+        }[mode]
+    for t in doc.element.body.iter(qn("w:t")):
+        if (t.text or "").strip() != _BANNER:
+            continue
+        t.text = text
+        r = t.getparent()
+        r.get_or_add_rPr().find(qn("w:color")).set(qn("w:val"), color)
+
+
+def _variant_sets(doc) -> list[tuple]:
+    """The template's (results table, variant interpretation table) pairs, in order.
+    A results table has 2 rows (header + sample); an interpretation table has 8 per variant."""
+    res, interp = [], []
+    for t in doc.tables:
+        if t.rows and t.rows[0].cells[0].text.strip() == "Gene":
+            (interp if len(t.rows) >= 8 else res).append(t._tbl)
+    return list(zip(res, interp))
+
+
+def _is_secondary(v: dict) -> bool:
+    from . import variants as vr
+    return vr.is_secondary(v)
+
+
+def _fill_variants(doc, data: ReportData):
+    """Replace the template's sample variants with the variants the user ticked.
+    A template with two sets of variant tables (primary / Secondary findings) gets
+    the Excel's Secondary Findings variants in the second set; the second set is
+    removed when none of them is ticked."""
+    chosen = [v for v in data.variants if v.get("selected")]
+    if not data.variants or not get_template(data.template_key).variants:
+        return                      # no Excel uploaded: the template's sample stays
+    sets = _variant_sets(doc)
+    if not sets:
+        raise TemplateError("Template is missing: variant results table")
+    if len(sets) == 2:
+        groups = [[v for v in chosen if not _is_secondary(v)],
+                  [v for v in chosen if _is_secondary(v)]]
+    else:
+        groups = [chosen]
+    for n, ((res, tbl), group) in enumerate(zip(sets, groups)):
+        if n and not group:
+            _drop_secondary_findings(doc, res, tbl)
+        elif len(sets) == 2 and not group:      # only Secondary findings: no primary variant
+            notes = []                          # the notes under the interpretation table
+            el = tbl.getnext()
+            while el is not None and el.tag != qn("w:tbl"):
+                if el.tag == qn("w:p") and _text(el).strip().lower().startswith(
+                        ("*genetic test results", "no other variant")):
+                    notes.append(el)
+                el = el.getnext()
+            for p in notes:
+                p.getparent().remove(p)
+            _drop_interpretation(doc, tbl, whole_doc=False)
+            res.getparent().remove(res)
+            heading = _find_para(doc, "List of significant variant(s)", "variant list heading")
+            heading.getparent().remove(heading)
+            _set_banner(doc, "none")
+        else:
+            _fill_variant_set(doc, data, res, tbl, group, banner=not n,
+                              whole_doc=len(sets) == 1)
+            heading = res.getprevious()                 # 'List of ...' stays with its table,
+            for p in ([heading] if heading is not None and heading.tag == qn("w:p") else []) + [
+                    p for tr in res.findall(qn("w:tr"))[:-1] for p in tr.iter(qn("w:p"))]:
+                Paragraph(p, None).paragraph_format.keep_with_next = True   # and its header row
+
+
+def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banner: bool,
+                      whole_doc: bool = True):
+    """One set: a row in the Results table and one block (8 rows) in the Variant
+    Interpretation table for each variant, plus their evidence / OMIM paragraphs."""
+    from . import variants as vr
+    # -- Results table: Gene | Variant | Allele | Region | Disease | Inheritance | Class
+    rows = res.findall(qn("w:tr"))
+    proto = rows[1]
+    for tr in rows[1:]:
+        res.remove(tr)
+    if not chosen:                  # nothing ticked: no variant section at all
+        _drop_interpretation(doc, tbl, whole_doc)
+        return
+    mode = vr.report_mode(chosen, data.result_tag)
+    if banner:                      # the result line and its wording are the primary set's
+        _set_banner(doc, mode)
+        if mode == "vus_related":
+            _set_text(_find_para(doc, "List of significant variant(s)", "variant list heading"),
+                      "List of uncertain significant variant(s) identified related to the phenotype:")
+    for v in chosen:
+        tr = copy.deepcopy(proto)
+        cells = [[v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
+                 [v["variant"]] + ([f"({v['protein']})"] if v.get("protein") else []),
+                 [vr.allele_status(v)], [vr.region(v)],
+                 vr.disease_lines(v),
+                 vr.inheritance(v), [vr.class_display(v)]]
+        crit = " ".join(v.get("criteria", "").split())
+        if crit:                    # the criteria go under the classification, bold black
+            cells[-1].append(crit if crit.startswith("(") else f"({crit})")
+        for tc, lines in zip(tr.findall(qn("w:tc")), cells):
+            _set_cell_lines(tc, lines)
+        _color_class(tr.findall(qn("w:tc"))[-1], v)
+        _link_omim(tr.findall(qn("w:tc"))[4], doc.part)
+        if crit:
+            for r in tr.findall(qn("w:tc"))[-1].findall(qn("w:p"))[-1].iter(qn("w:r")):
+                rpr = r.get_or_add_rPr()
+                for color in rpr.findall(qn("w:color")):
+                    rpr.remove(color)
+                Run(r, None).bold = True
+        _no_split(tr)
+        res.append(tr)
+    # -- Variant Interpretation: the template's 8-row block, once per variant
+    rows = tbl.findall(qn("w:tr"))
+    block = [copy.deepcopy(r) for r in rows[:8]]
+    for tr in rows:
+        tbl.remove(tr)
+    for n, v in enumerate(chosen):
+        if n:                       # a gap between one variant's block and the next
+            tbl.append(_spacer_row(tbl))
+        pos1, pos2 = vr.genomic_position(v)
+        trs = [copy.deepcopy(r) for r in block]
+        tcs = [r.findall(qn("w:tc")) for r in trs]
+        for tc, lines in zip(tcs[1], [
+                [v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
+                [v["variant"]] + ([f"({v['protein']})"] if v.get("protein") else []),
+                vr.inheritance(v), vr.disease_lines(v),
+                [v.get("criteria", "").strip() or "-"], [vr.class_display(v)]]):
+            _set_cell_lines(tc, lines)
+        _color_class(tcs[1][-1], v)
+        _link_omim(tcs[1][3], doc.part)
+        for tc, lines in zip(tcs[3], [
+                [vr.region(v)], [vr.allele_status(v)], [vr.sequence_ontology(v)],
+                [vr.frequency(v)], [vr.allelic_depth(v)]]):
+            _set_cell_lines(tc, lines)
+        _set_pairs(tcs[5][0].find(qn("w:p")),
+                   [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.insilico_tools(v)],
+                   bold=True)
+        _set_pairs(tcs[5][1].find(qn("w:p")),
+                   [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.CONSERVATION],
+                   bold=True)
+        for tc in tcs[5]:               # one centered line, whatever tabs / spaces the template has
+            _center_line(tc.find(qn("w:p")))
+        _set_cell_lines(tcs[7][0], [pos1] + ([pos2] if pos2 else []))
+        _set_pairs(tcs[7][1].find(qn("w:p")),
+                   [("ClinVar", vr.evidence_link(v.get("clinvar_link", ""), vr.CLINVAR_URL)),
+                    ("PubMed", vr.evidence_link(v.get("pubmed_link", ""), vr.PUBMED_URL))],
+                   part=doc.part)
+        for n, tr in enumerate(trs):
+            _no_split(tr)
+            if n < len(trs) - 1:        # keep the whole block on one page
+                for p in tr.iter(qn("w:p")):
+                    Paragraph(p, None).paragraph_format.keep_with_next = True
+            tbl.append(tr)
+    # -- narrative: "#Clinical and Literature Evidences" / "OMIM phenotype"
+    omim_para = _para_near(doc, tbl, "OMIM phenotype", "OMIM phenotype paragraph",
+                           whole_doc=whole_doc)
+    evidence = _para_near(doc, tbl, "#Clinical and Literature Evidences", "", required=False,
+                          whole_doc=whole_doc)
+    if evidence is None:            # a template without it: the OMIM paragraph's layout
+        evidence = copy.deepcopy(omim_para)
+        _set_lead(evidence, "#Clinical and Literature Evidences: ")
+    anchor = omim_para
+    for v in chosen:                # both paragraphs are typed by the user
+        for proto, key in ((evidence, "evidence"), (omim_para, "omim_phenotype")):
+            text = vr.clean_narrative(v.get(key, ""))
+            if text:
+                para = copy.deepcopy(proto)
+                _set_para_tail(para, text)
+                if key == "omim_phenotype":
+                    _link_omim_in_para(para, doc.part)
+                anchor.addnext(para)
+                anchor = para
+    if anchor is not omim_para:     # as the template's OMIM paragraph, the last one leaves a gap
+        Paragraph(anchor, None).paragraph_format.space_after = Pt(8)   # before the notes under it
+    for p in (evidence, omim_para):
+        if p.getparent() is not None:
+            p.getparent().remove(p)
+
+
+def _superscript_hash(doc) -> None:
+    """The '#' that marks the evidence headings ('#Clinical and Literature
+    Evidences:', the table heading) as a raised mark, in its own run."""
+    for r in list(doc.element.body.iter(qn("w:r"))):
+        t = r.find(qn("w:t"))
+        if t is None or not t.text or len(t.text) < 2 or t.text[0] != "#"                 or not t.text[1].isalpha():
+            continue
+        mark = copy.deepcopy(r)
+        mark.find(qn("w:t")).text = "#"
+        t.text = t.text[1:]
+        t.set(qn("xml:space"), "preserve")
+        r.addprevious(mark)
+        Run(mark, None).font.superscript = True
+
+
+def _align_result_notes(doc) -> None:
+    """The notes under the variant tables and the headings above them start a few twips
+    in from the margin while the abbreviation line and the text start at it: line them
+    up. All variant tables are centered, the same width, so the sets line up too."""
+    for p in doc.paragraphs:
+        if p.text.strip().startswith(("*Genetic test results", "No other variant",
+                                      "List of ", "Variant Interpretation")):
+            p.paragraph_format.left_indent = 0
+            first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
+            if first is not None:           # a stray leading space in the template's text
+                first.text = first.text.lstrip()
+    for res, interp in _variant_sets(doc):
+        for tbl in (res, interp):
+            pr = tbl.tblPr
+            for tag in ("w:tblInd", "w:jc"):
+                for el in pr.findall(qn(tag)):
+                    pr.remove(el)
+            jc = OxmlElement("w:jc")
+            jc.set(qn("w:val"), "center")
+            tblw = pr.find(qn("w:tblW"))
+            (tblw.addnext(jc) if tblw is not None else pr.append(jc))
+
+
+def _fit_variant_layout(doc) -> None:
+    """Variant tables as wide as the text (not inset from it), and everything around
+    them - headings, notes, evidence / OMIM paragraphs - starting at the same left edge."""
+    sec = doc.sections[0]
+    width = round((sec.page_width - sec.left_margin - sec.right_margin) / 635)     # twips
+    for res, interp in _variant_sets(doc):
+        for tbl in (res, interp):
+            grid = tbl.find(qn("w:tblGrid"))
+            cols = grid.findall(qn("w:gridCol"))
+            total = sum(int(c.get(qn("w:w"))) for c in cols)
+            k = width / total
+            for c in cols:
+                c.set(qn("w:w"), str(round(int(c.get(qn("w:w"))) * k)))
+            for tc in tbl.iter(qn("w:tc")):
+                w = tc.find(qn("w:tcPr") + "/" + qn("w:tcW"))
+                if w is not None and w.get(qn("w:type")) == "dxa":
+                    w.set(qn("w:w"), str(round(int(w.get(qn("w:w"))) * k)))
+            pr = tbl.tblPr
+            for tag in ("w:tblInd", "w:jc", "w:tblW"):
+                for el in pr.findall(qn(tag)):
+                    pr.remove(el)
+            tblw = OxmlElement("w:tblW")
+            tblw.set(qn("w:w"), str(width))
+            tblw.set(qn("w:type"), "dxa")
+            jc = OxmlElement("w:jc")
+            jc.set(qn("w:val"), "center")
+            style = pr.find(qn("w:tblStyle"))
+            (style.addnext(tblw) if style is not None else pr.insert(0, tblw))
+            tblw.addnext(jc)
+    for p in doc.paragraphs:
+        text = p.text.strip()
+        if text.startswith(("*Genetic test results", "No other variant", "List of ",
+                            "Variant Interpretation", "OMIM phenotype", "#Clinical and Literature")):
+            p.paragraph_format.left_indent = 0
+            first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
+            if first is not None:           # a stray leading space in the template's text
+                first.text = first.text.lstrip()
+        elif text.startswith("Abbreviation:"):      # centered, it starts inside the margin
+            p.paragraph_format.left_indent = 0
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+
+def _para_near(doc, tbl, prefix: str, what: str, required: bool = True, whole_doc: bool = True):
+    """The paragraph starting with `prefix` that belongs to a variant interpretation
+    table: the first one after it (before the next table), else the first in the
+    document (a template with one set; `whole_doc` False: only after the table). None when
+    not required and not found."""
+    el = tbl.getnext()
+    while el is not None and el.tag != qn("w:tbl"):
+        if el.tag == qn("w:p") and _text(el).strip().lower().startswith(prefix.lower()):
+            return el
+        el = el.getnext()
+    try:
+        if not whole_doc:
+            raise TemplateError(f"Template is missing: {what}")
+        return _find_para(doc, prefix, what)
+    except TemplateError:
+        if required:
+            raise
+        return None
+
+
+def _drop_interpretation(doc, tbl, whole_doc: bool = True) -> None:
+    """Remove a Variant Interpretation heading, table and paragraphs."""
+    paras = [_para_near(doc, tbl, prefix, prefix, required=False, whole_doc=whole_doc) for prefix in
+             ("Abbreviation:", "#Clinical and Literature Evidences", "OMIM phenotype")]
+    el = tbl.getprevious()                      # its heading, just before it
+    while el is not None and el.tag != qn("w:tbl"):
+        if el.tag == qn("w:p") and _text(el).strip().lower().startswith("variant interpretation"):
+            paras.append(el)
+            break
+        el = el.getprevious()
+    tbl.getparent().remove(tbl)
+    for p in paras:
+        if p is not None and p.getparent() is not None:
+            p.getparent().remove(p)
+
+
+def _drop_secondary_findings(doc, res, tbl) -> None:
+    """No Secondary findings ticked: remove that whole part, from its 'List of
+    Secondary findings' heading to the heading that follows it (CNV Findings)."""
+    start = res.getprevious()
+    while start is not None and not (
+            start.tag == qn("w:p") and _text(start).strip().lower().startswith("list of secondary")):
+        start = start.getprevious()
+    end = tbl.getnext()
+    while end is not None and not (
+            end.tag == qn("w:p") and _text(end).strip().lower().startswith("cnv findings")):
+        end = end.getnext()
+    if start is None or end is None:
+        raise TemplateError("Template is missing: Secondary findings section")
+    el = start
+    while el is not end:
+        nxt = el.getnext()
+        el.getparent().remove(el)
+        el = nxt
+
+
+_OMIM_REF = re.compile(r"\(OMIM([#*])(\d+(?:,\s*\d+)*)\)")
+
+
+def _link_omim_in_para(p_el, part) -> None:
+    """'(OMIM#610205)' / '(OMIM*600275)' in a paragraph: the numbers become hyperlinks
+    to their OMIM entry (blue, underlined), the rest of the text stays as it is."""
+    runs = _runs(p_el)
+    if len(runs) < 2:
+        return
+    tail = runs[-1]
+    text = _text(tail)
+    if not _OMIM_REF.search(text):
+        return
+    pieces, pos = [], 0
+    for m in _OMIM_REF.finditer(text):
+        pieces.append((text[pos:m.start()] + f"(OMIM{m.group(1)}", ""))
+        ids = re.split(r",\s*", m.group(2))
+        for n, i in enumerate(ids):
+            pieces += ([(", ", "")] if n else []) + [(i, OMIM_URL.format(i))]
+        pieces.append((")", ""))
+        pos = m.end()
+    pieces.append((text[pos:], ""))
+    anchor = tail
+    for chunk, url in pieces:
+        if not chunk:
+            continue
+        r = copy.deepcopy(tail)
+        for child in list(r):
+            if child.tag != qn("w:rPr"):
+                r.remove(child)
+        t = OxmlElement("w:t")
+        t.text = chunk
+        t.set(qn("xml:space"), "preserve")
+        r.append(t)
+        if url:
+            rpr = r.get_or_add_rPr()
+            color = OxmlElement("w:color")
+            color.set(qn("w:val"), "0563C1")
+            sz = rpr.find(qn("w:sz"))
+            (sz.addprevious(color) if sz is not None else rpr.append(color))
+            under = OxmlElement("w:u")
+            under.set(qn("w:val"), "single")
+            rpr.append(under)
+            node = OxmlElement("w:hyperlink")
+            node.set(qn("r:id"), part.relate_to(url, _HYPERLINK, is_external=True))
+            node.append(r)
+        else:
+            node = r
+        anchor.addnext(node)
+        anchor = node
+    tail.getparent().remove(tail)
+
+
+def _is_bold(r) -> bool:
+    rpr = r.find(qn("w:rPr"))
+    return rpr is not None and rpr.find(qn("w:b")) is not None
+
+
+def _set_lead(p_el, text: str):
+    """Make a paragraph's bold lead-in ('OMIM phenotype: ') one run holding `text`, whatever
+    number of runs the template splits it into. Returns the first non-bold run (the
+    formatting of the rest of the paragraph), or None if the paragraph has no such run."""
+    runs = _runs(p_el)
+    k = next((i for i, r in enumerate(runs) if not _is_bold(r)), None)
+    lead = runs[:k] if k else runs[:1]
+    for r in lead[1:]:
+        r.getparent().remove(r)
+    ts = list(lead[0].iter(qn("w:t")))
+    ts[0].text = text
+    ts[0].set(qn("xml:space"), "preserve")
+    for t in ts[1:]:
+        t.getparent().remove(t)
+    return runs[k] if k else None
+
+
+def _set_para_tail(p_el, text: str) -> None:
+    """Keep the paragraph's bold lead-in ('OMIM phenotype: ') and replace the
+    rest with `text`, in the formatting of the first non-bold run."""
+    runs = _runs(p_el)
+    k = next((i for i, r in enumerate(runs) if not _is_bold(r)), None)
+    lead_text = "".join(_text(r) for r in (runs[:k] if k else runs[:1]))
+    tail = _set_lead(p_el, lead_text)
+    if tail is None:
+        return
+    for child in list(tail):
+        if child.tag != qn("w:rPr"):
+            tail.remove(child)
+    t = OxmlElement("w:t")
+    t.text = text
+    t.set(qn("xml:space"), "preserve")
+    tail.append(t)
+    node = tail
+    while node.getparent() is not p_el:          # a run inside a hyperlink: start after it
+        node = node.getparent()
+    for later in list(node.itersiblings()):      # the template's sample text, links included
+        if later.tag in (qn("w:r"), qn("w:hyperlink")):
+            p_el.remove(later)
+
+
+def _fill_qc(doc, data: ReportData, restyle: bool = True):
     table = _find_table(doc, "Total Read", "'Sequence data attributes' table")
     for row, value in ((0, data.total_reads), (1, data.q30)):
         _set_text(table.rows[row].cells[1].paragraphs[0]._p, value.strip())
+    if not restyle:                 # the template's own cell layout stays
+        return
     # Indent 0.2 cm left and right, 3 pt before and after, in every cell.
     for row in table.rows:
         for cell in row.cells:
@@ -324,8 +943,8 @@ def _appendix_page_break(doc):
         ppr.insert(0, pb)
 
 
-SECTION_HEADINGS = ("Clinical History", "Results", "CNV Findings", "Recommendations",
-                    "Methodology", "Sequence data attributes", "Disclaimer", "References",
+SECTION_HEADINGS = ("Clinical History", "Results", "Variant Interpretation", "CNV Findings",
+                    "Recommendations", "Methodology", "Sequence data attributes", "Disclaimer", "References",
                     "Whole Exome Sequencing Analysis", "Whole Mitochondrial Genome Sequencing",
                     "This report has been reviewed and approved by")
 
@@ -426,11 +1045,14 @@ def _title_size(doc, points: int = 20):
 
 def _result_tag_size(doc, points: int = 10):
     """The boxed result line ('No pathogenic or likely pathogenic variant(s)
-    causative of ...') in one size; the templates mix 9, 9.5 and 10 pt."""
+    causative of ...' / 'Pathogenic variant related to ...') in one size; the templates mix 9, 9.5 and 10 pt."""
     half = str(points * 2)
     for p in doc.element.body.iter(qn("w:p")):
         text = _text(p).strip().lower()
-        if not (text.startswith("no pathogenic") and "causative" in text):
+        if not ((text.startswith("no pathogenic") and "causative" in text)
+                or text.startswith(("pathogenic variant related to",
+                                    "likely pathogenic variant related to",
+                                    "variant of uncertain significance related to"))):
             continue
         for r in p.iterchildren(qn("w:r")):
             rpr = r.find(qn("w:rPr"))
@@ -492,7 +1114,7 @@ def _justify_section(doc, heading: str):
 # Section layout taken from the reference report (MEL_17139): headings flush
 # left, bullets and the disclaimer with the same hanging indents, whichever
 # template is used. Values are EMU (python-docx lengths).
-_LEFT_HEADINGS = ("clinical history", "results", "cnv findings", "recommendations",
+_LEFT_HEADINGS = ("clinical history", "results", "variant interpretation", "cnv findings", "recommendations",
                   "methodology", "sequence data attributes", "disclaimer", "references",
                   "this report has been reviewed and approved by")
 
@@ -663,18 +1285,28 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     doc = Document(path)
     _fill_patient(doc, data)
     _fill_history(doc, data)
-    _fill_qc(doc, data)
+    keep = get_template(data.template_key).keep_layout
+    _fill_qc(doc, data, restyle=not keep)
     _fill_gene_list_url(doc, data)
     _fill_methodology(doc, data)
-    _fill_gene_table(doc, data)
+    _fill_gene_table(doc, data, blank_unused=not keep)
+    _fill_variants(doc, data)
+    cfg = get_template(data.template_key)
+    if cfg.variants:
+        if cfg.keep_layout:
+            _fit_variant_layout(doc)
+        else:
+            _align_result_notes(doc)
+        _superscript_hash(doc)
     _fill_signatures(doc, data)
     _tighten_signature_gap(doc)
-    _appendix_page_break(doc)
-    _tidy_classification_table(doc)
-    _result_tag_size(doc)
-    _title_size(doc)
-    _justify_section(doc, "Disclaimer")
-    _match_reference_layout(doc)
+    if not cfg.keep_layout:
+        _appendix_page_break(doc)
+        _tidy_classification_table(doc)
+        _result_tag_size(doc)
+        _title_size(doc)
+        _justify_section(doc, "Disclaimer")
+        _match_reference_layout(doc)
     _keep_headings_with_next(doc)
     _new_pages(doc, get_template(data.template_key).new_page_before + tuple(new_pages))
     _fix_page_count(doc)
