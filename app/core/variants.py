@@ -55,7 +55,13 @@ def read_variants(path: str) -> list[dict]:
     except Exception as e:  # noqa: BLE001 - shown to the user
         raise VariantError(f"Could not open the Excel file: {e}") from e
     try:
-        rows = [[_cell(c) for c in r] for r in wb.worksheets[0].iter_rows(values_only=True)]
+        # VarSeq exports put "Complete Data" before "Listed Variants": read the latter.
+        sheets = sorted(wb.worksheets, key=lambda w: w.title.strip().lower() != "listed variants")
+        rows = []
+        for ws in sheets:
+            rows = [[_cell(c) for c in r] for r in ws.iter_rows(values_only=True)]
+            if any(r and r[0].lower() == "s.no" for r in rows):
+                break
     finally:
         wb.close()
     out, cols, section = [], None, ""
