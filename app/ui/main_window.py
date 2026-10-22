@@ -873,9 +873,11 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             section(title)
             for label, key in group:
                 edit = QLineEdit()
+                case = (variants_core.silico_case if group is variants_core.SILICO
+                        else str.upper)             # Da / Ds / Supp, but conservation in capitals
                 edit.setToolTip(f"{label} value for the report, e.g. D / T / a score")
-                edit.textEdited.connect(lambda text, e=edit: self._upper(e, text))
-                edit.textEdited.connect(lambda text, k=key: self._typed(k, text.upper()))
+                edit.textEdited.connect(lambda text, e=edit, c=case: self._upper(e, text, c))
+                edit.textEdited.connect(lambda text, k=key, c=case: self._typed(k, c(text)))
                 self.f_typed[key] = edit
                 dl.addRow(f"{label}:", edit)
                 if group is variants_core.SILICO:
@@ -1079,11 +1081,11 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.changed.emit()
 
     @staticmethod
-    def _upper(edit: QLineEdit, text: str):
-        """Capitals as the user types (D, DA, C ...), keeping the cursor where it is."""
-        if text != text.upper():
+    def _upper(edit: QLineEdit, text: str, case=str.upper):
+        """The value's capitals as the user types (D, Da, C ...), keeping the cursor where it is."""
+        if text != case(text):
             pos = edit.cursorPosition()
-            edit.setText(text.upper())
+            edit.setText(case(text))
             edit.setCursorPosition(pos)
 
     RESULT_TINTS = {"pathogenic": "#fdeeee", "likely": "#fdeeee", "vus_related": "#eaf4fc"}
@@ -1222,6 +1224,10 @@ class VariantsPanel(ExcelDropPanel, QWidget):
 
     def _count(self):
         n = sum(1 for v in self._variants if v.get("selected"))
+        total = len(self._variants)                 # the count next to Select all
+        listed = sum(1 for r in range(self.table.count()) if not self.table.item(r).isHidden())
+        self.select_all.setText(f"Select all ({listed} of {total})" if listed != total
+                                else f"Select all ({total})" if total else "Select all")
         self.select_all.blockSignals(True)
         self.select_all.setChecked(bool(self._variants) and n == len(self._variants))
         self.select_all.blockSignals(False)
@@ -1244,6 +1250,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         for r, v in enumerate(self._variants):
             hay = " ".join(v.get(k, "") for k in self.SEARCH_KEYS).lower()
             self.table.item(r).setHidden(bool(text) and text not in hay)
+        self._count()
 
 
 class BulkPanel(ExcelDropPanel, QWidget):

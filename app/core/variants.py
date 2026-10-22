@@ -32,6 +32,11 @@ SILICO = (("SIFT", "sift"), ("LRT", "lrt"), ("PolyPhen2", "polyphen"),
           ("GeneSplicer", "genesplicer"), ("MaxEntScan", "maxentscan"),
           ("NNSplice", "nnsplice"), ("PWM", "pwm"), ("CADD", "cadd"), ("MT2", "mt2"))     # every tool; see insilico_tools()
 CONSERVATION = (("PhyloP", "phylop"), ("GERP++", "gerp"))
+
+
+def silico_case(text: str) -> str:
+    """In silico values have only the first letter capital: 'DA' -> 'Da', 'supp' -> 'Supp'."""
+    return text[:1].upper() + text[1:].lower()
 FIELDS = tuple(HEADERS.values()) + ("section", "selected")
 
 

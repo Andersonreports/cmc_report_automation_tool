@@ -609,7 +609,7 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
                 [vr.frequency(v)], [vr.allelic_depth(v)]]):
             _set_cell_lines(tc, lines)
         _set_pairs(tcs[5][0].find(qn("w:p")),
-                   [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.insilico_tools(v)],
+                   [(k, vr.silico_case(v.get(key, "").strip()) or "-") for k, key in vr.insilico_tools(v)],
                    bold=True)
         _set_pairs(tcs[5][1].find(qn("w:p")),
                    [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.CONSERVATION],
