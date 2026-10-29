@@ -137,7 +137,7 @@ PIN_PATTERN = re.compile(r"ADK\d{10}|PH\d{11}", re.I)    # patient sheet / WES s
 class ChoiceBox(QComboBox):
     """Dropdown with the same text()/setText()/textChanged API as QLineEdit,
     so it slots into the patient fields like any other box. The mouse wheel
-    is ignored unless it has focus, so scrolling the form can't change it."""
+    is always ignored so scrolling the form never changes the selected value."""
     textChanged = Signal(str)
 
     def __init__(self, options: list[str]):
@@ -159,10 +159,7 @@ class ChoiceBox(QComboBox):
         self.setCurrentText(value)
 
     def wheelEvent(self, e):
-        if self.hasFocus():
-            super().wheelEvent(e)
-        else:
-            e.ignore()
+        e.ignore()
 
 
 class NarrativeEdit(QPlainTextEdit):
@@ -448,7 +445,7 @@ PATIENT_CHOICES = {
     "referring_clinician": ["Dr. Aaron Chapla",
                             "Dr. Suceena Alexander, MD., DM., FRCP(Lon), FASN, PhD.",
                             "Dr. N. Sheik Sulthan Alavudeen MD., DM.,"],
-    "specimen": ["DNA", "Peripheral Blood"],
+    "specimen": ["DNA", "Peripheral Blood", "Amniotic fluid", "Product Of Conception", "CVS"],
 }
 OTHER_PLACEHOLDERS = {
     "hospital": "Type the hospital / clinic name",

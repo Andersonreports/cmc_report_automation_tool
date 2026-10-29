@@ -195,7 +195,24 @@ METHODOLOGY_OPENING = {
         "DNA was used to perform whole exome using whole exome capture kit .The",
         "DNA extracted from the Peripheral Blood was used to perform whole exome "
         "using whole exome capture kit. The"),
+    "Amniotic fluid": (
+        "DNA was used to perform whole exome using whole exome capture kit .The",
+        "DNA extracted from the Amniotic fluid was used to perform whole exome "
+        "using whole exome capture kit. The"),
+    "CVS": (
+        "DNA was used to perform whole exome using whole exome capture kit .The",
+        "DNA extracted from the CVS was used to perform whole exome "
+        "using whole exome capture kit. The"),
+    "Product Of Conception": (
+        "DNA was used to perform whole exome using whole exome capture kit .The",
+        "DNA extracted from the Product Of Conception was used to perform whole exome "
+        "using whole exome capture kit. The"),
 }
+
+# Specimens that require the PCPNDT notice in the report.
+_PCPNDT_SPECIMENS = frozenset({"Amniotic fluid", "CVS", "Product Of Conception"})
+_PCPNDT_TEXT = ("This test confers to the PCPNDT act and does not determine "
+                "the sex of the fetus")
 
 
 def _replace_in_para(p_el, old: str, new: str) -> bool:
@@ -220,6 +237,88 @@ def _replace_in_para(p_el, old: str, new: str) -> bool:
         t.set(qn("xml:space"), "preserve")
         placed = True
     return True
+
+
+def _insert_pcpndt_note(doc, data: ReportData):
+    """Insert the PCPNDT notice (italic, centred) immediately after the
+    demography table for specimens that require it.
+    Font matches the document body: Arial 9 pt, color 242629."""
+    if data.patient.specimen.strip() not in _PCPNDT_SPECIMENS:
+        return
+    tbl_el = _find_table(doc, "Patient", "patient details table")._tbl
+
+    # paragraph properties: BodyText style, centred, body-text spacing
+    p = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    style_el = OxmlElement("w:pStyle")
+    style_el.set(qn("w:val"), "BodyText")
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:before"), "110")
+    spacing.set(qn("w:line"), "312")
+    spacing.set(qn("w:lineRule"), "auto")
+    jc = OxmlElement("w:jc")
+    jc.set(qn("w:val"), "center")
+    # paragraph-level rPr (bold+italic mark for the whole paragraph)
+    p_rpr = OxmlElement("w:rPr")
+    p_rpr.append(OxmlElement("w:b"))
+    p_rpr.append(OxmlElement("w:bCs"))
+    p_rpr.append(OxmlElement("w:i"))
+    p_rpr.append(OxmlElement("w:iCs"))
+    for child in (style_el, spacing, jc, p_rpr):
+        ppr.append(child)
+    p.append(ppr)
+
+    # run with matching font / size / colour
+    r = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    fonts = OxmlElement("w:rFonts")
+    for attr in ("w:ascii", "w:hAnsi", "w:cs"):
+        fonts.set(qn(attr), "Arial")
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "242629")
+    w_el = OxmlElement("w:w")
+    w_el.set(qn("w:val"), "105")
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), "18")
+    szcs = OxmlElement("w:szCs")
+    szcs.set(qn("w:val"), "18")
+    i_el = OxmlElement("w:i")
+    ics_el = OxmlElement("w:iCs")
+    b_el = OxmlElement("w:b")
+    bcs_el = OxmlElement("w:bCs")
+    for child in (fonts, color, w_el, sz, szcs, b_el, bcs_el, i_el, ics_el):
+        rpr.append(child)
+    r.append(rpr)
+    t = OxmlElement("w:t")
+    t.text = f"({_PCPNDT_TEXT})"
+    t.set(qn("xml:space"), "preserve")
+    r.append(t)
+    p.append(r)
+    tbl_el.addnext(p)
+
+
+def _insert_pcpndt_disclaimer(doc, data: ReportData):
+    """Append the PCPNDT statement as a new bullet at the end of the
+    Disclaimer section for specimens that require it."""
+    if data.patient.specimen.strip() not in _PCPNDT_SPECIMENS:
+        return
+    others = {h.lower() for h in SECTION_HEADINGS} - {"disclaimer"}
+    in_disclaimer = False
+    last_bullet = None
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        text = _text(p).strip().rstrip(":").lower()
+        if in_disclaimer and text in others:
+            break
+        if text == "disclaimer":
+            in_disclaimer = True
+            continue
+        if in_disclaimer and _text(p).strip():
+            last_bullet = p
+    if last_bullet is None:
+        return
+    new_p = copy.deepcopy(last_bullet)
+    _set_text(new_p, _PCPNDT_TEXT)
+    last_bullet.addnext(new_p)
 
 
 def _fill_methodology(doc, data: ReportData):
@@ -1303,11 +1402,13 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         raise TemplateError(f"Template file not found: {path}")
     doc = Document(path)
     _fill_patient(doc, data)
+    _insert_pcpndt_note(doc, data)
     _fill_history(doc, data)
     keep = get_template(data.template_key).keep_layout
     _fill_qc(doc, data, restyle=not keep)
     _fill_gene_list_url(doc, data)
     _fill_methodology(doc, data)
+    _insert_pcpndt_disclaimer(doc, data)
     _fill_gene_table(doc, data, blank_unused=not keep)
     _fill_variants(doc, data)
     cfg = get_template(data.template_key)
