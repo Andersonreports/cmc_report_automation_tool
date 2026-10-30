@@ -255,6 +255,23 @@ RESULT_TAGS = (
     ("vus_related", "Variant of uncertain significance related to the given phenotype was identified"),
 )
 
+# Titles the user can pick for the Secondary findings table (Variants tab); the
+# first is the template's own. Any other wording can be typed in.
+SECONDARY_TITLES = (
+    "List of Secondary findings identified:",
+    "List of pathogenic Secondary findings identified:",
+    "List of likely pathogenic Secondary findings identified:",
+    "List of Secondary findings of uncertain significance identified:",
+)
+
+# Titles the user can pick for the PRIMARY variant list table heading.
+PRIMARY_TITLES = (
+    "List of significant variant(s) identified related to the phenotype:",
+    "List of pathogenic variant(s) identified related to the phenotype:",
+    "List of likely pathogenic variant(s) identified related to the phenotype:",
+    "List of uncertain significant variant(s) identified related to the phenotype:",
+)
+
 
 def is_secondary(v: dict) -> bool:
     """A variant from the Excel's "Secondary Findings" block."""

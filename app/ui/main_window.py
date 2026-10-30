@@ -758,6 +758,20 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_result.currentIndexChanged.connect(self._result_changed)
         rr.addWidget(self.f_result, 1)
         lay.addWidget(self.result_row)
+        self.secondary_row = QWidget()      # the Secondary findings table's title
+        sr = QHBoxLayout(self.secondary_row)
+        sr.setContentsMargins(0, 0, 0, 0)
+        sr.addWidget(QLabel("Secondary findings title:"))
+        self.f_secondary_title = StableCombo()
+        self.f_secondary_title.setEditable(True)        # pick one, or type another wording
+        self.f_secondary_title.addItems(variants_core.SECONDARY_TITLES)
+        self.f_secondary_title.setToolTip("Title of the Secondary findings table in the report")
+        self.f_secondary_title.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.f_secondary_title.setMinimumContentsLength(12)
+        self.f_secondary_title.currentTextChanged.connect(lambda *_: self.changed.emit())
+        sr.addWidget(self.f_secondary_title, 1)
+        self.secondary_row.setVisible(False)
+        lay.addWidget(self.secondary_row)
         self.select_all = QCheckBox("Select all")      # sits on top of the variant list
         self.select_all.setObjectName("selectall")
         self.select_all.setCursor(Qt.PointingHandCursor)
@@ -799,6 +813,11 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.detail_title.setWordWrap(True)
         self.f_gene = QLineEdit()
         self.f_gene.setReadOnly(True)
+        self.f_strand = StableCombo()       # shown as (+) / (-) under the gene name
+        self.f_strand.setToolTip("Strand of the gene, shown under the gene name in the report")
+        for text, value in (("No strand", ""), ("+ strand", "+"), ("- strand", "-")):
+            self.f_strand.addItem(text, value)
+        self.f_strand.currentIndexChanged.connect(self._stranded)
         self.f_variant = QLineEdit()
         self.f_variant.setReadOnly(True)
         self.f_class = StableCombo()
@@ -811,7 +830,12 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             dl.addRow(head)
 
         section("Variant Interpretation")
-        dl.addRow("Gene:", self.f_gene)
+        gene_row = QWidget()                # the gene name and its strand side by side
+        gr = QHBoxLayout(gene_row)
+        gr.setContentsMargins(0, 0, 0, 0)
+        gr.addWidget(self.f_gene, 1)
+        gr.addWidget(self.f_strand)
+        dl.addRow("Gene:", gene_row)
         dl.addRow("Variant:", self.f_variant)
         dl.addRow("Classification:", self.f_class)
         omim_tip = ("OMIM number(s) shown as (OMIM#id); the Excel lists every phenotype of "
@@ -985,6 +1009,9 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                else "not ticked: tick it in the list to include it in the report."))
         self.f_gene.setText(v.get("gene", ""))
         self.f_variant.setText(v.get("variant", ""))
+        self.f_strand.blockSignals(True)
+        self.f_strand.setCurrentIndex(max(0, self.f_strand.findData(v.get("strand", "").strip())))
+        self.f_strand.blockSignals(False)
         options = variants_core.classification_options(v) or [""]
         if v.get("classification") and v["classification"] not in options:
             options.append(v["classification"])
@@ -1127,6 +1154,21 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_result.setCurrentIndex(max(0, self.f_result.findData(key or "")))
         self.f_result.blockSignals(False)
         self._result_changed_style()
+
+    def secondary_title(self) -> str:
+        """The Secondary findings title; '' when it is the template's own."""
+        text = self.f_secondary_title.currentText().strip()
+        return "" if text == variants_core.SECONDARY_TITLES[0] else text
+
+    def set_secondary_title(self, text: str):
+        self.f_secondary_title.blockSignals(True)
+        self.f_secondary_title.setCurrentText(text or variants_core.SECONDARY_TITLES[0])
+        self.f_secondary_title.blockSignals(False)
+
+    def _stranded(self, *_):
+        if 0 <= self._current < len(self._variants):
+            self._variants[self._current]["strand"] = self.f_strand.currentData() or ""
+            self.changed.emit()
 
     def _classified(self, text: str):
         if 0 <= self._current < len(self._variants):
@@ -1896,6 +1938,7 @@ class MainWindow(QMainWindow):
             reviewer=self.reviewer_combo.currentData() or "",
             variants=self.variants_panel.variants(),
             result_tag=self.variants_panel.result_tag(),
+            secondary_title=self.variants_panel.secondary_title(),
         )
 
     def _edited(self, *_):
@@ -1941,6 +1984,7 @@ class MainWindow(QMainWindow):
     def _show_variants_tab(self, on: bool):
         self.variants_panel.secondary_separate = get_template(
             self.template_combo.currentData()).secondary_findings
+        self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
         self.tabs.setTabVisible(self._variants_tab, on)
         if not on and self.tabs.currentIndex() == self._variants_tab:
             self.tabs.setCurrentIndex(0)
@@ -2149,6 +2193,7 @@ class MainWindow(QMainWindow):
         self._show_variants_tab(cfg.variants)
         self.variants_panel.set_variants(data.variants)
         self.variants_panel.set_result_tag(data.result_tag)
+        self.variants_panel.set_secondary_title(data.secondary_title)
         self._preview()
 
     def _load_bulk_draft(self, reports: list):

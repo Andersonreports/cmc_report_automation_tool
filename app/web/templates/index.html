@@ -1,0 +1,1980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Internal Report Automation</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --accent:#0e5068;--accent-dark:#093848;--accent-mid:#1a7a96;--accent-light:#e0f0f5;
+  --orange:#e09f3e;--orange-dark:#c98626;
+  --bg:#eef2f5;--surface:#fff;--surface-2:#f6f9fb;--line:#dce6ed;--line-strong:#c4d4de;
+  --muted:#64748b;--label:#334155;--ink:#1e293b;--ok:#15803d;--warn:#b45309;--bad:#c0392b;
+  --radius:8px;--radius-sm:5px;--radius-lg:12px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.07);
+  --shadow:0 2px 8px rgba(0,0,0,.1);
+  --shadow-md:0 4px 16px rgba(0,0,0,.12);
+}
+html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;color:var(--ink);background:var(--bg)}
+#app{display:flex;flex-direction:column;height:100%;overflow:hidden}
+
+/* ── HEADER ── */
+#header{
+  background:linear-gradient(135deg,var(--accent) 0%,var(--accent-mid) 100%);
+  color:#fff;padding:10px 18px;
+  display:flex;align-items:center;gap:16px;flex-shrink:0;
+  box-shadow:0 2px 8px rgba(14,80,104,.25);
+}
+.app-title{font-size:16px;font-weight:700;white-space:nowrap;letter-spacing:-.2px}
+.header-mid{display:flex;align-items:center;gap:10px;flex:1}
+.header-mid label{font-size:12px;font-weight:500;opacity:.75;white-space:nowrap}
+.header-mid select{display:none}
+/* Custom template picker */
+.tmpl-picker{position:relative;display:inline-block}
+.tmpl-picker-btn{
+  background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);
+  border-radius:7px;padding:5px 30px 5px 12px;font-size:13px;font-family:inherit;
+  cursor:pointer;min-width:200px;max-width:280px;text-align:left;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;
+  backdrop-filter:blur(4px);
+}
+.tmpl-picker-btn::after{content:"▾";position:absolute;right:9px;top:50%;transform:translateY(-50%);font-size:11px;opacity:.8}
+.tmpl-dropdown{
+  position:absolute;top:calc(100% + 6px);left:0;min-width:260px;
+  background:#fff;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);
+  border:1px solid var(--line);z-index:9999;overflow:hidden;display:none;
+}
+.tmpl-dropdown.open{display:block}
+.tmpl-group-hdr{
+  font-size:10px;font-weight:800;color:var(--accent);text-transform:uppercase;
+  letter-spacing:.9px;padding:8px 14px 5px;background:var(--surface-2);
+  border-bottom:1px solid var(--line);
+}
+.tmpl-item{
+  padding:9px 16px;font-size:13px;color:var(--ink);cursor:pointer;
+  transition:background .12s;
+}
+.tmpl-item:hover{background:var(--accent-light)}
+.tmpl-item.active{background:var(--accent);color:#fff;font-weight:600}
+.mode-btns{display:flex;gap:6px;flex-shrink:0}
+.mode-btn{
+  padding:6px 16px;border:1.5px solid rgba(255,255,255,.35);border-radius:7px;
+  background:transparent;color:rgba(255,255,255,.85);cursor:pointer;font-size:12px;
+  font-weight:600;font-family:inherit;transition:background .15s,color .15s,border-color .15s;
+}
+.mode-btn:hover{background:rgba(255,255,255,.15);color:#fff}
+.mode-btn.active{background:#fff;color:var(--accent);border-color:#fff}
+
+/* ── MAIN ── */
+#main{display:flex;flex:1;overflow:hidden;gap:0}
+#left-panel{display:flex;flex-direction:column;width:50%;min-width:340px;border-right:1px solid var(--line);overflow:hidden;background:var(--surface)}
+#right-panel{display:flex;flex-direction:column;flex:1;overflow:hidden;background:#d8e2ea}
+
+/* ── INNER TABS ── */
+.tabs-bar{display:flex;background:var(--surface-2);border-bottom:2px solid var(--line);flex-shrink:0;padding:0 4px}
+.tab-btn{
+  flex:1;padding:13px 8px;border:none;background:transparent;
+  cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;color:var(--muted);
+  border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s;
+}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-btn:hover:not(.active){color:var(--ink);background:rgba(0,0,0,.03)}
+
+.tab-panel{display:none;flex:1;overflow-y:auto;padding:16px}
+.tab-panel.active{display:flex;flex-direction:column;gap:14px}
+
+/* Custom scrollbar */
+.tab-panel::-webkit-scrollbar,#variant-list::-webkit-scrollbar,#preview-scroll::-webkit-scrollbar,
+.variant-detail-col::-webkit-scrollbar,#bulk-list::-webkit-scrollbar,.bulk-editor-col::-webkit-scrollbar{width:5px}
+.tab-panel::-webkit-scrollbar-track,#variant-list::-webkit-scrollbar-track,#preview-scroll::-webkit-scrollbar-track,
+.variant-detail-col::-webkit-scrollbar-track,#bulk-list::-webkit-scrollbar-track,.bulk-editor-col::-webkit-scrollbar-track{background:transparent}
+.tab-panel::-webkit-scrollbar-thumb,#variant-list::-webkit-scrollbar-thumb,#preview-scroll::-webkit-scrollbar-thumb,
+.variant-detail-col::-webkit-scrollbar-thumb,#bulk-list::-webkit-scrollbar-thumb,.bulk-editor-col::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:99px}
+
+/* ── FORM ELEMENTS ── */
+.form-group{display:flex;flex-direction:column;gap:5px}
+.form-group label,.form-section>label{font-size:11px;font-weight:700;color:var(--label);text-transform:uppercase;letter-spacing:.5px}
+.tab-panel input[type=text],.tab-panel input[type=date],.tab-panel select,.tab-panel textarea,
+.form-group input,.form-group select,.form-group textarea{
+  border:1.5px solid var(--line);border-radius:var(--radius);padding:8px 11px;
+  font-size:13px;font-family:inherit;color:var(--ink);background:var(--surface);
+  width:100%;box-sizing:border-box;transition:border-color .15s,box-shadow .15s;
+}
+.tab-panel input[type=text]:focus,.tab-panel input[type=date]:focus,.tab-panel select:focus,.tab-panel textarea:focus,
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{
+  outline:none;border-color:var(--accent-mid);box-shadow:0 0 0 3px var(--accent-light);
+}
+.tab-panel input[type=text]:hover:not(:focus),.tab-panel select:hover:not(:focus),
+.form-group input:hover:not(:focus),.form-group select:hover:not(:focus){border-color:var(--line-strong)}
+.tab-panel textarea,.form-group textarea{resize:vertical;min-height:90px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-section{
+  padding:14px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--radius-lg);display:flex;flex-direction:column;gap:12px;
+}
+.form-section-title{font-weight:700;font-size:11px;color:var(--accent-mid);text-transform:uppercase;letter-spacing:.7px;display:flex;align-items:center;gap:6px}
+.form-section-title::before{content:'';display:block;width:3px;height:13px;background:var(--accent-mid);border-radius:2px}
+
+/* Pin row */
+.pin-row{display:flex;gap:6px}
+.pin-row input{flex:1}
+.fetch-status{font-size:11px;margin-top:2px;min-height:16px}
+
+/* Other-choice widget */
+.other-choice{position:relative}
+.other-choice select,.other-choice input{width:100%}
+.other-choice .other-input{display:none}
+
+/* ── BUTTONS ── */
+.btn{
+  padding:7px 15px;border:1.5px solid var(--line);border-radius:var(--radius);
+  cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;
+  background:var(--surface);color:var(--ink);transition:background .15s,border-color .15s,box-shadow .15s;
+  box-shadow:var(--shadow-sm);
+}
+.btn:hover{background:var(--surface-2);border-color:var(--line-strong)}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 2px 6px rgba(14,80,104,.3)}
+.btn.primary:hover{background:var(--accent-dark);border-color:var(--accent-dark)}
+.btn.solid{background:var(--accent-light);color:var(--accent);border-color:var(--accent-mid)}
+.btn.solid:hover{background:#cce5ec}
+.btn.danger{background:#fef2f2;color:var(--bad);border-color:#fca5a5}
+.btn.danger:hover{background:#fee2e2}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+
+/* ── GENE TABLE ── */
+#gene-status{font-size:12px;color:var(--muted)}
+#gene-count{font-size:11px;font-weight:600;color:var(--accent)}
+.gene-table-wrap{overflow-y:auto;overflow-x:auto;max-height:420px;border:1px solid var(--line);border-radius:var(--radius)}
+#gene-table{min-width:540px;border-collapse:collapse;table-layout:fixed}
+#gene-table th{background:var(--surface-2);color:var(--label);padding:9px 12px;font-size:11px;font-weight:700;text-align:center;position:sticky;top:0;letter-spacing:.4px;border-bottom:2px solid #e8a838;white-space:nowrap}
+#gene-table th:nth-child(1){width:44px}
+#gene-table th:nth-child(2){text-align:left;width:280px}
+#gene-table th:nth-child(3){text-align:left;width:200px}
+#gene-table td{padding:6px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink)}
+#gene-table td:first-child{width:42px;text-align:center;font-size:11px;font-weight:700;color:#e8a838;border-right:2px solid #e8a838;background:rgba(232,168,56,.04)}
+#gene-table td input{border:none;width:100%;padding:2px 2px;font-size:12.5px;background:transparent;font-family:inherit;color:var(--ink)}
+#gene-table td input:focus{outline:1px solid var(--accent-mid);background:#fff;border-radius:3px}
+#gene-table tr:nth-child(even) td{background:var(--surface-2)}
+#gene-table tr:nth-child(even) td:first-child{background:rgba(232,168,56,.07)}
+#gene-table tr:hover td{background:var(--accent-light)}
+#gene-table tr:hover td:first-child{background:rgba(232,168,56,.15)}
+
+/* ── VARIANTS PANEL ── */
+#variants-container{display:flex;flex-direction:column;gap:10px}
+.variants-top{display:flex;gap:8px;align-items:center}
+.variants-top .dropzone{flex:1}
+#variant-search{padding:7px 11px;border:1.5px solid var(--line);border-radius:var(--radius);font-size:12px;width:160px;font-family:inherit;background:var(--surface)}
+#variant-search:focus{outline:none;border-color:var(--accent-mid);box-shadow:0 0 0 3px var(--accent-light)}
+.variants-tools{display:flex;flex-direction:column;gap:10px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius)}
+.variants-tools label{font-size:11px;font-weight:700;color:var(--label);white-space:nowrap;text-transform:uppercase;letter-spacing:.5px}
+.variants-tools select{border:1.5px solid var(--line);border-radius:var(--radius);padding:8px 12px;font-size:13px;font-family:inherit;background:var(--surface);width:100%}
+.variants-body{display:flex;gap:0;min-height:420px;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);position:relative}
+.variant-list-col{width:35%;border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:180px;background:var(--surface);transition:width .2s,min-width .2s}
+.variant-list-col.collapsed{width:32px;min-width:32px;overflow:hidden}
+.variant-list-col.collapsed .variant-list-body-items,
+.variant-list-col.collapsed .variant-list-head label,
+.variant-list-col.collapsed .variant-list-head input[type=checkbox]{display:none}
+.variant-list-col.collapsed .variant-list-head{justify-content:center;padding:10px 0;height:100%;align-items:flex-start;border-bottom:none;background:var(--surface-2)}
+.variant-list-head{display:flex;align-items:center;padding:7px 10px;background:var(--surface-2);border-bottom:1px solid var(--line);gap:8px}
+.variant-list-head label{font-size:11px;font-weight:700;cursor:pointer;flex:1;color:var(--label);text-transform:uppercase;letter-spacing:.5px}
+.variant-list-toggle{background:var(--surface);border:1.5px solid var(--line);cursor:pointer;padding:3px 9px;font-size:15px;font-weight:700;color:var(--ink);line-height:1;border-radius:var(--radius-sm);flex-shrink:0;box-shadow:var(--shadow-sm);transition:background .15s}
+.variant-list-toggle:hover{background:var(--accent-light);border-color:var(--accent-mid)}
+#variant-list{overflow-y:auto;flex:1;max-height:500px}
+.variant-item{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line)}
+.variant-item:hover{background:var(--surface-2)}
+.variant-item.active{background:var(--accent-light)}
+.variant-item input[type=checkbox]{cursor:pointer;flex-shrink:0;accent-color:var(--accent)}
+.variant-item-label{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.variant-detail-col{flex:1;padding:14px;display:flex;flex-direction:column;gap:12px;position:relative;background:var(--surface)}
+.variant-detail-empty{color:var(--muted);font-size:12px;padding:30px 20px;text-align:center}
+.detail-section-title{font-size:11px;font-weight:700;color:var(--accent-mid);text-transform:uppercase;letter-spacing:.7px;margin-top:6px;padding-top:12px;border-top:2px solid var(--line);display:flex;align-items:center;gap:6px}
+.detail-section-title::before{content:'';display:block;width:3px;height:13px;background:var(--accent-mid);border-radius:2px}
+.detail-section-title:first-child{margin-top:0;padding-top:0;border-top:none}
+.detail-row{display:flex;flex-direction:column;gap:4px}
+.detail-row label{font-size:11px;font-weight:700;color:var(--label);text-transform:uppercase;letter-spacing:.5px}
+.detail-row input,.detail-row select,.detail-row textarea{
+  border:1.5px solid var(--line);border-radius:6px;padding:6px 9px;font-size:12px;
+  width:100%;font-family:inherit;background:var(--surface);transition:border-color .15s;
+}
+.detail-row input:focus,.detail-row select:focus,.detail-row textarea:focus{outline:none;border-color:var(--accent-mid);box-shadow:0 0 0 2px var(--accent-light)}
+.detail-row textarea{min-height:70px;resize:vertical}
+.detail-row-inline{display:flex;gap:8px;align-items:flex-end}
+.detail-row-inline>*{flex:1}
+.detail-row-inline .btn{flex:0 0 auto;white-space:nowrap}
+.detail-readonly{font-size:12px;padding:6px 9px;background:var(--surface-2);border:1.5px solid var(--line);border-radius:6px;color:var(--muted)}
+.variant-hint{font-size:11px;color:var(--muted);font-style:italic;padding:2px 0}
+
+/* ── DROPZONE ── */
+.dropzone{
+  border:2px dashed var(--line-strong);border-radius:var(--radius);padding:11px 14px;
+  cursor:pointer;text-align:center;color:var(--muted);font-size:12px;font-weight:500;
+  background:var(--surface-2);transition:background .15s,border-color .15s,color .15s;
+}
+.dropzone:hover,.dropzone.drag-over{background:var(--accent-light);border-color:var(--accent-mid);color:var(--accent)}
+.dropzone input[type=file]{display:none}
+
+/* ── PREVIEW ── */
+#preview-bar{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border-bottom:1px solid var(--line);flex-shrink:0;box-shadow:var(--shadow-sm)}
+#preview-status{font-size:12px;color:var(--muted);flex:1}
+#preview-scroll{overflow-y:auto;flex:1;padding:16px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.preview-page{background:#fff;border:1px solid #c8d4de;max-width:100%;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.15)}
+.preview-page img{display:block;max-width:100%;height:auto}
+#preview-error{color:var(--bad);font-size:12px;padding:8px;text-align:center}
+
+/* ── BULK PANEL ── */
+#bulk-panel{display:flex;flex-direction:column;height:100%;overflow:hidden}
+.bulk-top{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:10px;flex-shrink:0}
+.bulk-body{display:flex;flex:1;overflow:hidden}
+.bulk-list-col{width:45%;border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+.bulk-list-head{padding:8px 12px;background:var(--surface-2);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+#bulk-list{overflow-y:auto;flex:1}
+.bulk-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+.bulk-item:hover{background:var(--surface-2)}
+.bulk-item.active{background:var(--accent-light)}
+.bulk-item input[type=checkbox]{cursor:pointer;flex-shrink:0;accent-color:var(--accent)}
+.bulk-item-label{font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.bulk-item-error{color:var(--bad)}
+.bulk-item-warn{color:var(--warn)}
+.bulk-editor-col{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+#bulk-editor-hint{color:var(--muted);font-size:12px;text-align:center;padding:30px}
+
+/* ── FOOTER ── */
+#footer{
+  background:var(--surface);border-top:1px solid var(--line);padding:10px 16px;
+  flex-shrink:0;display:flex;flex-direction:column;gap:8px;
+  box-shadow:0 -2px 8px rgba(0,0,0,.06);
+}
+.footer-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.footer-row label{font-size:11px;font-weight:700;color:var(--label);white-space:nowrap;text-transform:uppercase;letter-spacing:.5px}
+.footer-row select{border:1.5px solid var(--line);border-radius:var(--radius);padding:6px 10px;font-size:12px;color:var(--ink);font-family:inherit;background:var(--surface)}
+.footer-exports{display:flex;gap:8px;margin-left:auto}
+.footer-exports .btn{min-width:114px;text-align:center}
+
+/* ── CHIP / STATUS ── */
+.chip{
+  display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;
+  background:var(--accent-light);color:var(--accent);border:1px solid #c0dce6;
+}
+.status-ok{color:var(--ok)}
+.status-warn{color:var(--warn)}
+.status-bad{color:var(--bad)}
+
+/* ── LOADING ── */
+#loading-overlay{
+  position:fixed;inset:0;background:rgba(238,242,245,.9);z-index:999;
+  display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;color:var(--accent);
+  backdrop-filter:blur(3px);
+}
+.spinner{
+  width:24px;height:24px;border:3px solid var(--line);border-top-color:var(--accent);
+  border-radius:50%;animation:spin .7s linear infinite;margin-right:10px;display:inline-block;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── TOAST ── */
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  background:#1e293b;color:#fff;padding:10px 24px;border-radius:99px;
+  font-size:13px;font-weight:500;z-index:1000;opacity:0;transition:opacity .25s;pointer-events:none;
+  box-shadow:var(--shadow-md);
+}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="loading-overlay"><span class="spinner"></span>Loading…</div>
+<div id="toast"></div>
+
+<div id="app">
+
+<!-- HEADER -->
+<header id="header">
+  <span class="app-title">Internal Report Automation</span>
+  <div class="header-mid">
+    <label>Template</label>
+    <select id="template-combo"></select>
+    <div class="tmpl-picker" id="tmpl-picker">
+      <button class="tmpl-picker-btn" id="tmpl-picker-btn" type="button">Select template</button>
+      <div class="tmpl-dropdown" id="tmpl-dropdown"></div>
+    </div>
+  </div>
+  <div class="mode-btns">
+    <button class="mode-btn active" data-mode="manual">Manual entry</button>
+    <button class="mode-btn" data-mode="bulk">Bulk upload</button>
+  </div>
+</header>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- LEFT -->
+  <div id="left-panel">
+
+    <!-- MANUAL PANEL -->
+    <div id="manual-panel" style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div class="tabs-bar">
+        <button class="tab-btn active" data-tab="patient">Patient Details</button>
+        <button class="tab-btn" data-tab="report">Report Details</button>
+        <button class="tab-btn" data-tab="genes" id="genes-tab-btn">Gene Coverage</button>
+        <button class="tab-btn" data-tab="variants" id="variants-tab-btn" style="display:none">Variants</button>
+      </div>
+
+      <!-- PATIENT TAB -->
+      <div id="tab-patient" class="tab-panel active">
+        <div class="form-section">
+          <div class="form-section-title">Patient details</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+
+            <div class="form-group">
+              <label id="patient-id-label">Patient ID</label>
+              <input type="text" id="f-patient_id" placeholder="e.g. MEL - 00000">
+            </div>
+
+            <div class="form-group">
+              <label>PIN</label>
+              <div class="pin-row">
+                <input type="text" id="f-pin" placeholder="e.g. ADK0000000000">
+                <button class="btn" id="fetch-btn">Fetch</button>
+              </div>
+              <div class="fetch-status" id="fetch-status"></div>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Age</label>
+                <input type="text" id="f-age" placeholder="52 Years">
+              </div>
+              <div class="form-group">
+                <label>Gender</label>
+                <input type="text" id="f-gender" placeholder="Female">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Hospital / Clinic</label>
+              <div class="other-choice" id="oc-hospital">
+                <select class="other-select"><option value="">— Select —</option></select>
+                <input type="text" class="other-input" placeholder="Type the hospital / clinic name">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Sample Number</label>
+              <input type="text" id="f-sample_number" placeholder="Sample number">
+            </div>
+
+            <div class="form-group">
+              <label>Referring Clinician</label>
+              <div class="other-choice" id="oc-referring_clinician">
+                <select class="other-select"><option value="">— Select —</option></select>
+                <input type="text" class="other-input" placeholder="Type the clinician name">
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Sample Collection Date</label>
+                <input type="text" id="f-collection_date" placeholder="dd/mm/yyyy">
+              </div>
+              <div class="form-group">
+                <label>Sample Received Date</label>
+                <input type="text" id="f-received_date" placeholder="dd/mm/yyyy">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Specimen</label>
+              <div class="other-choice" id="oc-specimen">
+                <select class="other-select"><option value="">— Select —</option></select>
+                <input type="text" class="other-input" placeholder="Type the specimen">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Report Date</label>
+              <input type="text" id="f-report_date" placeholder="dd/mm/yyyy">
+            </div>
+
+          </div>
+        </div>
+      </div><!-- /patient tab -->
+
+      <!-- REPORT TAB -->
+      <div id="tab-report" class="tab-panel">
+        <div class="form-section">
+          <div class="form-section-title">Clinical history</div>
+          <textarea id="f-clinical_history" placeholder="Proband, &lt;Patient ID&gt;, is suspected to be affected with &lt;indication&gt; and has been evaluated for pathogenic variations." style="min-height:120px"></textarea>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">Sequence data attributes</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="form-group">
+              <label>Total Read Generated</label>
+              <input type="text" id="f-total_reads" placeholder="12.6 GB">
+            </div>
+            <div class="form-group">
+              <label>Data ≥ Q30</label>
+              <input type="text" id="f-q30" placeholder="96.34 %">
+            </div>
+          </div>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">Gene list link (Methodology "Click here")</div>
+          <input type="text" id="f-gene_list_url" placeholder="https://…">
+        </div>
+      </div><!-- /report tab -->
+
+      <!-- GENES TAB -->
+      <div id="tab-genes" class="tab-panel">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="btn" id="paste-genes-btn">Paste table</button>
+          <button class="btn" id="add-gene-row-btn">+ Add row</button>
+          <span id="gene-count" class="chip">0 genes</span>
+        </div>
+        <div id="gene-status" style="font-size:12px;color:var(--muted)"></div>
+
+        <div class="gene-table-wrap">
+          <table id="gene-table">
+            <thead><tr><th>#</th><th>Gene Name</th><th>% of coding region covered</th></tr></thead>
+            <tbody id="gene-tbody"></tbody>
+          </table>
+        </div>
+      </div><!-- /genes tab -->
+
+      <!-- VARIANTS TAB -->
+      <div id="tab-variants" class="tab-panel">
+        <div id="variants-container">
+          <div class="variants-top">
+            <div class="dropzone" id="variants-dropzone" style="flex:1">
+              <input type="file" id="variants-file-input" accept=".xlsx,.xlsm">
+              <span>Click to browse or drag &amp; drop the listed-variants Excel (.xlsx)</span>
+            </div>
+            <input type="text" id="variant-search" placeholder="Search variants…">
+          </div>
+
+          <div id="variants-hint" class="variant-hint">
+            Upload the listed-variants Excel, then tick the variants to show in the report.
+          </div>
+
+          <div class="variants-tools" id="variants-tools" style="display:none">
+            <label>Result:</label>
+            <select id="f-result_tag">
+              <option value="">Automatic (from the classifications)</option>
+            </select>
+            <div id="primary-title-row" style="display:none;flex-direction:column;gap:4px">
+              <label>Variant list title:</label>
+              <div id="oc-primary_title" style="display:flex;flex-direction:column;gap:4px">
+                <select id="f-primary_title" class="other-select" style="padding:6px 10px;font-size:12px;min-width:340px"></select>
+                <input type="text" class="other-input" placeholder="Type custom title…" style="display:none;padding:6px 10px;font-size:12px;width:100%;box-sizing:border-box">
+              </div>
+            </div>
+            <select id="f-secondary_title" style="display:none"></select>
+          </div>
+
+          <div class="variants-body" id="variants-body" style="display:none">
+            <div class="variant-list-col" id="variant-list-col">
+              <div class="variant-list-head">
+                <input type="checkbox" id="select-all-variants">
+                <label for="select-all-variants" id="select-all-label">Select all (0 variants)</label>
+                <button class="variant-list-toggle" id="toggle-variant-list" title="Hide list">&#8249;</button>
+              </div>
+              <div id="variant-list" class="variant-list-body-items"></div>
+            </div>
+            <div class="variant-detail-col" id="variant-detail-col">
+              <div class="variant-detail-empty">Select a variant from the list to see its details.</div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /variants tab -->
+
+    </div><!-- /manual-panel -->
+
+    <!-- BULK PANEL -->
+    <div id="bulk-panel" style="display:none;flex-direction:column;height:100%;overflow:hidden">
+      <div class="bulk-top">
+        <div class="dropzone" id="bulk-dropzone">
+          <input type="file" id="bulk-file-input" accept=".xlsx,.xlsm">
+          <span>Click to browse or drag &amp; drop the patient Excel (.xlsx)</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="bulk-search" placeholder="Search patients…" style="border:1px solid var(--line);border-radius:var(--radius);padding:5px 10px;font-size:12px;flex:1">
+          <span id="bulk-count" class="chip">0 selected</span>
+        </div>
+        <div id="bulk-status" style="font-size:12px;color:var(--muted)"></div>
+      </div>
+      <div class="bulk-body">
+        <div class="bulk-list-col">
+          <div class="bulk-list-head">
+            <input type="checkbox" id="select-all-bulk">
+            <label for="select-all-bulk" style="font-size:11px;font-weight:600;flex:1">Select all</label>
+          </div>
+          <div id="bulk-list"></div>
+        </div>
+        <div class="bulk-editor-col">
+          <div id="bulk-editor-hint">Click a patient row to edit their details.</div>
+          <div id="bulk-editor-form" style="display:none;flex-direction:column;gap:10px">
+            <div class="form-section-title" style="color:var(--accent)">Patient editor</div>
+            <div class="form-group"><label>Patient ID</label><input type="text" class="bulk-field" data-key="patient_id"></div>
+            <div class="form-group"><label>PIN</label><input type="text" class="bulk-field" data-key="pin"></div>
+            <div class="form-group"><label>Age</label><input type="text" class="bulk-field" data-key="age"></div>
+            <div class="form-group"><label>Gender</label><input type="text" class="bulk-field" data-key="gender"></div>
+            <div class="form-group"><label>Hospital / Clinic</label><input type="text" class="bulk-field" data-key="hospital"></div>
+            <div class="form-group"><label>Sample Number</label><input type="text" class="bulk-field" data-key="sample_number"></div>
+            <div class="form-group"><label>Referring Clinician</label><input type="text" class="bulk-field" data-key="referring_clinician"></div>
+            <div class="form-group"><label>Specimen</label><input type="text" class="bulk-field" data-key="specimen"></div>
+            <div class="form-group"><label>Collection Date</label><input type="text" class="bulk-field" data-key="collection_date"></div>
+            <div class="form-group"><label>Received Date</label><input type="text" class="bulk-field" data-key="received_date"></div>
+            <div class="form-group"><label>Report Date</label><input type="text" class="bulk-field" data-key="report_date"></div>
+            <div class="form-group"><label>Clinical History</label><textarea class="bulk-field" data-key="clinical_history" style="min-height:80px"></textarea></div>
+            <div class="form-group"><label>Total Read Generated</label><input type="text" class="bulk-field" data-key="total_reads"></div>
+            <div class="form-group"><label>Data ≥ Q30</label><input type="text" class="bulk-field" data-key="q30"></div>
+            <div class="form-group"><label>Gene list link</label><input type="text" class="bulk-field" data-key="gene_list_url"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /bulk-panel -->
+
+  </div><!-- /left-panel -->
+
+  <!-- RIGHT: PREVIEW -->
+  <div id="right-panel">
+    <div id="preview-bar">
+      <button class="btn" id="refresh-preview-btn">Refresh preview</button>
+      <span id="preview-status">Ready</span>
+      <span id="result-badge" style="display:none;padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.3px"></span>
+    </div>
+    <div id="preview-scroll">
+      <div id="preview-pages"></div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- FOOTER -->
+<footer id="footer">
+  <div class="footer-row">
+    <label>Clinical reviewer</label>
+    <select id="reviewer-combo"></select>
+    <button class="btn" id="save-draft-btn">Save draft</button>
+    <label class="btn" style="cursor:pointer">Load draft<input type="file" id="load-draft-input" accept=".json" style="display:none"></label>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:8px">
+      <label style="font-size:11px;font-weight:700;color:var(--label);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Output folder</label>
+      <input type="text" id="output-folder-input" placeholder="Output folder…"
+             style="width:180px;padding:6px 10px;font-size:12px;border:1.5px solid var(--line);border-radius:var(--radius);font-family:inherit">
+      <button class="btn" id="pick-folder-btn" title="Browse for folder">&#128193; Browse</button>
+    </div>
+    <div class="footer-exports">
+      <button class="btn solid" data-kind="docx" id="export-docx">Export DOCX</button>
+      <button class="btn solid" data-kind="pdf" id="export-pdf">Export PDF</button>
+      <button class="btn primary" data-kind="both" id="export-both">Export DOCX + PDF</button>
+    </div>
+  </div>
+  <div class="footer-row" id="bulk-footer-row" style="display:none">
+    <span style="font-size:12px;font-weight:600;color:var(--muted)">Bulk export:</span>
+    <button class="btn solid" id="bulk-export-docx">DOCX</button>
+    <button class="btn solid" id="bulk-export-pdf">PDF</button>
+    <button class="btn primary" id="bulk-export-both">DOCX + PDF</button>
+  </div>
+</footer>
+
+</div><!-- /app -->
+
+<script>
+"use strict";
+
+// ============================================================
+// GLOBALS
+// ============================================================
+const G = {
+  init: null,           // data from /api/init
+  templateInfo: null,   // data from /api/template-info
+  mode: 'manual',
+  activeTab: 'patient',
+
+  // Form state
+  templateKey: '',
+  templateDefaults: {},
+  templateReviewer: '',
+  templateGenes: [],
+  lastReceived: '',
+  fetchedPin: '',
+  loadingDraft: false,
+
+  // Variants
+  variants: [],
+  currentVariantIdx: -1,
+  variantManualFields: {}, // {idx: {disease,inheritance,evidence,genomic_position}}
+
+  // Bulk
+  bulkRows: [],
+  bulkItems: [],
+  editingBulkIdx: -1,
+
+  // Preview
+  previewTimer: null,
+  previewBusy: false,
+  previewPending: false,
+};
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function $(id) { return document.getElementById(id); }
+function $q(sel, el) { return (el || document).querySelector(sel); }
+function $qa(sel, el) { return (el || document).querySelectorAll(sel); }
+
+function toast(msg, ms=3000) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+async function api(url, opts={}) {
+  const r = await fetch(url, opts);
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('json')) return r;
+  return r.json();
+}
+
+async function postJSON(url, body) {
+  return api(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+
+function showLoading(show) {
+  $('loading-overlay').style.display = show ? '' : 'none';
+}
+
+// ============================================================
+// OTHER-CHOICE WIDGET
+// ============================================================
+function initOtherChoice(containerId, options, placeholder) {
+  const c = $(containerId);
+  const sel = c.querySelector('.other-select');
+  const inp = c.querySelector('.other-input');
+  inp.placeholder = placeholder || 'Type the value';
+  options.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o; opt.textContent = o;
+    sel.appendChild(opt);
+  });
+  const otherOpt = document.createElement('option');
+  otherOpt.value = '__other__'; otherOpt.textContent = 'Other…';
+  sel.appendChild(otherOpt);
+
+  sel.addEventListener('change', () => {
+    if (sel.value === '__other__') {
+      sel.style.display = 'none';
+      inp.style.display = '';
+      inp.value = ''; inp.focus();
+    }
+    schedulePreview();
+  });
+  inp.addEventListener('blur', () => {
+    if (!inp.value.trim()) {
+      inp.style.display = 'none';
+      sel.style.display = '';
+      sel.value = '';
+    }
+  });
+  inp.addEventListener('input', schedulePreview);
+}
+
+function getOtherChoice(containerId) {
+  const c = $(containerId);
+  const sel = c.querySelector('.other-select');
+  const inp = c.querySelector('.other-input');
+  if (inp.style.display !== 'none') return inp.value.trim();
+  return sel.value === '__other__' ? '' : (sel.value || '');
+}
+
+function setOtherChoice(containerId, value) {
+  const c = $(containerId);
+  const sel = c.querySelector('.other-select');
+  const inp = c.querySelector('.other-input');
+  value = (value || '').trim();
+  const found = [...sel.options].find(o => o.value === value && o.value !== '__other__');
+  if (found) {
+    sel.value = value;
+    sel.style.display = '';
+    inp.style.display = 'none';
+  } else {
+    sel.style.display = 'none';
+    inp.style.display = '';
+    inp.value = value;
+  }
+}
+
+// ============================================================
+// TABS
+// ============================================================
+function switchTab(tab) {
+  G.activeTab = tab;
+  $qa('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $qa('.tab-panel').forEach(p => {
+    const active = p.id === `tab-${tab}`;
+    p.classList.toggle('active', active);
+    p.style.display = active ? 'flex' : 'none';
+  });
+}
+
+// ============================================================
+// MODE SWITCH
+// ============================================================
+function switchMode(mode) {
+  G.mode = mode;
+  $qa('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $('manual-panel').style.display = mode === 'manual' ? 'flex' : 'none';
+  $('bulk-panel').style.display = mode === 'bulk' ? 'flex' : 'none';
+  $('bulk-footer-row').style.display = mode === 'bulk' ? '' : 'none';
+  schedulePreview();
+}
+
+// ============================================================
+// COLLECT DATA
+// ============================================================
+function collectData() {
+  const patient = {
+    patient_id: $('f-patient_id').value.trim(),
+    pin: $('f-pin').value.trim(),
+    age: $('f-age').value.trim(),
+    gender: $('f-gender').value.trim(),
+    hospital: getOtherChoice('oc-hospital'),
+    sample_number: $('f-sample_number').value.trim(),
+    referring_clinician: getOtherChoice('oc-referring_clinician'),
+    collection_date: $('f-collection_date').value.trim(),
+    specimen: getOtherChoice('oc-specimen'),
+    received_date: $('f-received_date').value.trim(),
+    report_date: $('f-report_date').value.trim(),
+  };
+  return {
+    template_key: G.templateKey,
+    patient,
+    clinical_history: $('f-clinical_history').value.trim(),
+    total_reads: $('f-total_reads').value.trim(),
+    q30: $('f-q30').value.trim(),
+    gene_list_url: $('f-gene_list_url').value.trim(),
+    genes: collectGenes(),
+    reviewer: $('reviewer-combo').value || '',
+    variants: G.variants,
+    result_tag: $('f-result_tag').value || '',
+    primary_title: getOtherChoice('oc-primary_title') || '',
+    secondary_title: $('f-secondary_title').value || '',
+  };
+}
+
+// ============================================================
+// GENE TABLE
+// ============================================================
+function collectGenes() {
+  const rows = [];
+  $qa('#gene-tbody tr').forEach(tr => {
+    const inputs = tr.querySelectorAll('input');
+    const g = inputs[0].value.trim(), c = inputs[1].value.trim();
+    if (g) rows.push([g, c]);
+  });
+  return rows;
+}
+
+function renderGeneTable(genes) {
+  const tbody = $('gene-tbody');
+  tbody.innerHTML = '';
+  (genes || []).forEach((pair, i) => addGeneRow(pair[0] || '', pair[1] || ''));
+  updateGeneCount();
+}
+
+function addGeneRow(gene='', cov='') {
+  const tbody = $('gene-tbody');
+  const rowNum = tbody.children.length + 1;
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="gene-rownum">${rowNum}</td>
+    <td><input type="text" value="${escHtml(gene)}" placeholder="Gene"></td>
+    <td><input type="text" value="${escHtml(cov)}" placeholder="100.0"></td>`;
+  tr.querySelectorAll('input').forEach(i => i.addEventListener('input', () => { updateGeneCount(); schedulePreview(); }));
+  tbody.appendChild(tr);
+  updateGeneCount();
+}
+
+function reindexGeneRows() {
+  $qa('#gene-tbody tr').forEach((tr, i) => {
+    const num = tr.querySelector('.gene-rownum');
+    if (num) num.textContent = i + 1;
+  });
+}
+
+function updateGeneCount() {
+  const n = collectGenes().length;
+  $('gene-count').textContent = `${n} gene${n===1?'':'s'}`;
+}
+
+async function pasteGenes() {
+  setGeneStatus('Reading clipboard…', '');
+  // Server-side clipboard read (works on any IP, no browser permission needed)
+  try {
+    const r = await postJSON('/api/read-clipboard', {});
+    if (r.text && r.text.trim()) {
+      setGeneStatus('', '');
+      await applyGenePaste(r.text);
+      return;
+    }
+  } catch(e) {}
+  // Browser Clipboard API fallback (localhost / HTTPS only)
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.trim()) { setGeneStatus('', ''); await applyGenePaste(text); return; }
+    } catch(e) {}
+  }
+  setGeneStatus('Clipboard is empty or could not be read. Copy the table first.', 'bad');
+}
+
+async function applyGenePaste(text) {
+  if (!text.trim()) { toast('Nothing to paste.'); return; }
+  const r = await postJSON('/api/parse-genes', { text });
+  if (r.error) { setGeneStatus(r.error, 'bad'); return; }
+  if (!r.genes || !r.genes.length) { setGeneStatus('No gene table found. Copy the table (gene + coverage cells) and try again.', 'bad'); return; }
+  renderGeneTable(r.genes);
+  let msg = `Pasted ${r.genes.length} gene${r.genes.length===1?'':'s'}.`;
+  let cls = 'ok';
+  if (r.problems && r.problems.length) {
+    msg += ` Skipped ${r.problems.length} pair(s): ${r.problems.slice(0,3).join('; ')}${r.problems.length>3?' …':''}`;
+    cls = 'warn';
+  }
+  setGeneStatus(msg, cls);
+  schedulePreview();
+}
+
+function setGeneStatus(msg, cls='') {
+  const el = $('gene-status');
+  el.textContent = msg;
+  el.className = cls === 'ok' ? 'status-ok' : cls === 'warn' ? 'status-warn' : cls === 'bad' ? 'status-bad' : '';
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// TEMPLATE
+// ============================================================
+async function loadTemplateInfo(key) {
+  const info = await api(`/api/template-info/${key}`);
+  G.templateInfo = info;
+  return info;
+}
+
+function syncTemplatePicker(key) {
+  const tc = $('template-combo');
+  tc.value = key;
+  const btn = $('tmpl-picker-btn');
+  const sel = tc.options[tc.selectedIndex];
+  btn.textContent = sel ? sel.textContent : key;
+  $('tmpl-dropdown').querySelectorAll('.tmpl-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.key === key);
+  });
+}
+
+async function onTemplateChange(key, force=false) {
+  G.templateKey = key;
+  const info = await loadTemplateInfo(key);
+
+  // Pre-fill defaults (only if empty or still the old default)
+  const oldDef = G.templateDefaults;
+  const newDef = { hospital: info.hospital, referring_clinician: info.referring_clinician, specimen: info.specimen };
+
+  for (const [field, val] of Object.entries(newDef)) {
+    const cur = getOtherChoice(`oc-${field}`);
+    if (force || !cur || cur === (oldDef[field] || '')) {
+      setOtherChoice(`oc-${field}`, val);
+    }
+  }
+  G.templateDefaults = newDef;
+
+  // Patient ID label
+  $('patient-id-label').textContent = info.patient_id_label || 'Patient ID';
+  $('f-patient_id').placeholder = info.patient_id_prefix
+    ? `e.g. ${info.patient_id_prefix} - 00000`
+    : (info.patient_id_label === 'Patient ID' ? 'e.g. 12345' : 'e.g. Baby. Name');
+
+  // Clinical reviewer
+  const rc = $('reviewer-combo');
+  const curReviewer = rc.value;
+  if (!curReviewer || curReviewer === G.templateReviewer) {
+    rc.value = info.reviewer || '';
+  }
+  G.templateReviewer = info.reviewer || '';
+
+  // Gene table
+  G.templateGenes = info.genes || [];
+  // Gene table starts empty — user pastes or adds rows manually
+
+  // Gene list URL — never pre-fill from template; user always enters it manually
+
+  // Gene Coverage tab — always visible for all templates
+  $('genes-tab-btn').style.display = '';
+
+  // Variants tab
+  const hasVariants = !!info.variants;
+  $('variants-tab-btn').style.display = hasVariants ? '' : 'none';
+  if (!hasVariants && G.activeTab === 'variants') switchTab('patient');
+
+  // Primary variant list title row (shown for pathogenic templates)
+  const priRow = $('primary-title-row');
+  priRow.style.display = (info.pathogenic && info.variants) ? 'flex' : 'none';
+
+
+  schedulePreview();
+}
+
+// ============================================================
+// PATIENT FETCH
+// ============================================================
+function setFetchStatus(msg, cls='') {
+  const el = $('fetch-status');
+  el.textContent = msg;
+  el.className = `fetch-status ${cls === 'ok' ? 'status-ok' : cls === 'warn' ? 'status-warn' : cls === 'bad' ? 'status-bad' : ''}`;
+}
+
+async function fetchPatient(pin) {
+  if (!pin) return;
+  G.fetchedPin = pin;
+  $('fetch-btn').disabled = true;
+  setFetchStatus(`Looking up ${pin}…`, '');
+  try {
+    const r = await postJSON('/api/fetch-patient', { pin, template_key: G.templateKey });
+    if (r.error) { setFetchStatus(r.error, 'bad'); G.fetchedPin = ''; return; }
+    if (r.missing) { setFetchStatus(r.note || `${pin} was not found.`, 'warn'); return; }
+    const fields = r.fields || {};
+    const patientFieldMap = { patient_id:'f-patient_id', age:'f-age', gender:'f-gender', sample_number:'f-sample_number',
+      collection_date:'f-collection_date', received_date:'f-received_date', report_date:'f-report_date' };
+    for (const [k, id] of Object.entries(patientFieldMap)) {
+      if (fields[k]) $(id).value = fields[k];
+    }
+    if (fields.hospital) setOtherChoice('oc-hospital', fields.hospital);
+    if (fields.referring_clinician) setOtherChoice('oc-referring_clinician', fields.referring_clinician);
+    if (fields.specimen) setOtherChoice('oc-specimen', fields.specimen);
+    if (fields.total_reads) $('f-total_reads').value = fields.total_reads;
+    if (fields.q30) $('f-q30').value = fields.q30;
+    if (fields.received_date) {
+      G.lastReceived = fields.received_date;
+      if (!$('f-collection_date').value.trim()) $('f-collection_date').value = fields.received_date;
+    }
+    setFetchStatus(r.note || '', r.note ? 'warn' : '');
+    schedulePreview();
+  } catch(e) {
+    setFetchStatus(`Error: ${e.message}`, 'bad');
+    G.fetchedPin = '';
+  } finally {
+    $('fetch-btn').disabled = false;
+  }
+}
+
+function clearPatient() {
+  // Reset fields to template defaults; keep report_date and pin
+  $('f-patient_id').value = '';
+  $('f-age').value = ''; $('f-gender').value = '';
+  $('f-sample_number').value = '';
+  $('f-collection_date').value = ''; $('f-received_date').value = '';
+  $('f-total_reads').value = ''; $('f-q30').value = '';
+  const def = G.templateDefaults;
+  setOtherChoice('oc-hospital', def.hospital || '');
+  setOtherChoice('oc-referring_clinician', def.referring_clinician || '');
+  setOtherChoice('oc-specimen', def.specimen || '');
+  setFetchStatus('', '');
+  G.fetchedPin = ''; G.lastReceived = '';
+  schedulePreview();
+}
+
+// ============================================================
+// VARIANTS
+// ============================================================
+async function uploadVariants(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  setVariantStatus('Uploading variants…');
+  try {
+    const r = await api('/api/upload-variants', { method:'POST', body: fd });
+    if (r.error) { setVariantStatus(`Error: ${r.error}`, 'bad'); return; }
+    G.variants = r.variants || [];
+    G.currentVariantIdx = -1;
+    G.variantManualFields = {};
+    renderVariantList();
+    $('variants-tools').style.display = '';
+    $('variants-body').style.display = '';
+    $('variants-hint').style.display = 'none';
+    setVariantStatus(`Loaded ${G.variants.length} variant${G.variants.length===1?'':'s'}.`, 'ok');
+    if (G.variants.length > 0) showVariantDetail(0);
+    schedulePreview();
+  } catch(e) {
+    setVariantStatus(`Error: ${e.message}`, 'bad');
+  }
+}
+
+function setVariantStatus(msg, cls='') {
+  const el = $('variants-hint');
+  el.style.display = '';
+  el.textContent = msg;
+  el.className = `variant-hint ${cls === 'ok' ? 'status-ok' : cls === 'bad' ? 'status-bad' : ''}`;
+}
+
+function renderVariantList() {
+  const list = $('variant-list');
+  const search = $('variant-search').value.toLowerCase();
+  list.innerHTML = '';
+  let shown = 0;
+  G.variants.forEach((v, i) => {
+    const label = `${v.gene || ''} ${v.variant || ''}`.trim();
+    if (search && !label.toLowerCase().includes(search)) return;
+    shown++;
+    const item = document.createElement('div');
+    item.className = `variant-item${i === G.currentVariantIdx ? ' active' : ''}`;
+    item.dataset.idx = i;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!v.selected;
+    cb.addEventListener('change', (e) => {
+      G.variants[i].selected = e.target.checked;
+      updateSelectAllVariants(); schedulePreview();
+      if (i === G.currentVariantIdx) updateDetailTitle(i);
+    });
+    const lbl = document.createElement('span');
+    lbl.className = 'variant-item-label';
+    lbl.textContent = label || `Variant ${i+1}`;
+    item.appendChild(cb); item.appendChild(lbl);
+    item.addEventListener('click', (e) => { if (e.target !== cb) showVariantDetail(i); });
+    list.appendChild(item);
+  });
+  const total = G.variants.length;
+  $('select-all-label').textContent = `Select all (${shown === total ? total : shown + ' of ' + total} variants)`;
+  updateSelectAllVariants();
+}
+
+function updateSelectAllVariants() {
+  const cb = $('select-all-variants');
+  const sel = G.variants.filter(v => v.selected).length;
+  cb.checked = G.variants.length > 0 && sel === G.variants.length;
+  cb.indeterminate = sel > 0 && sel < G.variants.length;
+}
+
+async function showVariantDetail(idx) {
+  G.currentVariantIdx = idx;
+  // Update active state in list
+  $qa('.variant-item').forEach(el => el.classList.toggle('active', +el.dataset.idx === idx));
+
+  const v = G.variants[idx];
+  if (!v) return;
+
+  // Fetch defaults from server
+  let defaults = null;
+  try {
+    defaults = await postJSON('/api/variant-defaults', v);
+  } catch(e) { defaults = {}; }
+
+  const col = $('variant-detail-col');
+  col.innerHTML = buildVariantDetailHTML(v, defaults, idx);
+  bindVariantDetail(idx, defaults);
+}
+
+function updateDetailTitle(idx) {
+  const v = G.variants[idx];
+  const el = $('variant-detail-col').querySelector('.variant-detail-title');
+  if (!el || !v) return;
+  const name = escHtml((v.gene||'') + ' ' + (v.variant||''));
+  el.innerHTML = v.selected
+    ? `<b>${name}</b> &mdash; ticked: its details go in the report.`
+    : `<span style="color:var(--muted)">${name}</span> &mdash; not ticked: tick it in the list to include it.`;
+}
+
+function buildVariantDetailHTML(v, defs, idx) {
+  const tools = (defs && defs.insilico_tools) || [];
+  const toolKeys = new Set(tools.map(t => t[1]));
+  const si = G.init || {};
+  const allSilico = si.silico || [];
+  const allConserv = si.conservation || [];
+
+  const field = (key, label, val, readOnly=false, tip='') => {
+    const ro = readOnly ? 'readonly style="background:#f8fafc"' : '';
+    return `<div class="detail-row">
+      <label>${label}</label>
+      <input type="text" class="vd-field" data-key="${key}" value="${escHtml(val||'')}" ${ro} ${tip?`title="${escHtml(tip)}"`:''}>
+    </div>`;
+  };
+  const textarea = (key, label, val, tip='') => `<div class="detail-row">
+    <label>${label}</label>
+    <textarea class="vd-field" data-key="${key}" ${tip?`title="${escHtml(tip)}"`:''} rows="3">${escHtml(val||'')}</textarea>
+  </div>`;
+
+  const freqOptions = [si.frequency_text||'', si.frequency_all||'', si.frequency_absent||''].filter(Boolean);
+  const freqVal = v.frequency || (defs && defs.frequency_default) || '';
+
+  let html = `<div class="variant-detail-title variant-hint">${v.selected?'<b>':'<span style="color:var(--muted)">'}${escHtml((v.gene||'')+' '+(v.variant||''))}${v.selected?'</b>':'</span>'} &mdash; ${v.selected?'ticked: its details go in the report.':'not ticked: tick it in the list to include it.'}</div>`;
+
+  html += `<div class="detail-section-title">Variant Interpretation</div>`;
+  // Gene + strand
+  html += `<div class="detail-row"><label>Gene</label><div class="detail-readonly">${escHtml(v.gene||'')}</div></div>`;
+  html += `<div class="detail-row"><label>Strand</label>
+    <select class="vd-field" data-key="strand">
+      <option value="">No strand</option>
+      <option value="+" ${v.strand==='+'?'selected':''}>+ strand</option>
+      <option value="-" ${v.strand==='-'?'selected':''}>- strand</option>
+    </select></div>`;
+  html += `<div class="detail-row"><label>Variant</label><div class="detail-readonly">${escHtml(v.variant||'')}</div></div>`;
+
+  // Classification
+  const classOpts = (defs && defs.classification_options) || ['Pathogenic','Likely Pathogenic','Variant of Uncertain Significance'];
+  const curClass = v.classification || classOpts[0] || '';
+  html += `<div class="detail-row"><label>Classification</label>
+    <select class="vd-field vd-class-sel" data-key="classification">
+      ${classOpts.map(o=>{
+        const cc = classColorFor(o);
+        const st = cc ? `style="background:${cc.bg};color:${cc.color}"` : '';
+        return `<option ${o===curClass?'selected':''} ${st}>${escHtml(o)}</option>`;
+      }).join('')}
+    </select></div>`;
+
+  html += field('omim_id', 'OMIM ID:', v.omim_id, false, `Sheet has: ${v.omim_options||''}`);
+  html += field('disease', 'Disease or Disorder:', v.disease, false, 'Type the disease; the (OMIM#id) is added from the Excel');
+  html += field('criteria', 'Criteria:', v.criteria, false, 'Type the criteria, e.g. PVS1, PM2_Supp');
+  html += field('inheritance', 'Inheritance:', v.inheritance, false, 'e.g. AD, AR');
+
+  // Frequency
+  html += `<div class="detail-row"><label>Variant Frequency:</label>
+    <div style="display:flex;gap:6px">
+      <select id="freq-preset" style="flex:0 0 auto;max-width:220px;border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:11px">
+        <option value="">Presets…</option>
+        ${freqOptions.map(o=>`<option value="${escHtml(o)}">${escHtml(o.substring(0,40))}…</option>`).join('')}
+      </select>
+      <button class="btn" id="gnomad-btn" style="flex:0 0 auto;font-size:11px">From gnomAD</button>
+    </div>
+    <input type="text" class="vd-field" data-key="frequency" value="${escHtml(freqVal)}" placeholder="${escHtml(si.frequency_absent||'')}">
+  </div>`;
+
+  // In Silico
+  html += `<div class="detail-section-title">In Silico Predictions</div>`;
+  allSilico.forEach(([label, key]) => {
+    const show = toolKeys.has(key);
+    html += `<div class="detail-row vd-silico-row" data-key="${key}" style="${show?'':'display:none'}">
+      <label>${label}</label>
+      <input type="text" class="vd-field" data-key="${key}" value="${escHtml(v[key]||'')}" placeholder="D / T / score">
+    </div>`;
+  });
+
+  // Conservation
+  html += `<div class="detail-section-title">Conservation Scores</div>`;
+  allConserv.forEach(([label, key]) => {
+    html += `<div class="detail-row"><label>${label}</label>
+      <input type="text" class="vd-field" data-key="${key}" value="${escHtml(v[key]||'')}" placeholder="score">
+    </div>`;
+  });
+
+  // Genomic position
+  const genomicVal = v.genomic_position || (defs && defs.genomic_text) || '';
+  html += `<div class="detail-section-title">Genomic Position</div>`;
+  html += `<div class="detail-row">
+    <div style="display:flex;gap:6px;align-items:flex-end">
+      <input type="text" class="vd-field" data-key="genomic_position" value="${escHtml(genomicVal)}" style="flex:1">
+      <label class="btn" style="cursor:pointer;font-size:11px;white-space:nowrap">From image…
+        <input type="file" id="ocr-file-input" accept="image/*" style="display:none">
+      </label>
+    </div>
+  </div>`;
+
+  // Evidence links
+  html += `<div class="detail-section-title">Evidence Links</div>`;
+  html += field('clinvar_link', 'ClinVar link:', v.clinvar_link, false, 'Paste the ClinVar link or ID');
+  html += field('pubmed_link', 'PubMed link:', v.pubmed_link, false, 'Paste the PubMed link or ID');
+
+  // Narrative
+  html += `<div class="detail-section-title">Narrative</div>`;
+  html += textarea('evidence', 'Clinical and Literature Evidences:', v.evidence || (defs && defs.suggested_evidence) || '');
+  const omimPhenotype = v.omim_phenotype || (defs && defs.omim_phenotype_prefix) || '';
+  html += textarea('omim_phenotype', 'OMIM phenotype:', omimPhenotype);
+
+  return html;
+}
+
+function bindVariantDetail(idx, defs) {
+  if (!G.variantManualFields[idx]) G.variantManualFields[idx] = {};
+  const manual = G.variantManualFields[idx];
+  const v = G.variants[idx];
+  const col = $('variant-detail-col');
+
+  // Init defaults that aren't set yet
+  if (!v.genomic_position && defs && defs.genomic_text) v.genomic_position = defs.genomic_text;
+  if (!v.evidence && defs && defs.suggested_evidence) v.evidence = defs.suggested_evidence;
+  if (!v.omim_phenotype && defs && defs.omim_phenotype_prefix) {
+    v.omim_phenotype = defs.omim_phenotype_prefix;
+    v.omim_phenotype_prefix = defs.omim_phenotype_prefix;
+  }
+
+  // Color the classification select on load
+  const classSel = col.querySelector('.vd-class-sel');
+  if (classSel) applySelectColor(classSel);
+
+  // Bind all vd-field inputs/selects/textareas
+  col.querySelectorAll('.vd-field').forEach(el => {
+    const key = el.dataset.key;
+    el.addEventListener('input', async (e) => {
+      const val = el.value;
+      if (key === 'disease') { manual.disease = true; await onVariantFieldChange(idx, key, val, defs); }
+      else if (key === 'inheritance') { manual.inheritance = true; v.inheritance = val; schedulePreview(); }
+      else if (key === 'evidence') { manual.evidence = true; v.evidence = val; schedulePreview(); }
+      else if (key === 'omim_id') { v.omim_id = val; await onVariantFieldChange(idx, key, val, defs); }
+      else if (key === 'clinvar_link' || key === 'pubmed_link') { v[key] = val; await refreshEvidence(idx); }
+      else { v[key] = val; schedulePreview(); }
+    });
+    el.addEventListener('change', async (e) => {
+      const val = el.value;
+      v[key] = val;
+      if (key === 'classification') { applySelectColor(el); schedulePreview(); }
+      if (key === 'strand') schedulePreview();
+      schedulePreview();
+    });
+  });
+
+  // Frequency preset
+  const freqPreset = col.querySelector('#freq-preset');
+  const freqInput = col.querySelector('.vd-field[data-key="frequency"]');
+  if (freqPreset) freqPreset.addEventListener('change', () => {
+    if (freqPreset.value) { freqInput.value = freqPreset.value; v.frequency = freqPreset.value; schedulePreview(); freqPreset.value = ''; }
+  });
+
+  // gnomAD button
+  const gnomBtn = col.querySelector('#gnomad-btn');
+  if (gnomBtn) gnomBtn.addEventListener('click', async () => {
+    gnomBtn.disabled = true; gnomBtn.textContent = 'Looking up…';
+    try {
+      const r = await postJSON('/api/gnomad', v);
+      if (r.error) { toast(`gnomAD: ${r.error}`); return; }
+      v.frequency = r.text;
+      if (freqInput) { freqInput.value = r.text; freqInput.setSelectionRange(0,0); }
+      schedulePreview();
+    } catch(e) { toast(`gnomAD error: ${e.message}`); }
+    finally { gnomBtn.disabled = false; gnomBtn.textContent = 'From gnomAD'; }
+  });
+
+  // OCR button
+  const ocrInput = col.querySelector('#ocr-file-input');
+  if (ocrInput) ocrInput.addEventListener('change', async () => {
+    if (!ocrInput.files[0]) return;
+    const fd = new FormData();
+    fd.append('image', ocrInput.files[0]);
+    fd.append('variant', JSON.stringify(v));
+    try {
+      const r = await api('/api/ocr', { method:'POST', body: fd });
+      if (r.error) { toast(`OCR: ${r.error}`); return; }
+      v.genomic_position = r.text;
+      const gpos = col.querySelector('.vd-field[data-key="genomic_position"]');
+      if (gpos) gpos.value = r.text;
+      schedulePreview();
+    } catch(e) { toast(`OCR error: ${e.message}`); }
+    ocrInput.value = '';
+  });
+}
+
+async function onVariantFieldChange(idx, key, val, defs) {
+  const v = G.variants[idx];
+  const manual = G.variantManualFields[idx] || {};
+  v[key] = val;
+  // Refresh from server
+  try {
+    const r = await postJSON('/api/variant-defaults', v);
+    const col = $('variant-detail-col');
+    if (key === 'omim_id') {
+      if (!manual.disease) {
+        v.disease = r.suggested_disease;
+        const el = col.querySelector('.vd-field[data-key="disease"]');
+        if (el) el.value = r.suggested_disease;
+      }
+      if (!manual.inheritance) {
+        v.inheritance = r.suggested_inheritance;
+        const el = col.querySelector('.vd-field[data-key="inheritance"]');
+        if (el) el.value = r.suggested_inheritance;
+      }
+      refreshOmimPhenotype(v, r, col);
+    } else if (key === 'disease') {
+      v.disease = val;
+      if (r.omim_ids_in && r.omim_ids_in.length) {
+        v.omim_id = r.omim_ids_in.join(', ');
+        const el = col.querySelector('.vd-field[data-key="omim_id"]');
+        if (el) el.value = v.omim_id;
+      }
+      if (!manual.inheritance) {
+        v.inheritance = r.suggested_inheritance;
+        const el = col.querySelector('.vd-field[data-key="inheritance"]');
+        if (el) el.value = r.suggested_inheritance;
+      }
+      refreshOmimPhenotype(v, r, col);
+    }
+    if (!manual.evidence && (key === 'omim_id' || key === 'disease' || key === 'clinvar_link' || key === 'pubmed_link')) {
+      v.evidence = r.suggested_evidence;
+      const el = col.querySelector('.vd-field[data-key="evidence"]');
+      if (el) el.value = r.suggested_evidence;
+    }
+  } catch(e) {}
+  schedulePreview();
+}
+
+function refreshOmimPhenotype(v, r, col) {
+  if (!r.omim_phenotype_prefix) return;
+  const cur = v.omim_phenotype || '';
+  const old = v.omim_phenotype_prefix || '';
+  if (cur && old && !cur.startsWith(old)) return; // user wrote their own
+  const newPrefix = r.omim_phenotype_prefix;
+  const rest = old ? cur.slice(old.length) : '';
+  v.omim_phenotype = newPrefix + rest;
+  v.omim_phenotype_prefix = newPrefix;
+  const el = col && col.querySelector('.vd-field[data-key="omim_phenotype"]');
+  if (el) el.value = v.omim_phenotype;
+}
+
+async function refreshEvidence(idx) {
+  const v = G.variants[idx];
+  const manual = G.variantManualFields[idx] || {};
+  if (manual.evidence) return;
+  try {
+    const r = await postJSON('/api/variant-defaults', v);
+    v.evidence = r.suggested_evidence;
+    const col = $('variant-detail-col');
+    const el = col.querySelector('.vd-field[data-key="evidence"]');
+    if (el) el.value = r.suggested_evidence;
+  } catch(e) {}
+  schedulePreview();
+}
+
+// ============================================================
+// RESULT TAG
+// ============================================================
+const RESULT_TAG_COLORS = {
+  pathogenic: { bg: '#fef2f2', color: '#b91c1c', border: '#fca5a5', label: 'Pathogenic' },
+  likely:     { bg: '#fffbeb', color: '#b45309', border: '#fcd34d', label: 'Likely Pathogenic' },
+  vus_related:{ bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd', label: 'VUS' },
+};
+/* Map classification label text → color tokens */
+function classColorFor(label) {
+  const l = (label||'').toLowerCase();
+  if (l.startsWith('pathogenic') && !l.startsWith('likely'))
+    return { bg:'#fef2f2', color:'#b91c1c', border:'#fca5a5' };
+  if (l.startsWith('likely pathogenic'))
+    return { bg:'#fffbeb', color:'#b45309', border:'#fcd34d' };
+  if (l.includes('uncertain') || l.startsWith('vus'))
+    return { bg:'#eff6ff', color:'#1d4ed8', border:'#93c5fd' };
+  if (l.startsWith('likely benign'))
+    return { bg:'#f0fdf4', color:'#166534', border:'#86efac' };
+  if (l === 'benign')
+    return { bg:'#f0fdf4', color:'#166534', border:'#86efac' };
+  return null;
+}
+function applySelectColor(sel) {
+  const c = classColorFor(sel.options[sel.selectedIndex]?.textContent || '');
+  if (c) {
+    sel.style.background = c.bg; sel.style.color = c.color;
+    sel.style.borderColor = c.border; sel.style.fontWeight = '600';
+  } else {
+    sel.style.background = sel.style.color = sel.style.borderColor = sel.style.fontWeight = '';
+  }
+}
+function colorSelectOptions(sel) {
+  Array.from(sel.options).forEach(opt => {
+    const c = classColorFor(opt.textContent);
+    if (c) { opt.style.background = c.bg; opt.style.color = c.color; }
+    else    { opt.style.background = ''; opt.style.color = ''; }
+  });
+}
+function applyResultTagColor() {
+  const sel = $('f-result_tag');
+  const badge = $('result-badge');
+  colorSelectOptions(sel);
+  const c = RESULT_TAG_COLORS[sel.value];
+  if (c) {
+    sel.style.background = c.bg;
+    sel.style.color = c.color;
+    sel.style.borderColor = c.border;
+    sel.style.fontWeight = '600';
+    badge.textContent = c.label;
+    badge.style.background = c.bg;
+    badge.style.color = c.color;
+    badge.style.border = `1.5px solid ${c.border}`;
+    badge.style.display = 'inline-block';
+  } else {
+    sel.style.background = '';
+    sel.style.color = '';
+    sel.style.borderColor = '';
+    sel.style.fontWeight = '';
+    badge.style.display = 'none';
+  }
+}
+function onResultTagChange() {
+  const key = $('f-result_tag').value;
+  const tagMap = { pathogenic: 'Pathogenic', likely: 'Likely Pathogenic', vus_related: 'Variant of Uncertain Significance' };
+  const label = tagMap[key];
+  if (label) {
+    const ticked = G.variants.filter(v => v.selected);
+    const targets = ticked.length ? ticked : (G.currentVariantIdx >= 0 ? [G.variants[G.currentVariantIdx]] : []);
+    targets.forEach(v => { v.classification = label; });
+    if (G.currentVariantIdx >= 0) showVariantDetail(G.currentVariantIdx);
+  }
+  applyResultTagColor();
+  schedulePreview();
+}
+
+// ============================================================
+// PREVIEW
+// ============================================================
+function schedulePreview(force=false) {
+  clearTimeout(G.previewTimer);
+  G.previewTimer = setTimeout(() => doPreview(force), 200);
+}
+
+async function doPreview(force=false) {
+  if (G.previewBusy) { G.previewPending = true; return; }
+  G.previewBusy = true; G.previewPending = false;
+
+  let data;
+  if (G.mode === 'bulk') {
+    if (G.editingBulkIdx >= 0 && G.bulkItems[G.editingBulkIdx] && G.bulkItems[G.editingBulkIdx].data) {
+      data = G.bulkItems[G.editingBulkIdx].data;
+    } else { G.previewBusy = false; return; }
+  } else {
+    data = collectData();
+  }
+
+  // Show loading overlay over existing preview — don't blank the pages
+  const pages = $('preview-pages');
+  let overlay = $('preview-loading-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'preview-loading-overlay';
+    overlay.style.cssText = 'position:absolute;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:10;font-size:13px;font-weight:600;color:var(--accent);pointer-events:none;';
+    overlay.textContent = 'Rendering…';
+    pages.parentElement.style.position = 'relative';
+    pages.parentElement.appendChild(overlay);
+  }
+  overlay.style.display = 'flex';
+  $('preview-status').textContent = 'Rendering…';
+
+  // Auto-refresh shows first 5 pages for speed; force (button click) shows all
+  const payload = { ...data, max_pages: force ? 0 : 5 };
+  try {
+    const r = await postJSON('/api/preview', payload);
+    overlay.style.display = 'none';
+    if (r.error && (!r.pages || !r.pages.length)) {
+      $('preview-status').textContent = `Preview error: ${r.error}`;
+      return;
+    }
+    if (r.pages && r.pages.length) {
+      pages.innerHTML = '';
+      r.pages.forEach(b64 => {
+        const div = document.createElement('div');
+        div.className = 'preview-page';
+        const img = document.createElement('img');
+        img.src = `data:image/jpeg;base64,${b64}`;
+        img.style.cssText = 'display:block;max-width:100%';
+        div.appendChild(img);
+        pages.appendChild(div);
+      });
+      const now = new Date().toLocaleTimeString();
+      const total = r.total_pages || r.pages.length;
+      const shown = r.pages.length;
+      $('preview-status').textContent = shown < total
+        ? `Updated ${now} — ${shown} of ${total} page(s) shown (click Refresh for all)`
+        : `Updated ${now} — ${total} page(s)`;
+    } else if (r.error) {
+      $('preview-status').textContent = `Preview failed: ${r.error}`;
+    }
+  } catch(e) {
+    overlay.style.display = 'none';
+    $('preview-status').textContent = `Preview error: ${e.message}`;
+  } finally {
+    G.previewBusy = false;
+    if (G.previewPending) { G.previewPending = false; doPreview(); }
+  }
+}
+
+// ============================================================
+// EXPORT
+// ============================================================
+async function exportReport(kind) {
+  if (G.mode === 'bulk') {
+    await bulkExport(kind); return;
+  }
+  const output_folder = ($('output-folder-input').value || '').trim();
+  if (!output_folder) {
+    showToast('Please select an output folder before exporting.', 4000);
+    $('output-folder-input').focus();
+    return;
+  }
+  const data = collectData();
+  const btn = $(`export-${kind === 'both' ? 'both' : kind}`);
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/export', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ data, kind, output_folder })
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      toast(`Export failed: ${j.error || r.statusText}`, 5000); return;
+    }
+    const cd = r.headers.get('content-disposition') || '';
+    const fname = (cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/) || [])[1] || 'report.zip';
+    const blob = await r.blob();
+    downloadBlob(blob, fname.replace(/['"]/g,''));
+    toast(`Downloaded ${fname.replace(/['"]/g,'')}`);
+  } catch(e) { toast(`Export error: ${e.message}`, 5000); }
+  finally { if (btn) btn.disabled = false; }
+}
+
+// ============================================================
+// DRAFT
+// ============================================================
+function saveDraft() {
+  const payload = G.mode === 'bulk' && G.bulkItems.length
+    ? { reports: G.bulkItems.filter(i => i.data).map(i => i.data) }
+    : collectData();
+  const pid = (collectData().patient.patient_id || 'report').replace(/[^A-Za-z0-9-]/g,'_');
+  const fname = G.mode === 'bulk' ? 'bulk_draft.json' : `${pid}_draft.json`;
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}), fname);
+  toast('Draft saved.');
+}
+
+async function loadDraft(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const raw = JSON.parse(text);
+    if (raw.reports && Array.isArray(raw.reports)) {
+      // Bulk draft
+      G.bulkItems = raw.reports.map((d, i) => ({ data: d, row: { number: i+1, pin: d.patient.pin }, error: '', notes: [] }));
+      switchMode('bulk');
+      renderBulkList();
+      toast(`Loaded ${G.bulkItems.length} report draft(s).`);
+    } else {
+      // Single report
+      switchMode('manual');
+      G.loadingDraft = true;
+      await applyDraftData(raw);
+      G.loadingDraft = false;
+      schedulePreview();
+      toast('Draft loaded.');
+    }
+  } catch(e) { toast(`Could not load draft: ${e.message}`, 5000); }
+}
+
+async function applyDraftData(raw) {
+  const key = raw.template_key || G.init.default_template;
+  syncTemplatePicker(key);
+  await onTemplateChange(key, true);
+
+  const p = raw.patient || {};
+  $('f-patient_id').value = p.patient_id || '';
+  $('f-pin').value = p.pin || '';
+  $('f-age').value = p.age || '';
+  $('f-gender').value = p.gender || '';
+  $('f-sample_number').value = p.sample_number || '';
+  $('f-collection_date').value = p.collection_date || '';
+  $('f-received_date').value = p.received_date || '';
+  $('f-report_date').value = p.report_date || '';
+  setOtherChoice('oc-hospital', p.hospital || '');
+  setOtherChoice('oc-referring_clinician', p.referring_clinician || '');
+  setOtherChoice('oc-specimen', p.specimen || '');
+  G.lastReceived = p.received_date || '';
+  G.fetchedPin = p.pin ? p.pin.toUpperCase() : '';
+
+  $('f-clinical_history').value = raw.clinical_history || '';
+  $('f-total_reads').value = raw.total_reads || '';
+  $('f-q30').value = raw.q30 || '';
+  $('f-gene_list_url').value = raw.gene_list_url || '';
+
+  const reviewer = raw.reviewer || (G.templateInfo && G.templateInfo.reviewer) || '';
+  $('reviewer-combo').value = reviewer;
+
+  if (raw.genes && raw.genes.length) {
+    renderGeneTable(raw.genes);
+    setGeneStatus('Gene table from the draft.', '');
+  }
+
+  G.variants = raw.variants || [];
+  G.currentVariantIdx = -1;
+  G.variantManualFields = {};
+  if (G.variants.length && G.templateInfo && G.templateInfo.variants) {
+    $('variants-tools').style.display = '';
+    $('variants-body').style.display = '';
+    $('variants-hint').style.display = 'none';
+    renderVariantList();
+    $('f-result_tag').value = raw.result_tag || '';
+    applyResultTagColor();
+    setOtherChoice('oc-primary_title', raw.primary_title || '');
+    $('f-secondary_title').value = raw.secondary_title || '';
+  }
+}
+
+// ============================================================
+// BULK
+// ============================================================
+async function bulkUpload(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  $('bulk-status').textContent = 'Uploading…';
+  try {
+    const r = await api('/api/bulk-upload', { method:'POST', body: fd });
+    if (r.error) { $('bulk-status').textContent = `Error: ${r.error}`; return; }
+    G.bulkRows = r.rows || [];
+    G.bulkItems = [];
+    renderBulkList();
+    $('bulk-status').textContent = `${G.bulkRows.length} patient row(s) loaded. Preparing…`;
+    await bulkPrepare();
+  } catch(e) { $('bulk-status').textContent = `Error: ${e.message}`; }
+}
+
+async function bulkPrepare() {
+  const reportDate = $('f-report_date').value.trim();
+  const reviewer = $('reviewer-combo').value || '';
+  const r = await postJSON('/api/bulk-prepare', {
+    rows: G.bulkRows, template_key: G.templateKey,
+    reviewer, report_date: reportDate || (G.init && G.init.today),
+  });
+  if (r.error) { $('bulk-status').textContent = `Error: ${r.error}`; return; }
+  G.bulkItems = r.items || [];
+  renderBulkList();
+  const ok = G.bulkItems.filter(i => i.data).length;
+  const fail = G.bulkItems.filter(i => !i.data).length;
+  $('bulk-status').textContent = `${ok} ready${fail ? `, ${fail} failed` : ''}.`;
+}
+
+function renderBulkList() {
+  const list = $('bulk-list');
+  const search = ($('bulk-search').value || '').toLowerCase();
+  list.innerHTML = '';
+  let checked = 0;
+  G.bulkItems.forEach((item, i) => {
+    const label = (item.data && item.data.patient && item.data.patient.patient_id)
+      || item.row.pin || `Row ${item.row.number}`;
+    if (search && !label.toLowerCase().includes(search)) return;
+    const div = document.createElement('div');
+    div.className = `bulk-item${i === G.editingBulkIdx ? ' active' : ''}`;
+    div.dataset.idx = i;
+    const ok = !!item.data;
+    div.innerHTML = `
+      <input type="checkbox" class="bulk-cb" ${ok?'':'disabled'} ${item._checked?'checked':''}>
+      <span class="bulk-item-label ${ok?'':'bulk-item-error'}" title="${escHtml(item.error||label)}">
+        ${escHtml(label)}${item.notes&&item.notes.length?' ⚠':''}</span>`;
+    const cb = div.querySelector('.bulk-cb');
+    cb.addEventListener('change', () => { item._checked = cb.checked; updateBulkCount(); });
+    div.addEventListener('click', (e) => { if (e.target !== cb) selectBulkItem(i); });
+    list.appendChild(div);
+    if (item._checked) checked++;
+  });
+  $('bulk-count').textContent = `${checked} selected`;
+}
+
+function updateBulkCount() {
+  const checked = G.bulkItems.filter(i => i._checked).length;
+  $('bulk-count').textContent = `${checked} selected`;
+}
+
+function selectBulkItem(idx) {
+  G.editingBulkIdx = idx;
+  $qa('.bulk-item').forEach(el => el.classList.toggle('active', +el.dataset.idx === idx));
+  const item = G.bulkItems[idx];
+  if (!item || !item.data) { $('bulk-editor-hint').style.display = ''; $('bulk-editor-form').style.display = 'none'; return; }
+  $('bulk-editor-hint').style.display = 'none';
+  const form = $('bulk-editor-form');
+  form.style.display = 'flex';
+  const d = item.data;
+  form.querySelectorAll('.bulk-field').forEach(el => {
+    const key = el.dataset.key;
+    const val = (d.patient && key in d.patient) ? d.patient[key] : d[key] || '';
+    el.value = val;
+  });
+  form.querySelectorAll('.bulk-field').forEach(el => {
+    el.oninput = el.onchange = () => {
+      const key = el.dataset.key;
+      const val = el.value;
+      if (d.patient && key in d.patient) d.patient[key] = val;
+      else d[key] = val;
+      schedulePreview();
+    };
+  });
+  schedulePreview();
+}
+
+async function bulkExport(kind) {
+  const output_folder = ($('output-folder-input').value || '').trim();
+  if (!output_folder) {
+    showToast('Please select an output folder before exporting.', 4000);
+    $('output-folder-input').focus();
+    return;
+  }
+  const chosen = G.bulkItems.filter(i => i._checked && i.data);
+  if (!chosen.length) { toast('Tick the patients whose reports you want to export.', 4000); return; }
+  const items = chosen.map(i => ({ data: i.data }));
+  const btn = document.querySelector(`#bulk-export-${kind === 'both' ? 'both' : kind}`);
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/bulk-export', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ items, kind })
+    });
+    if (!r.ok) { const j = await r.json().catch(()=>({})); toast(`Export failed: ${j.error||r.statusText}`, 5000); return; }
+    const cd = r.headers.get('content-disposition') || '';
+    const fname = (cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/) || [])[1] || 'reports.zip';
+    const blob = await r.blob();
+    downloadBlob(blob, fname.replace(/['"]/g,''));
+    toast(`Downloaded ${fname.replace(/['"]/g,'')}`);
+  } catch(e) { toast(`Export error: ${e.message}`, 5000); }
+  finally { if (btn) btn.disabled = false; }
+}
+
+// ============================================================
+// DROPZONES
+// ============================================================
+function setupDropzone(zoneId, inputId, onFile) {
+  const zone = $(zoneId);
+  const input = $(inputId);
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { if (input.files[0]) { onFile(input.files[0]); input.value=''; } });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const f = [...(e.dataTransfer.files||[])].find(f => /\.(xlsx|xlsm)$/i.test(f.name));
+    if (f) onFile(f);
+  });
+}
+
+// ============================================================
+// INIT APP
+// ============================================================
+async function initApp() {
+  showLoading(true);
+  try {
+    const init = await api('/api/init');
+    G.init = init;
+
+    // Populate template combo (hidden) + custom picker
+    const tc = $('template-combo');
+    const dd = $('tmpl-dropdown');
+    const GROUP_LABELS = { false: 'No Pathogenic', true: 'Pathogenic' };
+    const sorted = [
+      ...init.templates.filter(t => !t.pathogenic),
+      ...init.templates.filter(t => t.pathogenic),
+    ];
+    let lastPathogenic = null;
+    sorted.forEach(t => {
+      // Hidden select — keep for all existing reads
+      if (lastPathogenic !== t.pathogenic) {
+        const og = document.createElement('optgroup');
+        og.label = GROUP_LABELS[t.pathogenic];
+        tc.appendChild(og);
+      }
+      const opt = document.createElement('option');
+      opt.value = t.key; opt.textContent = t.name;
+      tc.lastElementChild.appendChild(opt);
+
+      // Custom dropdown
+      if (lastPathogenic !== t.pathogenic) {
+        const hdr = document.createElement('div');
+        hdr.className = 'tmpl-group-hdr';
+        hdr.textContent = GROUP_LABELS[t.pathogenic];
+        dd.appendChild(hdr);
+        lastPathogenic = t.pathogenic;
+      }
+      const item = document.createElement('div');
+      item.className = 'tmpl-item';
+      item.dataset.key = t.key;
+      item.textContent = t.name;
+      item.addEventListener('click', () => {
+        syncTemplatePicker(t.key);
+        dd.classList.remove('open');
+        onTemplateChange(t.key);
+      });
+      dd.appendChild(item);
+    });
+    tc.value = init.default_template;
+
+    // Picker open/close
+    $('tmpl-picker-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      dd.classList.toggle('open');
+    });
+    document.addEventListener('click', () => dd.classList.remove('open'));
+
+    syncTemplatePicker(init.default_template);
+
+    // Populate reviewer combo
+    const rc = $('reviewer-combo');
+    init.reviewers.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.key; opt.textContent = r.name;
+      rc.appendChild(opt);
+    });
+
+    // Other-choice widgets
+    initOtherChoice('oc-hospital', init.patient_choices.hospital, 'Type the hospital / clinic name');
+    initOtherChoice('oc-referring_clinician', init.patient_choices.referring_clinician, 'Type the clinician name');
+    initOtherChoice('oc-specimen', init.patient_choices.specimen, 'Type the specimen');
+
+    // Result tags
+    const rtSel = $('f-result_tag');
+    init.result_tags.forEach(rt => {
+      const opt = document.createElement('option');
+      opt.value = rt.key; opt.textContent = rt.text;
+      rtSel.appendChild(opt);
+    });
+    colorSelectOptions(rtSel);
+
+    // Primary titles
+    initOtherChoice('oc-primary_title', [''].concat(init.primary_titles || []), 'Type custom title…');
+    // Patch the first option label to "Auto (from result)"
+    const ptSel = $('f-primary_title');
+    if (ptSel.options[0]) ptSel.options[0].textContent = 'Auto (from result)';
+
+    // Secondary titles
+    const stSel = $('f-secondary_title');
+    init.secondary_titles.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      stSel.appendChild(opt);
+    });
+
+    // Report date = today
+    $('f-report_date').value = init.today;
+
+    // Fetch button
+    $('fetch-btn').disabled = !init.sheet_configured;
+    if (!init.sheet_configured) {
+      setFetchStatus('Patient sheet not set up — enter the details manually.', '');
+    }
+
+    // ── EVENT LISTENERS ──
+
+    // Template change
+    tc.addEventListener('change', () => onTemplateChange(tc.value));
+
+    // Mode buttons
+    $qa('.mode-btn').forEach(b => b.addEventListener('click', () => switchMode(b.dataset.mode)));
+
+    // Inner tabs
+    $qa('.tab-btn').forEach(b => b.addEventListener('click', () => { if (b.dataset.tab) switchTab(b.dataset.tab); }));
+
+    // Patient fields → preview
+    ['f-patient_id','f-age','f-gender','f-sample_number','f-collection_date','f-received_date','f-report_date',
+     'f-clinical_history','f-total_reads','f-q30','f-gene_list_url'].forEach(id => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener('input', schedulePreview);
+      el.addEventListener('change', schedulePreview);
+    });
+
+    // Received date → collection date
+    $('f-received_date').addEventListener('input', () => {
+      if (G.loadingDraft) return;
+      const val = $('f-received_date').value;
+      const coll = $('f-collection_date');
+      if (!coll.value.trim() || coll.value === G.lastReceived) coll.value = val;
+      G.lastReceived = val;
+    });
+
+    // PIN auto-fetch
+    const PIN_PATTERN = /^(ADK\d{10}|PH\d{11})$/i;
+    $('f-pin').addEventListener('input', () => {
+      if (G.loadingDraft) return;
+      const pin = $('f-pin').value.trim().toUpperCase();
+      if (!pin) { clearPatient(); return; }
+      if (PIN_PATTERN.test(pin) && pin !== G.fetchedPin && init.sheet_configured) fetchPatient(pin);
+    });
+    $('fetch-btn').addEventListener('click', () => fetchPatient($('f-pin').value.trim().toUpperCase()));
+    $('f-pin').addEventListener('keydown', e => { if (e.key === 'Enter') fetchPatient($('f-pin').value.trim().toUpperCase()); });
+
+    // Reviewer
+    $('reviewer-combo').addEventListener('change', schedulePreview);
+
+    // Gene table
+    $('paste-genes-btn').addEventListener('click', pasteGenes);
+    $('add-gene-row-btn').addEventListener('click', () => { addGeneRow(); schedulePreview(); });
+
+    // Variants
+    setupDropzone('variants-dropzone', 'variants-file-input', uploadVariants);
+    $('variant-search').addEventListener('input', renderVariantList);
+    function setListCollapsed(collapsed) {
+      $('variant-list-col').classList.toggle('collapsed', collapsed);
+      $('toggle-variant-list').innerHTML = collapsed ? '&#8250;' : '&#8249;';
+      $('toggle-variant-list').title = collapsed ? 'Show list' : 'Hide list';
+    }
+    $('toggle-variant-list').addEventListener('click', () => {
+      setListCollapsed(!$('variant-list-col').classList.contains('collapsed'));
+    });
+    $('select-all-variants').addEventListener('change', (e) => {
+      G.variants.forEach(v => v.selected = e.target.checked);
+      renderVariantList();
+      schedulePreview();
+    });
+    $('f-result_tag').addEventListener('change', onResultTagChange);
+    $('f-secondary_title').addEventListener('change', schedulePreview);
+
+    // Bulk
+    setupDropzone('bulk-dropzone', 'bulk-file-input', bulkUpload);
+    $('bulk-search').addEventListener('input', renderBulkList);
+    $('select-all-bulk').addEventListener('change', (e) => {
+      G.bulkItems.forEach(i => { if (i.data) i._checked = e.target.checked; });
+      renderBulkList();
+    });
+
+    // Folder picker
+    $('pick-folder-btn').addEventListener('click', async () => {
+      const btn = $('pick-folder-btn');
+      btn.disabled = true; btn.textContent = '⏳ Picking…';
+      try {
+        const r = await postJSON('/api/pick-folder', {});
+        if (r.folder) $('output-folder-input').value = r.folder;
+      } catch(e) { showToast('Folder picker failed: ' + e.message); }
+      finally { btn.disabled = false; btn.innerHTML = '&#128193; Browse'; }
+    });
+
+    // Export buttons
+    ['export-docx','export-pdf','export-both'].forEach(id => {
+      $(id).addEventListener('click', () => exportReport($(id).dataset.kind));
+    });
+    $('bulk-export-docx').addEventListener('click', () => bulkExport('docx'));
+    $('bulk-export-pdf').addEventListener('click', () => bulkExport('pdf'));
+    $('bulk-export-both').addEventListener('click', () => bulkExport('both'));
+
+    // Draft
+    $('save-draft-btn').addEventListener('click', saveDraft);
+    $('load-draft-input').addEventListener('change', (e) => { if (e.target.files[0]) loadDraft(e.target.files[0]); e.target.value=''; });
+
+    // Refresh preview
+    $('refresh-preview-btn').addEventListener('click', () => doPreview(true));
+
+    // Load initial template
+    G.templateKey = init.default_template;
+    await onTemplateChange(init.default_template, true);
+
+    // Initial tab (patient is shown by default via CSS)
+    $qa('.tab-panel').forEach(p => { if (p.id !== 'tab-patient') { p.style.display='none'; p.classList.remove('active'); } });
+
+    showLoading(false);
+    schedulePreview();
+  } catch(e) {
+    showLoading(false);
+    document.body.innerHTML = `<div style="padding:40px;color:red;font-family:monospace">
+      <b>Startup error:</b><br><pre>${escHtml(e.stack||e.message)}</pre></div>`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>

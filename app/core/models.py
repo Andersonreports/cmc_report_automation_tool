@@ -49,6 +49,8 @@ class ReportData:
     # ones are written, and none selected keeps the template's sample variant.
     variants: list = field(default_factory=list)
     result_tag: str = ""                  # variants.RESULT_TAGS key; blank = from the classifications
+    secondary_title: str = ""             # Secondary findings table's title; blank = template's
+    primary_title: str = ""              # Primary variant list heading; blank = auto from mode
 
     def to_dict(self) -> dict:
         return asdict(self)

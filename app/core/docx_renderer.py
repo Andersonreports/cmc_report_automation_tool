@@ -321,10 +321,96 @@ def _insert_pcpndt_disclaimer(doc, data: ReportData):
     last_bullet.addnext(new_p)
 
 
+_SECONDARY_FINDING_SENTENCE = (
+    "Incidental or secondary findings that meet the ACMG guidelines "
+    "can be given upon request [3]."
+)
+
+
+def _para_containing(doc, fragment: str):
+    """Return the first paragraph element whose full text contains `fragment`
+    (case-insensitive), or None."""
+    fragment_lower = fragment.lower()
+    for p in doc.element.body.iter(qn("w:p")):
+        if fragment_lower in _text(p).lower():
+            return p
+    return None
+
+
+def _adjust_secondary_sentence(doc, data: ReportData):
+    """For pathogenic templates (variants Excel upload):
+      - Secondary variants selected → sentence stays in Methodology.
+      - No secondary variants → sentence moves to Disclaimer.
+    For all other templates the sentence is left exactly as in the template.
+    Also removes the duplicate 'Gene list used in the assay.' that precedes it."""
+    from ..config.templates import get_template as _get_tpl
+    cfg = _get_tpl(data.template_key)
+
+    # Find the paragraph that actually contains the secondary-findings sentence.
+    p = _para_containing(doc, "Incidental or secondary findings")
+    if p is None:
+        return
+
+    # Always remove the duplicate "Gene list used in the assay." before the sentence.
+    # Try common variants of the separator (space, no-space after period).
+    for old, new in (
+        ("Gene list used in the assay. Incidental", "Incidental"),
+        ("Gene list used in the assay.Incidental",  "Incidental"),
+        ("Gene list used in the assay. \nIncidental", "Incidental"),
+    ):
+        if _replace_in_para(p, old, new):
+            break
+
+    if not cfg.variants:
+        # Non-pathogenic template: leave the sentence in methodology.
+        return
+
+    has_secondary = any(
+        _is_secondary(v) and v.get("selected")
+        for v in (data.variants or [])
+    )
+
+    if not has_secondary:
+        removed = _replace_in_para(p, _SECONDARY_FINDING_SENTENCE + " ", "")
+        if not removed:
+            _replace_in_para(p, _SECONDARY_FINDING_SENTENCE, "")
+        _insert_sentence_to_disclaimer(doc, _SECONDARY_FINDING_SENTENCE)
+
+
+def _insert_sentence_to_disclaimer(doc, sentence: str):
+    """Append sentence as the last item in the Disclaimer section,
+    unless it is already present there."""
+    others = {h.lower() for h in SECTION_HEADINGS} - {"disclaimer"}
+    in_disclaimer = False
+    proto = None        # last non-empty bullet to clone formatting from
+    last_p = None       # absolute last paragraph in the disclaimer (may be empty)
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        text = _text(p).strip().rstrip(":").lower()
+        if in_disclaimer and text in others:
+            break
+        if text == "disclaimer":
+            in_disclaimer = True
+            continue
+        if in_disclaimer:
+            last_p = p
+            if _text(p).strip():
+                if sentence.lower() in _text(p).strip().lower():
+                    return      # already in the disclaimer — don't duplicate
+                proto = p
+    if proto is None:
+        return
+    new_p = copy.deepcopy(proto)
+    _set_text(new_p, sentence)
+    # Always insert after the last NON-EMPTY bullet (proto), so any trailing
+    # empty spacer paragraphs stay at the very end and don't create a visible gap.
+    proto.addnext(new_p)
+
+
 def _fill_methodology(doc, data: ReportData):
     swap = METHODOLOGY_OPENING.get(data.patient.specimen.strip())
     if swap:
         _replace_in_para(_gene_list_link(doc).getparent(), *swap)
+    _adjust_secondary_sentence(doc, data)
 
 
 def _gene_table(doc):
@@ -353,11 +439,10 @@ def _fill_gene_table(doc, data: ReportData, blank_unused: bool = True):
     if not data.genes:
         if not blank_unused:
             return
-        # Keep the template's table, but leave its unused cells empty.
-        for row in table.rows[1:]:
-            for cell in row.cells:
-                if cell.text.strip() in ("-", "–", "—"):
-                    _set_text(cell.paragraphs[0]._p, "")
+        # No genes supplied — remove all data rows, keep only the header.
+        tbl = table._tbl
+        for tr in tbl.findall(qn("w:tr"))[1:]:
+            tbl.remove(tr)
         return
     tbl = table._tbl
     rows = tbl.findall(qn("w:tr"))
@@ -487,6 +572,16 @@ def _no_split(tr) -> None:
     trpr = tr.get_or_add_trPr()
     if trpr.find(qn("w:cantSplit")) is None:
         trpr.insert(0, OxmlElement("w:cantSplit"))
+
+
+def _cell_no_wrap(tc) -> None:
+    """Prevent text in a table cell from wrapping (w:noWrap)."""
+    tcpr = tc.find(qn("w:tcPr"))
+    if tcpr is None:
+        tcpr = OxmlElement("w:tcPr")
+        tc.insert(0, tcpr)
+    if tcpr.find(qn("w:noWrap")) is None:
+        tcpr.append(OxmlElement("w:noWrap"))
 
 
 _BANNER = "Pathogenic variant related to the given phenotype was identified"
@@ -634,9 +729,26 @@ def _fill_variants(doc, data: ReportData):
             heading = _find_para(doc, "List of significant variant(s)", "variant list heading")
             heading.getparent().remove(heading)
             _set_banner(doc, "none")
+            # Remove empty paragraphs left between the banner box and the
+            # secondary-findings heading — they were spacers around the primary table.
+            body = doc.element.body
+            _VML_SHAPE = "{urn:schemas-microsoft-com:vml}shape"
+            banner_p = next(
+                (p for p in body.iterchildren(qn("w:p"))
+                 if p.find(".//" + qn("w:drawing")) is not None or
+                    p.find(".//" + _VML_SHAPE) is not None),
+                None)
+            if banner_p is not None:
+                nxt = banner_p.getnext()
+                while nxt is not None and nxt.tag == qn("w:p") and not _text(nxt).strip():
+                    gone, nxt = nxt, nxt.getnext()
+                    gone.getparent().remove(gone)
         else:
             _fill_variant_set(doc, data, res, tbl, group, banner=not n,
                               whole_doc=len(sets) == 1)
+            if n and data.secondary_title.strip():
+                _set_text(_find_para(doc, "List of Secondary", "Secondary findings heading"),
+                          data.secondary_title.strip())
             heading = res.getprevious()                 # 'List of ...' stays with its table,
             for p in ([heading] if heading is not None and heading.tag == qn("w:p") else []) + [
                     p for tr in res.findall(qn("w:tr"))[:-1] for p in tr.iter(qn("w:p"))]:
@@ -659,9 +771,13 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
     mode = vr.report_mode(chosen, data.result_tag)
     if banner:                      # the result line and its wording are the primary set's
         _set_banner(doc, mode)
-        if mode == "vus_related":
+        # Heading: user pick overrides auto; auto only changes for VUS mode.
+        heading_text = data.primary_title or (
+            "List of uncertain significant variant(s) identified related to the phenotype:"
+            if mode == "vus_related" else None)
+        if heading_text:
             _set_text(_find_para(doc, "List of significant variant(s)", "variant list heading"),
-                      "List of uncertain significant variant(s) identified related to the phenotype:")
+                      heading_text)
     for v in chosen:
         tr = copy.deepcopy(proto)
         cells = [[v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
@@ -672,10 +788,12 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
         crit = " ".join(v.get("criteria", "").split())
         if crit:                    # the criteria go under the classification, bold black
             cells[-1].append(crit if crit.startswith("(") else f"({crit})")
-        for tc, lines in zip(tr.findall(qn("w:tc")), cells):
+        tcs_row = tr.findall(qn("w:tc"))
+        for tc, lines in zip(tcs_row, cells):
             _set_cell_lines(tc, lines)
-        _color_class(tr.findall(qn("w:tc"))[-1], v)
-        _link_omim(tr.findall(qn("w:tc"))[4], doc.part)
+        _cell_no_wrap(tcs_row[0])   # Gene column — never wrap the gene name
+        _color_class(tcs_row[-1], v)
+        _link_omim(tcs_row[4], doc.part)
         if crit:
             for r in tr.findall(qn("w:tc"))[-1].findall(qn("w:p"))[-1].iter(qn("w:r")):
                 rpr = r.get_or_add_rPr()
@@ -1121,7 +1239,7 @@ def _tidy_classification_table(doc, pad: int = 180):
 
 
 def _title_size(doc, points: int = 20):
-    """The report title ('Whole Exome Sequencing Analysis ...') in one size."""
+    """The report title ('Whole Exome Sequencing ...') in one size."""
     half = str(points * 2)
     for p in doc.element.body.iterchildren(qn("w:p")):
         ppr = p.find(qn("w:pPr"))
@@ -1394,6 +1512,15 @@ def template_path(template_key: str) -> str:
     return resource_path("app", "templates", get_template(template_key).docx_file)
 
 
+def _drop_analysis_word(doc):
+    """'Whole Exome Sequencing Analysis' -> 'Whole Exome Sequencing' in the
+    title and the section heading (run last: the layout steps find the heading
+    by its template text)."""
+    for t in doc.element.body.iter(qn("w:t")):
+        if t.text and "Sequencing Analysis" in t.text:
+            t.text = t.text.replace("Sequencing Analysis", "Sequencing").rstrip() or t.text
+
+
 def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     """The filled template. new_pages: section headings to start on a new
     page on top of the template's own (see report_builder's layout check)."""
@@ -1420,8 +1547,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         _superscript_hash(doc)
     _fill_signatures(doc, data)
     _tighten_signature_gap(doc)
+    _appendix_page_break(doc)
     if not cfg.keep_layout:
-        _appendix_page_break(doc)
         _tidy_classification_table(doc)
         _result_tag_size(doc)
         _title_size(doc)
@@ -1439,4 +1566,5 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _keep_headings_with_next(doc)
     _new_pages(doc, get_template(data.template_key).new_page_before + tuple(new_pages))
     _fix_page_count(doc)
+    _drop_analysis_word(doc)
     return doc
