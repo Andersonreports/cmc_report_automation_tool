@@ -82,6 +82,13 @@ def read_variants(path: str) -> list[dict]:
         if cols is None or cols["gene"] >= len(row) or not row[cols["gene"]]:
             continue
         v = {k: (row[j] if j < len(row) else "") for k, j in cols.items()}
+        # Strand is often embedded in the gene cell: "CACNA1S (+)" or "XDH (-)"
+        if not v.get("strand"):
+            gene_raw = str(v.get("gene", ""))
+            m = re.search(r"\(\s*([+\-])\s*\)", gene_raw)
+            if m:
+                v["strand"] = m.group(1)
+                v["gene"] = re.sub(r"\s*\(\s*[+\-]\s*\)", "", gene_raw).strip()
         v["section"], v["selected"] = section, False
         for typed in ("disease", "criteria", "frequency", "evidence", "omim_phenotype",
                       "clinvar_link", "pubmed_link"):    # typed by the user in the app
@@ -299,13 +306,18 @@ def allele_status(v: dict) -> str:
 
 
 def inheritance(v: dict) -> list[str]:
-    """One line per inheritance pattern, e.g. 'AD,AR' -> two lines."""
+    """One line per word of each inheritance pattern so multi-word labels
+    ('Autosomal Dominant') always wrap consistently regardless of column width."""
     parts = []
     for p in re.split(r"[,/]", v.get("inheritance", "")):
         p = p.strip()
         if p and "somatic" not in p.lower() and p.upper() not in [q.upper() for q in parts]:
             parts.append(p)
-    return [_INHERITANCE.get(p.upper(), p) for p in parts] or ["-"]
+    lines = []
+    for p in parts:
+        label = _INHERITANCE.get(p.upper(), p)
+        lines.extend(label.split())   # "Autosomal Dominant" → ["Autosomal", "Dominant"]
+    return lines or ["-"]
 
 
 def disease_lines(v: dict) -> list[str]:

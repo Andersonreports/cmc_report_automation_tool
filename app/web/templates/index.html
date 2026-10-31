@@ -1433,7 +1433,7 @@ function onResultTagChange() {
 // ============================================================
 function schedulePreview(force=false) {
   clearTimeout(G.previewTimer);
-  G.previewTimer = setTimeout(() => doPreview(force), 200);
+  G.previewTimer = setTimeout(() => doPreview(force), force ? 0 : 1200);
 }
 
 async function doPreview(force=false) {
@@ -1463,8 +1463,8 @@ async function doPreview(force=false) {
   overlay.style.display = 'flex';
   $('preview-status').textContent = 'Rendering…';
 
-  // Auto-refresh shows first 5 pages for speed; force (button click) shows all
-  const payload = { ...data, max_pages: force ? 0 : 5 };
+  // Auto-refresh shows first 3 pages; force (Refresh button) shows all
+  const payload = { ...data, max_pages: force ? 0 : 3 };
   try {
     const r = await postJSON('/api/preview', payload);
     overlay.style.display = 'none';

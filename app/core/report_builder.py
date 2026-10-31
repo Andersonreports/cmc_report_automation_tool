@@ -120,35 +120,64 @@ def _via_libreoffice(soffice: str, docx_path: str, out_dir: str) -> None:
             raise ReportBuildError("PDF conversion timed out") from e
 
 
+# Persistent Word COM instance — kept alive between preview calls so
+# each conversion doesn't pay the Word startup cost (~2 s).
+_word_app = None
+
+
+def _get_word():
+    global _word_app
+    try:
+        import pythoncom
+        from win32com.client import Dispatch
+        pythoncom.CoInitialize()
+        if _word_app is None:
+            _word_app = Dispatch("Word.Application")
+            _word_app.DisplayAlerts = 0
+            _word_app.Visible = False
+        return _word_app
+    except Exception:
+        _word_app = None
+        raise
+
+
 def _via_word(docx_path: str, pdf_path: str) -> None:
     try:
         import pythoncom
-        from win32com.client import DispatchEx
+        from win32com.client import Dispatch
     except ImportError as e:
         raise ReportBuildError(
             "No PDF converter found: install LibreOffice or Microsoft Word.") from e
     with _LOCK:
-        pythoncom.CoInitialize()
-        word = None
         try:
-            word = DispatchEx("Word.Application")
-            word.DisplayAlerts = 0
+            word = _get_word()
             doc = word.Documents.Open(os.path.abspath(docx_path), False, True)
             doc.ExportAsFixedFormat(os.path.abspath(pdf_path), 17)   # 17 = PDF
             doc.Close(False)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
+            global _word_app
+            # If the persistent instance died, clear it so next call recreates it
+            _word_app = None
             raise ReportBuildError(f"Word PDF conversion failed: {e}") from e
-        finally:
-            if word is not None:
-                word.Quit()
-            pythoncom.CoUninitialize()
 
 
 def docx_to_pdf(docx_path: str, out_dir: str) -> str:
-    """Convert docx_path to <out_dir>/<same name>.pdf and return that path."""
+    """Convert docx_path to <out_dir>/<same name>.pdf and return that path.
+
+    On Windows Word (COM) is tried first — it reuses the running Word process
+    and is typically 5-10× faster than spawning a new LibreOffice process.
+    LibreOffice is the fallback (and the only option on Linux/macOS).
+    """
     pdf_path = os.path.join(out_dir, Path(docx_path).stem + ".pdf")
     if os.path.exists(pdf_path):
-        os.remove(pdf_path)     # never mistake a stale PDF for a fresh one
+        os.remove(pdf_path)
+    if os.name == "nt":
+        try:
+            _via_word(docx_path, pdf_path)
+            if os.path.exists(pdf_path):
+                return pdf_path
+        except Exception:
+            pass
     soffice = find_soffice()
     if soffice:
         _via_libreoffice(soffice, docx_path, out_dir)
