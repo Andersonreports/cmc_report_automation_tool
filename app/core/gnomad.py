@@ -25,7 +25,8 @@ class GnomadError(Exception):
 
 def variant_id(v: dict) -> str:
     """gnomAD id (chrom-pos-ref-alt, GRCh38) from the sheet's Chromosomal Position
-    and Ref/Alt; '' for insertions / deletions, whose id needs the base before them."""
+    and Ref/Alt. Returns '' when ref or alt is '-' (no VCF anchor base) — those
+    indels are handled by _try_with_anchors in frequency_text."""
     chrom, _, pos = v.get("chrom_pos", "").partition(":")
     ref, _, alt = v.get("ref_alt", "").partition("/")
     ref, alt = ref.strip().upper(), alt.strip().upper()
@@ -67,13 +68,40 @@ def _total(joint: dict, group: str | None) -> tuple[int, int]:
     return ((row["ac"] or 0), (row["an"] or 0)) if row else (0, 0)
 
 
+def _try_with_anchors(chrom: str, pos: int, ref: str, alt: str) -> dict | None:
+    """For VarSeq indels where ref='-' (insertion) or alt='-' (deletion), the VCF
+    anchor base is unknown. Try all 4 bases; return gnomAD 'joint' data for the
+    first matching variant, or None if not found in gnomAD at any anchor."""
+    for base in ("A", "C", "G", "T"):
+        if ref == "-":
+            # Insertion: anchor base at pos, inserted bases follow
+            vcf_ref, vcf_alt, vcf_pos = base, base + alt, pos
+        else:
+            # Deletion: anchor base is one before the deletion start
+            vcf_ref, vcf_alt, vcf_pos = base + ref, base, pos - 1
+        result = _query(f"{chrom}-{vcf_pos}-{vcf_ref}-{vcf_alt}")
+        if result is not None:
+            return result.get("joint")
+    return None
+
+
 def frequency_text(v: dict) -> str:
     """The Variant Frequency sentence for this variant, from gnomAD v4 (exomes + genomes)."""
     vid = variant_id(v)
-    if not vid:
-        raise GnomadError("Insertions / deletions can't be looked up automatically "
-                          "(type the frequency, or check the variant on the gnomAD site).")
-    joint = (_query(vid) or {}).get("joint")
+    if vid:
+        joint = (_query(vid) or {}).get("joint")
+    else:
+        # Indel with '-' as ref or alt — try all 4 anchor bases
+        chrom, _, pos_s = v.get("chrom_pos", "").partition(":")
+        ref, _, alt = v.get("ref_alt", "").partition("/")
+        ref, alt = ref.strip().upper(), alt.strip().upper()
+        chrom = chrom.strip().lower().removeprefix("chr")
+        if not (chrom and pos_s.strip().isdigit() and
+                ((ref == "-" and alt.isalpha()) or (ref.isalpha() and alt == "-"))):
+            raise GnomadError("Could not determine variant coordinates for gnomAD lookup "
+                              "(check that Chromosomal Position and Ref/Alt are filled in).")
+        joint = _try_with_anchors(chrom, int(pos_s.strip()), ref, alt)
+
     if not joint:
         return variants_core.FREQUENCY_ABSENT
     ac, an = _total(joint, "sas")
