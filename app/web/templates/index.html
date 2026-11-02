@@ -71,18 +71,49 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 #left-panel{display:flex;flex-direction:column;width:50%;min-width:340px;border-right:1px solid var(--line);overflow:hidden;background:var(--surface)}
 #right-panel{display:flex;flex-direction:column;flex:1;overflow:hidden;background:#d8e2ea}
 
-/* ── INNER TABS ── */
-.tabs-bar{display:flex;background:var(--surface-2);border-bottom:2px solid var(--line);flex-shrink:0;padding:0 4px}
+/* ── STEPS (inner tabs) ── */
+.tabs-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--line);flex-shrink:0;padding:0 8px}
 .tab-btn{
-  flex:1;padding:13px 8px;border:none;background:transparent;
-  cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;color:var(--muted);
-  border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s;
+  flex:1 1 0;min-width:0;display:flex;align-items:center;gap:10px;padding:12px 10px 9px;
+  border:none;background:transparent;cursor:pointer;font-family:inherit;text-align:left;
+  border-bottom:3px solid transparent;transition:background .15s;
 }
-.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
-.tab-btn:hover:not(.active){color:var(--ink);background:rgba(0,0,0,.03)}
+.tab-btn:hover:not(.active){background:var(--surface-2)}
+.tab-btn.active{border-bottom-color:var(--accent);background:#f2f8fa}
+.tab-btn:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.step-num{
+  width:28px;height:28px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;border:2px solid var(--line-strong);color:var(--muted);background:var(--surface);
+}
+.tab-btn.active .step-num{border-color:var(--accent);color:var(--accent)}
+.tab-btn.done .step-num{background:var(--accent);border-color:var(--accent);color:#fff}
+.step-text{display:flex;flex-direction:column;gap:1px;min-width:0}
+.step-name{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab-btn.active .step-name{color:var(--accent)}
+.step-sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.step-sub.partial{color:var(--warn)}
 
-.tab-panel{display:none;flex:1;overflow-y:auto;padding:16px}
-.tab-panel.active{display:flex;flex-direction:column;gap:14px}
+.step-head{padding:20px 24px 2px;flex-shrink:0;display:flex;flex-direction:column;gap:4px}
+.step-eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-mid)}
+.step-head h2{font-size:20px;font-weight:700;color:var(--ink);letter-spacing:-.2px}
+.step-head p{font-size:13px;color:var(--muted);max-width:62ch;line-height:1.45}
+
+.step-nav{flex-shrink:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 24px;border-top:1px solid var(--line);background:var(--surface-2)}
+.step-hint{flex:1 1 200px;font-size:12px;line-height:1.4;color:var(--muted)}
+.step-hint.warn{color:var(--warn)}
+.step-hint.ok{color:var(--ok)}
+.step-nav .btn{padding:9px 16px;font-size:13px}
+
+.tab-panel{display:none;flex:1;overflow-y:auto;padding:16px 24px 24px}
+.tab-panel.active{display:flex;flex-direction:column;gap:22px}
+
+.pin-box{background:#eef5f8;border:1px solid #cfe0e8;border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.field-group{display:flex;flex-direction:column;gap:12px}
+.group-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.form-grid .full{grid-column:1/-1}
+.field-hint{font-size:12px;color:var(--muted)}
+label.req::after{content:" *";color:var(--warn)}
+.tab-panel .is-missing{border-color:#e0a25a;background:#fffaf2}
 
 /* Custom scrollbar */
 .tab-panel::-webkit-scrollbar,#variant-list::-webkit-scrollbar,#preview-scroll::-webkit-scrollbar,
@@ -94,10 +125,10 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 
 /* ── FORM ELEMENTS ── */
 .form-group{display:flex;flex-direction:column;gap:5px}
-.form-group label,.form-section>label{font-size:11px;font-weight:700;color:var(--label);text-transform:uppercase;letter-spacing:.5px}
+.form-group label,.form-section>label{font-size:12px;font-weight:600;color:var(--label)}
 .tab-panel input[type=text],.tab-panel input[type=date],.tab-panel select,.tab-panel textarea,
 .form-group input,.form-group select,.form-group textarea{
-  border:1.5px solid var(--line);border-radius:var(--radius);padding:8px 11px;
+  border:1.5px solid var(--line);border-radius:var(--radius);padding:9px 12px;
   font-size:13px;font-family:inherit;color:var(--ink);background:var(--surface);
   width:100%;box-sizing:border-box;transition:border-color .15s,box-shadow .15s;
 }
@@ -125,6 +156,8 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 .other-choice{position:relative}
 .other-choice select,.other-choice input{width:100%}
 .other-choice .other-input{display:none}
+.other-choice.is-other .other-input{display:block}
+.other-choice.is-other .other-select{display:none}
 
 /* ── BUTTONS ── */
 .btn{
@@ -313,115 +346,120 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 
     <!-- MANUAL PANEL -->
     <div id="manual-panel" style="display:flex;flex-direction:column;height:100%;overflow:hidden">
-      <div class="tabs-bar">
-        <button class="tab-btn active" data-tab="patient">Patient Details</button>
-        <button class="tab-btn" data-tab="report">Report Details</button>
-        <button class="tab-btn" data-tab="genes" id="genes-tab-btn">Gene Coverage</button>
-        <button class="tab-btn" data-tab="variants" id="variants-tab-btn" style="display:none">Variants</button>
+      <div class="tabs-bar" aria-label="Report steps">
+        <button class="tab-btn active" data-tab="patient"><span class="step-num">1</span><span class="step-text"><span class="step-name">Patient &amp; sample</span><span class="step-sub">Not started</span></span></button>
+        <button class="tab-btn" data-tab="report"><span class="step-num">2</span><span class="step-text"><span class="step-name">Report details</span><span class="step-sub">Not started</span></span></button>
+        <button class="tab-btn" data-tab="genes" id="genes-tab-btn"><span class="step-num">3</span><span class="step-text"><span class="step-name">Gene coverage</span><span class="step-sub">Not started</span></span></button>
+        <button class="tab-btn" data-tab="variants" id="variants-tab-btn" style="display:none"><span class="step-num">4</span><span class="step-text"><span class="step-name">Variants</span><span class="step-sub">Not started</span></span></button>
+      </div>
+
+      <div class="step-head">
+        <span class="step-eyebrow" id="step-eyebrow">Step 1 of 3</span>
+        <h2 id="step-title">Patient &amp; sample</h2>
+        <p id="step-desc"></p>
       </div>
 
       <!-- PATIENT TAB -->
       <div id="tab-patient" class="tab-panel active">
-        <div class="form-section">
-          <div class="form-section-title">Patient details</div>
-          <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="pin-box">
+          <label for="f-pin" style="font-size:12px;font-weight:600;color:var(--label)">PIN</label>
+          <div class="pin-row">
+            <input type="text" id="f-pin" placeholder="e.g. ADK0000000000" style="font-family:ui-monospace,Consolas,monospace">
+            <button class="btn primary" id="fetch-btn">Fetch from sample sheet</button>
+          </div>
+          <div class="fetch-status field-hint" id="fetch-status">Fetching fills patient ID, age, gender, sample number and dates from the sample sheet.</div>
+        </div>
 
+        <div class="field-group">
+          <div class="group-label">Patient</div>
+          <div class="form-grid">
             <div class="form-group">
-              <label id="patient-id-label">Patient ID</label>
+              <label class="req" id="patient-id-label" for="f-patient_id">Patient ID</label>
               <input type="text" id="f-patient_id" placeholder="e.g. MEL - 00000">
             </div>
-
             <div class="form-group">
-              <label>PIN</label>
-              <div class="pin-row">
-                <input type="text" id="f-pin" placeholder="e.g. ADK0000000000">
-                <button class="btn" id="fetch-btn">Fetch</button>
-              </div>
-              <div class="fetch-status" id="fetch-status"></div>
+              <label class="req" for="f-age">Age</label>
+              <input type="text" id="f-age" placeholder="52 Years">
             </div>
-
-            <div class="form-grid">
-              <div class="form-group">
-                <label>Age</label>
-                <input type="text" id="f-age" placeholder="52 Years">
-              </div>
-              <div class="form-group">
-                <label>Gender</label>
-                <input type="text" id="f-gender" placeholder="Female">
-              </div>
-            </div>
-
             <div class="form-group">
-              <label>Hospital / Clinic</label>
-              <div class="other-choice" id="oc-hospital">
-                <select class="other-select"><option value="">— Select —</option></select>
-                <input type="text" class="other-input" placeholder="Type the hospital / clinic name">
-              </div>
+              <label class="req" for="f-gender">Gender</label>
+              <input type="text" id="f-gender" placeholder="Female">
             </div>
-
             <div class="form-group">
-              <label>Sample Number</label>
-              <input type="text" id="f-sample_number" placeholder="Sample number">
-            </div>
-
-            <div class="form-group">
-              <label>Referring Clinician</label>
+              <label class="req">Referring clinician</label>
               <div class="other-choice" id="oc-referring_clinician">
                 <select class="other-select"><option value="">— Select —</option></select>
                 <input type="text" class="other-input" placeholder="Type the clinician name">
               </div>
             </div>
-
-            <div class="form-grid">
-              <div class="form-group">
-                <label>Sample Collection Date</label>
-                <input type="text" id="f-collection_date" placeholder="dd/mm/yyyy">
-              </div>
-              <div class="form-group">
-                <label>Sample Received Date</label>
-                <input type="text" id="f-received_date" placeholder="dd/mm/yyyy">
+            <div class="form-group full">
+              <label class="req">Hospital / clinic</label>
+              <div class="other-choice" id="oc-hospital">
+                <select class="other-select"><option value="">— Select —</option></select>
+                <input type="text" class="other-input" placeholder="Type the hospital / clinic name">
               </div>
             </div>
+          </div>
+        </div>
 
+        <div class="field-group">
+          <div class="group-label">Sample</div>
+          <div class="form-grid">
             <div class="form-group">
-              <label>Specimen</label>
+              <label class="req" for="f-sample_number">Sample number</label>
+              <input type="text" id="f-sample_number" placeholder="Sample number">
+            </div>
+            <div class="form-group">
+              <label class="req">Specimen</label>
               <div class="other-choice" id="oc-specimen">
                 <select class="other-select"><option value="">— Select —</option></select>
                 <input type="text" class="other-input" placeholder="Type the specimen">
               </div>
             </div>
-
             <div class="form-group">
-              <label>Report Date</label>
-              <input type="text" id="f-report_date" placeholder="dd/mm/yyyy">
+              <label class="req" for="f-collection_date">Collection date</label>
+              <input type="text" id="f-collection_date" placeholder="dd/mm/yyyy">
             </div>
-
+            <div class="form-group">
+              <label class="req" for="f-received_date">Received date</label>
+              <input type="text" id="f-received_date" placeholder="dd/mm/yyyy">
+            </div>
           </div>
         </div>
       </div><!-- /patient tab -->
 
       <!-- REPORT TAB -->
       <div id="tab-report" class="tab-panel">
-        <div class="form-section">
-          <div class="form-section-title">Clinical history</div>
-          <textarea id="f-clinical_history" placeholder="Proband, &lt;Patient ID&gt;, is suspected to be affected with &lt;indication&gt; and has been evaluated for pathogenic variations." style="min-height:120px"></textarea>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="req" for="f-report_date">Report date</label>
+            <input type="text" id="f-report_date" placeholder="dd/mm/yyyy">
+          </div>
         </div>
-        <div class="form-section">
-          <div class="form-section-title">Sequence data attributes</div>
-          <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="form-group">
+          <label class="req" for="f-clinical_history">Clinical history</label>
+          <textarea id="f-clinical_history" placeholder="Proband, &lt;Patient ID&gt;, is suspected to be affected with &lt;indication&gt; and has been evaluated for pathogenic variations." style="min-height:120px"></textarea>
+          <span class="field-hint">Printed under Clinical History, word for word.</span>
+        </div>
+        <div class="field-group">
+          <div class="group-label">Sequence data attributes</div>
+          <div class="form-grid">
             <div class="form-group">
-              <label>Total Read Generated</label>
+              <label class="req" for="f-total_reads">Total read generated</label>
               <input type="text" id="f-total_reads" placeholder="12.6 GB">
             </div>
             <div class="form-group">
-              <label>Data ≥ Q30</label>
+              <label class="req" for="f-q30">Data ≥ Q30</label>
               <input type="text" id="f-q30" placeholder="96.34 %">
             </div>
           </div>
         </div>
-        <div class="form-section">
-          <div class="form-section-title">Gene list link (Methodology "Click here")</div>
-          <input type="text" id="f-gene_list_url" placeholder="https://…">
+        <div class="field-group">
+          <div class="group-label">Gene list link</div>
+          <div class="form-group">
+            <label for="f-gene_list_url">Methodology "Click here" link</label>
+            <input type="text" id="f-gene_list_url" placeholder="https://…">
+          </div>
         </div>
       </div><!-- /report tab -->
 
@@ -464,9 +502,9 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
             </select>
             <div id="primary-title-row" style="display:none;flex-direction:column;gap:4px">
               <label>Variant list title:</label>
-              <div id="oc-primary_title" style="display:flex;flex-direction:column;gap:4px">
+              <div id="oc-primary_title" class="other-choice" style="display:flex;flex-direction:column;gap:4px">
                 <select id="f-primary_title" class="other-select" style="padding:6px 10px;font-size:12px;min-width:340px"></select>
-                <input type="text" class="other-input" placeholder="Type custom title…" style="display:none;padding:6px 10px;font-size:12px;width:100%;box-sizing:border-box">
+                <input type="text" class="other-input" placeholder="Type custom title…" style="padding:6px 10px;font-size:12px;width:100%;box-sizing:border-box">
               </div>
             </div>
             <select id="f-secondary_title" style="display:none"></select>
@@ -487,6 +525,12 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
           </div>
         </div>
       </div><!-- /variants tab -->
+
+      <div class="step-nav">
+        <button class="btn" id="step-back" type="button">← Back</button>
+        <p class="step-hint" id="step-hint"></p>
+        <button class="btn primary" id="step-next" type="button">Continue</button>
+      </div>
 
     </div><!-- /manual-panel -->
 
@@ -591,6 +635,7 @@ const G = {
   templateInfo: null,   // data from /api/template-info
   mode: 'manual',
   activeTab: 'patient',
+  touchedSteps: new Set(),
 
   // Form state
   templateKey: '',
@@ -674,17 +719,16 @@ function initOtherChoice(containerId, options, placeholder) {
 
   sel.addEventListener('change', () => {
     if (sel.value === '__other__') {
-      sel.style.display = 'none';
-      inp.style.display = '';
+      c.classList.add('is-other');
       inp.value = ''; inp.focus();
     }
     schedulePreview();
   });
   inp.addEventListener('blur', () => {
     if (!inp.value.trim()) {
-      inp.style.display = 'none';
-      sel.style.display = '';
+      c.classList.remove('is-other');
       sel.value = '';
+      schedulePreview();
     }
   });
   inp.addEventListener('input', schedulePreview);
@@ -692,9 +736,8 @@ function initOtherChoice(containerId, options, placeholder) {
 
 function getOtherChoice(containerId) {
   const c = $(containerId);
+  if (c.classList.contains('is-other')) return c.querySelector('.other-input').value.trim();
   const sel = c.querySelector('.other-select');
-  const inp = c.querySelector('.other-input');
-  if (inp.style.display !== 'none') return inp.value.trim();
   return sel.value === '__other__' ? '' : (sel.value || '');
 }
 
@@ -706,12 +749,11 @@ function setOtherChoice(containerId, value) {
   const found = [...sel.options].find(o => o.value === value && o.value !== '__other__');
   if (found) {
     sel.value = value;
-    sel.style.display = '';
-    inp.style.display = 'none';
+    c.classList.remove('is-other');
   } else {
-    sel.style.display = 'none';
-    inp.style.display = '';
+    sel.value = '__other__';
     inp.value = value;
+    c.classList.add('is-other');
   }
 }
 
@@ -719,13 +761,108 @@ function setOtherChoice(containerId, value) {
 // TABS
 // ============================================================
 function switchTab(tab) {
+  if (G.activeTab && G.activeTab !== tab) G.touchedSteps.add(G.activeTab);
   G.activeTab = tab;
   $qa('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $qa('.tab-panel').forEach(p => {
     const active = p.id === `tab-${tab}`;
     p.classList.toggle('active', active);
     p.style.display = active ? 'flex' : 'none';
+    if (active) p.scrollTop = 0;
   });
+  updateSteps();
+}
+
+// ============================================================
+// STEP GUIDANCE
+// ============================================================
+const STEP_META = {
+  patient:  { name: 'Patient & sample', desc: 'Start with the PIN. Fetching fills most fields from the sample sheet; complete whatever is left.' },
+  report:   { name: 'Report details',   desc: 'Set the report date, write the clinical history and enter the sequencing figures.' },
+  genes:    { name: 'Gene coverage',    desc: 'Paste the coverage table copied from Excel, or add rows by hand.' },
+  variants: { name: 'Variants',         desc: 'Upload the listed-variants Excel, then tick the variants that go in the report.' },
+};
+const STEP_REQ = {
+  patient: [['f-patient_id','Patient ID'],['f-age','Age'],['f-gender','Gender'],['oc-referring_clinician','Referring clinician'],
+            ['oc-hospital','Hospital / clinic'],['f-sample_number','Sample number'],['oc-specimen','Specimen'],
+            ['f-collection_date','Collection date'],['f-received_date','Received date']],
+  report:  [['f-report_date','Report date'],['f-clinical_history','Clinical history'],['f-total_reads','Total read generated'],['f-q30','Data ≥ Q30']],
+};
+
+function reqValue(id) { return id.startsWith('oc-') ? getOtherChoice(id) : $(id).value.trim(); }
+function reqEls(id) {
+  if (!id.startsWith('oc-')) return [$(id)];
+  const c = $(id);
+  return [c.querySelector('.other-select'), c.querySelector('.other-input')];
+}
+function visibleSteps() {
+  return [...$qa('.tab-btn')].filter(b => b.style.display !== 'none').map(b => b.dataset.tab);
+}
+
+function stepState(tab) {
+  if (STEP_REQ[tab]) {
+    const total = STEP_REQ[tab].length;
+    const missing = STEP_REQ[tab].filter(([id]) => !reqValue(id)).map(([, label]) => label);
+    const sub = !missing.length ? 'Complete' : missing.length === total ? 'Not started' : `${missing.length} of ${total} left`;
+    return { complete: !missing.length, missing, sub, hint: '' };
+  }
+  if (tab === 'genes') {
+    const n = collectGenes().length;
+    return { complete: n > 0, missing: [], sub: n ? `${n} gene${n===1?'':'s'}` : 'Not started',
+             hint: n ? '' : 'Paste the gene coverage table to finish this step.' };
+  }
+  const n = G.variants.filter(v => v.selected).length;
+  return { complete: n > 0, missing: [], sub: G.variants.length ? `${n} selected` : 'Not started',
+           hint: !G.variants.length ? 'Upload the listed-variants Excel.' : n ? '' : 'Tick at least one variant to include it in the report.' };
+}
+
+function updateSteps() {
+  const steps = visibleSteps();
+  const idx = steps.indexOf(G.activeTab);
+  steps.forEach((tab, i) => {
+    const b = $q(`.tab-btn[data-tab="${tab}"]`);
+    const st = stepState(tab);
+    b.classList.toggle('done', st.complete);
+    b.querySelector('.step-num').textContent = st.complete ? '✓' : String(i + 1);
+    const sub = b.querySelector('.step-sub');
+    sub.textContent = st.sub;
+    sub.classList.toggle('partial', !st.complete && st.sub !== 'Not started');
+  });
+
+  // Missing-field outline only once the user has moved past that step
+  Object.keys(STEP_REQ).forEach(tab => {
+    const show = G.touchedSteps.has(tab);
+    STEP_REQ[tab].forEach(([id]) => {
+      const miss = show && !reqValue(id);
+      reqEls(id).forEach(el => el && el.classList.toggle('is-missing', miss));
+    });
+  });
+
+  const meta = STEP_META[G.activeTab];
+  $('step-eyebrow').textContent = `Step ${idx + 1} of ${steps.length}`;
+  $('step-title').textContent = meta.name;
+  $('step-desc').textContent = meta.desc;
+
+  const cur = stepState(G.activeTab);
+  const isLast = idx === steps.length - 1;
+  const hint = $('step-hint');
+  if (cur.missing.length) {
+    hint.textContent = 'Still needed here: ' + cur.missing.join(', ');
+    hint.className = 'step-hint warn';
+  } else if (cur.hint) {
+    hint.textContent = cur.hint;
+    hint.className = 'step-hint warn';
+  } else {
+    hint.textContent = isLast ? 'Last step done. Pick the clinical reviewer and export from the bar at the bottom.' : 'This step is complete.';
+    hint.className = 'step-hint ok';
+  }
+
+  const prev = steps[idx - 1], next = steps[idx + 1];
+  $('step-back').style.display = prev ? '' : 'none';
+  $('step-next').style.display = next ? '' : 'none';
+  $('step-back').dataset.target = prev || '';
+  $('step-next').dataset.target = next || '';
+  if (next) $('step-next').textContent = `Continue to ${STEP_META[next].name} →`;
 }
 
 // ============================================================
@@ -815,6 +952,7 @@ function reindexGeneRows() {
 function updateGeneCount() {
   const n = collectGenes().length;
   $('gene-count').textContent = `${n} gene${n===1?'':'s'}`;
+  updateSteps();
 }
 
 async function pasteGenes() {
@@ -1432,6 +1570,7 @@ function onResultTagChange() {
 // PREVIEW
 // ============================================================
 function schedulePreview(force=false) {
+  updateSteps();
   clearTimeout(G.previewTimer);
   G.previewTimer = setTimeout(() => doPreview(force), force ? 0 : 1200);
 }
@@ -1868,6 +2007,12 @@ async function initApp() {
 
     // Inner tabs
     $qa('.tab-btn').forEach(b => b.addEventListener('click', () => { if (b.dataset.tab) switchTab(b.dataset.tab); }));
+    ['step-back','step-next'].forEach(id => $(id).addEventListener('click', () => {
+      const t = $(id).dataset.target;
+      if (t) switchTab(t);
+    }));
+    $('manual-panel').addEventListener('input', updateSteps);
+    $('manual-panel').addEventListener('change', updateSteps);
 
     // Patient fields → preview
     ['f-patient_id','f-age','f-gender','f-sample_number','f-collection_date','f-received_date','f-report_date',
@@ -1964,6 +2109,7 @@ async function initApp() {
 
     // Initial tab (patient is shown by default via CSS)
     $qa('.tab-panel').forEach(p => { if (p.id !== 'tab-patient') { p.style.display='none'; p.classList.remove('active'); } });
+    updateSteps();
 
     showLoading(false);
     schedulePreview();
