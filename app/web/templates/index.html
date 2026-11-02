@@ -151,6 +151,11 @@ label.req::after{content:" *";color:var(--warn)}
 .other-choice .other-input{display:none}
 .other-choice.is-other .other-input{display:block}
 .other-choice.is-other .other-select{display:none}
+.date-field{position:relative}
+.date-field input[type=text]{width:100%;padding-right:42px}
+.date-field .date-btn{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.date-field .date-btn:hover{background:rgba(14,95,107,.1);color:#0E5F6B}
+.date-field input[type=date]{position:absolute;right:4px;bottom:0;width:34px;height:0;opacity:0;border:0;padding:0;pointer-events:none}
 
 /* ── BUTTONS ── */
 .btn{
@@ -930,6 +935,38 @@ async function pasteGenes() {
     }
   } catch(e) {}
   setGeneStatus('Press Ctrl+V to paste the table.', 'warn');
+}
+
+// Calendar button beside a dd/mm/yyyy text field. The text field stays the
+// value that drafts, fetch and export use; the picker only fills it in.
+function initDatePicker(id) {
+  const input = $(id);
+  const wrap = document.createElement('div');
+  wrap.className = 'date-field';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const picker = document.createElement('input');
+  picker.type = 'date';
+  picker.tabIndex = -1;
+  picker.setAttribute('aria-hidden', 'true');
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'date-btn';
+  btn.setAttribute('aria-label', 'Pick date');
+  btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
+  wrap.append(picker, btn);
+  btn.addEventListener('click', () => {
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(input.value.trim());
+    picker.value = m ? `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}` : '';
+    try { picker.showPicker(); } catch(e) { picker.focus(); picker.click(); }
+  });
+  picker.addEventListener('change', () => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(picker.value);
+    if (!m) return;
+    input.value = `${m[3]}/${m[2]}/${m[1]}`;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 }
 
 // Ctrl+V on the Gene coverage step pastes a copied table. This works from any
@@ -1986,6 +2023,8 @@ async function initApp() {
       el.addEventListener('input', schedulePreview);
       el.addEventListener('change', schedulePreview);
     });
+
+    ['f-collection_date','f-received_date','f-report_date'].forEach(initDatePicker);
 
     // Received date → collection date
     $('f-received_date').addEventListener('input', () => {
