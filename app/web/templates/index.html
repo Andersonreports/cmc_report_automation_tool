@@ -1703,25 +1703,13 @@ async function doPreview(force=false) {
     data = collectData();
   }
 
-  // Show loading overlay over existing preview — don't blank the pages
   const pages = $('preview-pages');
-  let overlay = $('preview-loading-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'preview-loading-overlay';
-    overlay.style.cssText = 'position:absolute;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:10;font-size:13px;font-weight:600;color:var(--accent);pointer-events:none;';
-    overlay.textContent = 'Rendering…';
-    pages.parentElement.style.position = 'relative';
-    pages.parentElement.appendChild(overlay);
-  }
-  overlay.style.display = 'flex';
   $('preview-status').textContent = 'Rendering…';
 
   // Auto-refresh shows first 3 pages; force (Refresh button) shows all
   const payload = { ...data, max_pages: force ? 0 : 3 };
   try {
     const r = await postJSON('/api/preview', payload);
-    overlay.style.display = 'none';
     if (r.error && (!r.pages || !r.pages.length)) {
       $('preview-status').textContent = `Preview error: ${r.error}`;
       return;
@@ -1747,7 +1735,6 @@ async function doPreview(force=false) {
       $('preview-status').textContent = `Preview failed: ${r.error}`;
     }
   } catch(e) {
-    overlay.style.display = 'none';
     $('preview-status').textContent = `Preview error: ${e.message}`;
   } finally {
     G.previewBusy = false;
