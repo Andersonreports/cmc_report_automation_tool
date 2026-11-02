@@ -913,7 +913,14 @@ function updateGeneCount() {
 
 async function pasteGenes() {
   setGeneStatus('Reading clipboard…', '');
-  // Server-side clipboard read (works on any IP, no browser permission needed)
+  // Browser Clipboard API (localhost / HTTPS only) reads this user's own clipboard
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.readText) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.trim()) { setGeneStatus('', ''); await applyGenePaste(text); return; }
+    } catch(e) {}
+  }
+  // Server-side clipboard read (only when the browser is on the server machine)
   try {
     const r = await postJSON('/api/read-clipboard', {});
     if (r.text && r.text.trim()) {
@@ -922,14 +929,20 @@ async function pasteGenes() {
       return;
     }
   } catch(e) {}
-  // Browser Clipboard API fallback (localhost / HTTPS only)
-  if (navigator.clipboard && navigator.clipboard.readText) {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text.trim()) { setGeneStatus('', ''); await applyGenePaste(text); return; }
-    } catch(e) {}
-  }
-  setGeneStatus('Clipboard is empty or could not be read. Copy the table first.', 'bad');
+  setGeneStatus('Press Ctrl+V to paste the table.', 'warn');
+}
+
+// Ctrl+V on the Gene coverage step pastes a copied table. This works from any
+// computer on the network, unlike reading the clipboard from a button.
+function onGenePasteKey(e) {
+  if (G.activeTab !== 'genes' || $('tab-genes').style.display === 'none') return;
+  const text = (e.clipboardData && e.clipboardData.getData('text/plain')) || '';
+  const inCell = e.target.closest && e.target.closest('#gene-table');
+  // A single value pasted into a table cell is an ordinary edit
+  if (inCell && !/[\t\n]/.test(text.trim())) return;
+  e.preventDefault();
+  setGeneStatus('', '');
+  applyGenePaste(text);
 }
 
 async function applyGenePaste(text) {
@@ -1999,6 +2012,7 @@ async function initApp() {
 
     // Gene table
     $('paste-genes-btn').addEventListener('click', pasteGenes);
+    document.addEventListener('paste', onGenePasteKey);
     $('add-gene-row-btn').addEventListener('click', () => { addGeneRow(); schedulePreview(); });
 
     // Variants

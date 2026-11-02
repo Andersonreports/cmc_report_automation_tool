@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import tempfile
 import threading
 import traceback
@@ -157,9 +158,23 @@ def _save_to_folder(folder: str, *paths: str):
                 pass
 
 
+def _is_local_request() -> bool:
+    addr = request.remote_addr or ""
+    if addr in ("127.0.0.1", "::1"):
+        return True
+    try:
+        return addr in socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        return False
+
+
 @app.route("/api/read-clipboard", methods=["POST"])
 def api_read_clipboard():
     """Read plain text from the OS clipboard on the server side."""
+    # The server's clipboard is only the user's clipboard when the browser
+    # runs on this same machine; remote browsers paste with Ctrl+V instead.
+    if not _is_local_request():
+        return jsonify({"text": "", "remote": True})
     # Try win32clipboard first (reliable on Windows, handles Excel clipboard data)
     try:
         import win32clipboard
