@@ -160,6 +160,26 @@ def _save_to_folder(folder: str, *paths: str):
 @app.route("/api/read-clipboard", methods=["POST"])
 def api_read_clipboard():
     """Read plain text from the OS clipboard on the server side."""
+    # Try win32clipboard first (reliable on Windows, handles Excel clipboard data)
+    try:
+        import win32clipboard
+        win32clipboard.OpenClipboard()
+        try:
+            if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_UNICODETEXT):
+                text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+            elif win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_TEXT):
+                raw = win32clipboard.GetClipboardData(win32clipboard.CF_TEXT)
+                text = raw.decode("ansi", errors="replace")
+            else:
+                text = ""
+        finally:
+            win32clipboard.CloseClipboard()
+        return jsonify({"text": text})
+    except ImportError:
+        pass
+    except Exception as e:
+        pass
+    # Fallback: tkinter
     try:
         import tkinter as tk
         root = tk.Tk()
