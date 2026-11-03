@@ -590,7 +590,7 @@ label.req::after{content:" *";color:var(--warn)}
     <select id="reviewer-combo"></select>
     <button class="btn" id="save-draft-btn">Save draft</button>
     <label class="btn" style="cursor:pointer">Load draft<input type="file" id="load-draft-input" accept=".json" style="display:none"></label>
-    <div style="display:flex;align-items:center;gap:6px;margin-left:8px">
+    <div id="output-folder-group" style="display:flex;align-items:center;gap:6px;margin-left:8px">
       <label style="font-size:11px;font-weight:700;color:var(--label);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Output folder</label>
       <input type="text" id="output-folder-input" placeholder="Output folder…"
              style="width:180px;padding:6px 10px;font-size:12px;border:1.5px solid var(--line);border-radius:var(--radius);font-family:inherit">
@@ -1654,11 +1654,6 @@ async function exportReport(kind) {
     await bulkExport(kind); return;
   }
   const output_folder = ($('output-folder-input').value || '').trim();
-  if (!output_folder) {
-    showToast('Please select an output folder before exporting.', 4000);
-    $('output-folder-input').focus();
-    return;
-  }
   const data = collectData();
   const btn = $(`export-${kind === 'both' ? 'both' : kind}`);
   if (btn) btn.disabled = true;
@@ -1675,9 +1670,15 @@ async function exportReport(kind) {
     const fname = (cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/) || [])[1] || 'report.zip';
     const blob = await r.blob();
     downloadBlob(blob, fname.replace(/['"]/g,''));
-    toast(`Downloaded ${fname.replace(/['"]/g,'')}`);
+    exportedToast(fname.replace(/['"]/g,''), output_folder, r.headers.get('X-Saved-To'));
   } catch(e) { toast(`Export error: ${e.message}`, 5000); }
   finally { if (btn) btn.disabled = false; }
+}
+
+function exportedToast(fname, folder, saved) {
+  if (saved) toast(`Saved ${fname} to ${saved}`, 5000);
+  else if (folder && G.init.local) toast(`Downloaded ${fname} — could not save to "${folder}" (folder not found?)`, 6000);
+  else toast(`Downloaded ${fname} to your Downloads folder`, 4000);
 }
 
 // ============================================================
@@ -1857,11 +1858,6 @@ function selectBulkItem(idx) {
 
 async function bulkExport(kind) {
   const output_folder = ($('output-folder-input').value || '').trim();
-  if (!output_folder) {
-    showToast('Please select an output folder before exporting.', 4000);
-    $('output-folder-input').focus();
-    return;
-  }
   const chosen = G.bulkItems.filter(i => i._checked && i.data);
   if (!chosen.length) { toast('Tick the patients whose reports you want to export.', 4000); return; }
   const items = chosen.map(i => ({ data: i.data }));
@@ -1870,14 +1866,14 @@ async function bulkExport(kind) {
   try {
     const r = await fetch('/api/bulk-export', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ items, kind })
+      body: JSON.stringify({ items, kind, output_folder })
     });
     if (!r.ok) { const j = await r.json().catch(()=>({})); toast(`Export failed: ${j.error||r.statusText}`, 5000); return; }
     const cd = r.headers.get('content-disposition') || '';
     const fname = (cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/) || [])[1] || 'reports.zip';
     const blob = await r.blob();
     downloadBlob(blob, fname.replace(/['"]/g,''));
-    toast(`Downloaded ${fname.replace(/['"]/g,'')}`);
+    exportedToast(fname.replace(/['"]/g,''), output_folder, r.headers.get('X-Saved-To'));
   } catch(e) { toast(`Export error: ${e.message}`, 5000); }
   finally { if (btn) btn.disabled = false; }
 }
@@ -1907,6 +1903,8 @@ async function initApp() {
   try {
     const init = await api('/api/init');
     G.init = init;
+    // Other computers can't reach the server's folders: reports just download.
+    if (!init.local) $('output-folder-group').style.display = 'none';
 
     // Populate template combo (hidden) + custom picker
     const tc = $('template-combo');
@@ -2088,7 +2086,8 @@ async function initApp() {
       try {
         const r = await postJSON('/api/pick-folder', {});
         if (r.folder) $('output-folder-input').value = r.folder;
-      } catch(e) { showToast('Folder picker failed: ' + e.message); }
+        else if (r.error) toast('Folder picker failed: ' + r.error, 5000);
+      } catch(e) { toast('Folder picker failed: ' + e.message, 5000); }
       finally { btn.disabled = false; btn.innerHTML = '&#128193; Browse'; }
     });
 

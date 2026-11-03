@@ -80,6 +80,9 @@ def api_init():
         "frequency_absent": variants_core.FREQUENCY_ABSENT,
         "silico": [[label, key] for label, key in variants_core.SILICO],
         "conservation": [[label, key] for label, key in variants_core.CONSERVATION],
+        # Only a browser on this machine can use the server's folder picker
+        # and folders; other computers get the report as a download.
+        "local": _is_local_request(),
     })
 
 
@@ -146,16 +149,25 @@ def api_preview():
         _deferred_rmtree(tmp, 30)
 
 
-def _save_to_folder(folder: str, *paths: str):
-    """Copy files to the user-chosen output folder, ignoring errors."""
-    if not folder or not os.path.isdir(folder):
-        return
-    for p in paths:
-        if p and os.path.exists(p):
-            try:
+def _save_to_folder(folder: str, *paths: str) -> str:
+    """Copy files to the user-chosen output folder (a folder on this server).
+    Returns the folder when every file was copied, else ""."""
+    if not folder or not _is_local_request() or not os.path.isdir(folder):
+        return ""
+    try:
+        for p in paths:
+            if p and os.path.exists(p):
                 shutil.copy2(p, os.path.join(folder, os.path.basename(p)))
-            except Exception:
-                pass
+    except OSError:
+        return ""
+    return folder
+
+
+def _send(path: str, mimetype: str, name: str, saved: str = ""):
+    """send_file, telling the page which folder (if any) also got a copy."""
+    resp = send_file(path, mimetype=mimetype, as_attachment=True, download_name=name)
+    resp.headers["X-Saved-To"] = saved
+    return resp
 
 
 def _is_local_request() -> bool:
@@ -209,6 +221,8 @@ def api_read_clipboard():
 @app.route("/api/pick-folder", methods=["POST"])
 def api_pick_folder():
     """Open a native folder-picker dialog on the server and return chosen path."""
+    if not _is_local_request():
+        return jsonify({"folder": "", "remote": True})
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -237,31 +251,29 @@ def api_export():
         docx_path = os.path.join(tmp, stem + ".docx")
         if kind == "docx":
             build_report(data, docx_path)
-            _save_to_folder(out_folder, docx_path)
+            saved = _save_to_folder(out_folder, docx_path)
             _deferred_rmtree(tmp)
-            return send_file(docx_path,
-                             mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                             as_attachment=True, download_name=stem + ".docx")
+            return _send(docx_path,
+                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                         stem + ".docx", saved)
         elif kind == "pdf":
             _, pdf = build_report(data, docx_path, tmp)
             if not pdf:
                 raise RuntimeError("PDF conversion not available on this server.")
-            _save_to_folder(out_folder, pdf)
+            saved = _save_to_folder(out_folder, pdf)
             _deferred_rmtree(tmp)
-            return send_file(pdf, mimetype="application/pdf",
-                             as_attachment=True, download_name=stem + ".pdf")
+            return _send(pdf, "application/pdf", stem + ".pdf", saved)
         else:  # both
             _, pdf = build_report(data, docx_path, tmp)
             if not pdf:
                 raise RuntimeError("PDF conversion not available on this server.")
-            _save_to_folder(out_folder, docx_path, pdf)
+            saved = _save_to_folder(out_folder, docx_path, pdf)
             zip_path = os.path.join(tmp, stem + ".zip")
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.write(docx_path, stem + ".docx")
                 zf.write(pdf, stem + ".pdf")
             _deferred_rmtree(tmp)
-            return send_file(zip_path, mimetype="application/zip",
-                             as_attachment=True, download_name=stem + ".zip")
+            return _send(zip_path, "application/zip", stem + ".zip", saved)
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)
         return jsonify({"error": str(e)}), 500
@@ -427,6 +439,7 @@ def api_bulk_export():
     body = request.json or {}
     items_data = body.get("items", [])
     kind = body.get("kind", "docx")
+    out_folder = (body.get("output_folder") or "").strip()
 
     reports = [ReportData.from_dict(item["data"]) for item in items_data if item.get("data")]
     if not reports:
@@ -449,6 +462,7 @@ def api_bulk_export():
                        if os.path.isfile(os.path.join(export_dir, f)))
         if not files:
             return jsonify({"error": "No reports were generated"}), 500
+        saved = _save_to_folder(out_folder, *(os.path.join(export_dir, f) for f in files))
 
         if len(files) == 1:
             fpath = os.path.join(export_dir, files[0])
@@ -456,16 +470,14 @@ def api_bulk_export():
             mimes = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                      "pdf": "application/pdf"}
             _deferred_rmtree(tmp)
-            return send_file(fpath, mimetype=mimes.get(ext, "application/octet-stream"),
-                             as_attachment=True, download_name=files[0])
+            return _send(fpath, mimes.get(ext, "application/octet-stream"), files[0], saved)
 
         zip_path = os.path.join(tmp, "reports.zip")
         with zipfile.ZipFile(zip_path, "w") as zf:
             for f in files:
                 zf.write(os.path.join(export_dir, f), f)
         _deferred_rmtree(tmp)
-        return send_file(zip_path, mimetype="application/zip",
-                         as_attachment=True, download_name="reports.zip")
+        return _send(zip_path, "application/zip", "reports.zip", saved)
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)
         return jsonify({"error": str(e)}), 500
