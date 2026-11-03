@@ -150,9 +150,10 @@ def api_preview():
 
 
 def _save_to_folder(folder: str, *paths: str) -> str:
-    """Copy files to the user-chosen output folder (a folder on this server).
-    Returns the folder when every file was copied, else ""."""
-    if not folder or not _is_local_request() or not os.path.isdir(folder):
+    """Copy files to the output folder pasted in the page — a path as this
+    server sees it (a local folder or a network share). Returns the folder
+    when every file was copied, else ""."""
+    if not folder or not os.path.isdir(folder):
         return ""
     try:
         for p in paths:

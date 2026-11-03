@@ -1671,39 +1671,15 @@ async function exportReport(kind) {
   finally { if (btn) btn.disabled = false; }
 }
 
-// Hand an export response to the user: written into the folder they picked on
-// their own computer (browser folder picker), else downloaded.
+// Download the export; the server also saved a copy if a folder was pasted.
 async function deliverExport(r, fallbackName, folder) {
   const cd = r.headers.get('content-disposition') || '';
   const fname = ((cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/) || [])[1] || fallbackName).replace(/['"]/g,'');
-  const blob = await r.blob();
-  if (G.dirHandle) {
-    try {
-      const fh = await G.dirHandle.getFileHandle(fname, { create: true });
-      const w = await fh.createWritable();
-      await w.write(blob); await w.close();
-      toast(`Saved ${fname} to ${G.dirHandle.name}`, 5000);
-      return;
-    } catch(e) { toast(`Could not write to ${G.dirHandle.name} (${e.message}) — downloading instead`, 6000); }
-  }
-  downloadBlob(blob, fname);
+  downloadBlob(await r.blob(), fname);
   const saved = r.headers.get('X-Saved-To');
   if (saved) toast(`Saved ${fname} to ${saved}`, 5000);
-  else if (folder && G.init.local) toast(`Downloaded ${fname} — could not save to "${folder}" (folder not found?)`, 6000);
-  else if (!G.dirHandle) toast(`Downloaded ${fname} to your Downloads folder`, 4000);
-}
-
-// Folder picker on this user's own computer (Chrome/Edge, secure pages only).
-async function pickClientFolder() {
-  if (!window.showDirectoryPicker) {
-    toast('This browser can only save reports to your Downloads folder from this address. ' +
-          'To choose a folder each time, turn on "Ask where to save each file" in the browser\'s download settings.', 9000);
-    return;
-  }
-  try {
-    G.dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    $('output-folder-input').value = G.dirHandle.name;
-  } catch(e) { if (e.name !== 'AbortError') toast('Folder picker failed: ' + e.message, 5000); }
+  else if (folder) toast(`Downloaded ${fname} — could not save to "${folder}" (folder not found?)`, 6000);
+  else toast(`Downloaded ${fname} to your Downloads folder`, 4000);
 }
 
 // ============================================================
@@ -1924,12 +1900,6 @@ async function initApp() {
   try {
     const init = await api('/api/init');
     G.init = init;
-    // Other computers pick a folder on their own machine with Browse; typing a
-    // path would name a folder on the server.
-    if (!init.local) {
-      $('output-folder-input').readOnly = true;
-      $('output-folder-input').placeholder = 'Downloads folder';
-    }
 
     // Populate template combo (hidden) + custom picker
     const tc = $('template-combo');
@@ -2106,7 +2076,10 @@ async function initApp() {
 
     // Folder picker
     $('pick-folder-btn').addEventListener('click', async () => {
-      if (!G.init.local) { await pickClientFolder(); return; }
+      if (!G.init.local) {
+        toast('Browse only works on the server PC — paste the folder path into the box instead.', 6000);
+        return;
+      }
       const btn = $('pick-folder-btn');
       btn.disabled = true; btn.textContent = '⏳ Picking…';
       try {
