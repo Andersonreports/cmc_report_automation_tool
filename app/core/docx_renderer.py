@@ -36,7 +36,7 @@ from ..config.templates import REVIEWERS, get_template
 from .models import ReportData
 from .os_utils import resource_path
 
-PATIENT_CELLS = [  # (row, col, label, attribute)
+PATIENT_CELLS = [  # (row, col, label, attribute) of the usual layout; filled by label
     (0, 0, "Patient ID", "patient_id"), (0, 1, "PIN", "pin"),
     (1, 0, "Age", "age"), (1, 1, "Gender", "gender"),
     (2, 0, "Hospital/Clinic", "hospital"), (2, 1, "Sample Number", "sample_number"),
@@ -111,13 +111,21 @@ def _find_table(doc, first_cell: str, what: str):
 # ---------------------------------------------------------------------------
 
 def _fill_patient(doc, data: ReportData):
+    """Each box of the table is filled by its label, so templates may arrange
+    the boxes differently or leave some out (e.g. no Hospital/Clinic)."""
     table = _find_table(doc, "Patient", "patient details table")
     id_label = get_template(data.template_key).patient_id_label
-    for row, col, label, attr in PATIENT_CELLS:
-        if attr == "patient_id":
-            label = id_label          # "Patient ID" or "Patient name"
-        value = (getattr(data.patient, attr, "") or "").strip()
-        _set_text(table.rows[row].cells[col].paragraphs[0]._p, f"{label}: {value}")
+    attrs = {label: attr for _, _, label, attr in PATIENT_CELLS}
+    attrs["Patient name"] = "patient_id"
+    for row in table.rows:
+        for cell in row.cells:
+            p = cell.paragraphs[0]._p
+            attr = attrs.get(_text(p).split(":")[0].strip())
+            if not attr:
+                continue                # an empty box stays empty
+            label = id_label if attr == "patient_id" else _text(p).split(":")[0].strip()
+            value = (getattr(data.patient, attr, "") or "").strip()
+            _set_text(p, f"{label}: {value}")
     # No paragraph indentation or spacing inside the demography table; the gap
     # to the cell borders comes from the table's cell margins instead, so the
     # text doesn't touch the lines.
@@ -487,8 +495,9 @@ def _set_pairs(p_el, pairs: list[tuple[str, "str | tuple[str, str]"]], part=None
     label_proto = real[0]
     value_proto = real[1] if len(real) > 1 else real[0]
     protos = [copy.deepcopy(label_proto), copy.deepcopy(value_proto)]
-    for r in runs:
-        p_el.remove(r)
+    for child in list(p_el):        # the runs, and any links holding runs
+        if child.tag in (qn("w:r"), qn("w:hyperlink")):
+            p_el.remove(child)
     for i, (label, value) in enumerate(pairs):
         for n, (proto, text) in enumerate(((protos[0], ("      " if i else "") + f"{label}: "),
                                            (protos[1], value))):
@@ -636,10 +645,10 @@ def _link_omim(tc, part) -> None:
 
 def _color_class(tc, v) -> None:
     """The classification text in the cell's first paragraph: blue for an uncertain
-    significance (the template's red stays for Pathogenic / Likely Pathogenic)."""
+    significance, red for Pathogenic / Likely Pathogenic. Always set: a template's
+    sample row may be either colour."""
     from . import variants as vr
-    if vr.classification(v) != "Variant of Uncertain Significance":
-        return
+    vus = vr.classification(v) == "Variant of Uncertain Significance"
     for r in tc.find(qn("w:p")).iter(qn("w:r")):
         rpr = r.get_or_add_rPr()
         color = rpr.find(qn("w:color"))
@@ -647,7 +656,7 @@ def _color_class(tc, v) -> None:
             color = OxmlElement("w:color")
             sz = rpr.find(qn("w:sz"))
             (sz.addprevious(color) if sz is not None else rpr.append(color))
-        color.set(qn("w:val"), "0070C0")
+        color.set(qn("w:val"), "0070C0" if vus else "FF0000")
 
 
 def _set_banner(doc, mode: str) -> None:
@@ -703,6 +712,9 @@ def _fill_variants(doc, data: ReportData):
     chosen = [v for v in data.variants if v.get("selected")]
     if not data.variants or not get_template(data.template_key).variants:
         return                      # no Excel uploaded: the template's sample stays
+    if get_template(data.template_key).variant_captions:
+        _fill_captioned_variants(doc, data, chosen)
+        return
     sets = _variant_sets(doc)
     if not sets:
         raise TemplateError("Template is missing: variant results table")
@@ -755,6 +767,106 @@ def _fill_variants(doc, data: ReportData):
                 Paragraph(p, None).paragraph_format.keep_with_next = True   # and its header row
 
 
+def _remove_between(first, stop_prefixes: tuple[str, ...]) -> None:
+    """Remove `first` and the elements after it up to the next paragraph starting
+    with one of `stop_prefixes` (that one stays)."""
+    el = first
+    while el is not None and (el is first or not (
+            el.tag == qn("w:p") and _text(el).strip().lower().startswith(stop_prefixes))):
+        nxt = el.getnext()
+        el.getparent().remove(el)
+        el = nxt
+
+
+def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
+    """Templates with variant_captions: the variant list (and the Secondary findings
+    list) on top, then under 'Variant Interpretation' one block per variant -
+    'Variant N', its table, the abbreviation line, its evidence and OMIM paragraphs.
+    The template holds one sample row per list and one sample block."""
+    from . import variants as vr
+    cfg = get_template(data.template_key)
+    gene_tables = [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]
+    lists = [t for t in gene_tables if len(t.findall(qn("w:tr"))) < 8]
+    interp = next(t for t in gene_tables if len(t.findall(qn("w:tr"))) >= 8)
+    groups = ([[v for v in chosen if not vr.is_secondary(v)], [v for v in chosen if vr.is_secondary(v)]]
+              if cfg.secondary_findings and len(lists) > 1 else [chosen])
+    head = _find_para(doc, "Variant Interpretation", "'Variant Interpretation' heading")
+
+    # -- the lists: one row per variant; a list with none is removed with its notes
+    titles = [data.primary_title, data.secondary_title]
+    for res, group, title in zip(lists, groups, titles):
+        heading = res.getprevious()             # its 'List of ...' line (past blank lines / marks)
+        while heading is not None and not (heading.tag == qn("w:p") and _text(heading).strip()):
+            heading = heading.getprevious()
+        if not group:               # its heading, table and notes, up to the next list / section
+            _remove_between(heading, ("list of", "variant interpretation"))
+            continue
+        rows = res.findall(qn("w:tr"))
+        proto = rows[1]
+        for tr in rows[1:]:
+            res.remove(tr)
+        _add_result_rows(doc, res, proto, group)
+        if title.strip() and heading is not None and _text(heading).startswith("List of"):
+            _set_text(heading, title.strip())
+        for p in [heading] + [p for tr in res.findall(qn("w:tr"))[:-1] for p in tr.iter(qn("w:p"))]:
+            Paragraph(p, None).paragraph_format.keep_with_next = True   # heading stays with its table
+
+    # -- the sample block: caption, table, abbreviation, evidence / OMIM paragraphs
+    caption = interp.getprevious()
+    while caption is not None and not (caption.tag == qn("w:p") and
+                                       _text(caption).strip().lower().startswith("variant ")):
+        caption = caption.getprevious()
+    after = []                      # the paragraphs under the table that belong to the block
+    el = interp.getnext()
+    while el is not None and el.tag == qn("w:p") and not _text(el).strip().lower().startswith(
+            ("*genetic test results", "no other variant", "cnv findings")):
+        after.append(el)
+        el = el.getnext()
+    abbrev = next((p for p in after if _text(p).strip().startswith("Abbreviation:")), None)
+    evidence = next((p for p in after if _text(p).strip().lstrip("#").lower().startswith("clinical")), None)
+    omim = next((p for p in after if _text(p).strip().lower().startswith("omim phenotype")), None)
+    ordered = [v for group in groups for v in group]
+    if not ordered:                 # nothing ticked: no Additional variants part at all;
+        start = _find_para(doc, "Additional Variant", "'Additional Variant(s)' heading")
+        cnv = _find_para(doc, "CNV Findings", "'CNV Findings' heading")
+        last_note = cnv.getprevious()   # the results keep the last notes (above CNV Findings)
+        while last_note is not None and not _text(last_note).strip().lower().startswith(
+                "*genetic test results"):
+            last_note = last_note.getprevious()
+        el = start
+        while el is not None and el is not (last_note if last_note is not None else cnv):
+            nxt = el.getnext()
+            el.getparent().remove(el)
+            el = nxt
+        return
+    block_rows = [copy.deepcopy(r) for r in interp.findall(qn("w:tr"))[:8]]
+    anchor = head
+    for n, v in enumerate(ordered, 1):
+        cap = copy.deepcopy(caption)
+        _set_text(cap, f"Variant {n}")
+        Paragraph(cap, None).paragraph_format.keep_with_next = True
+        tbl = copy.deepcopy(interp)
+        for tr in tbl.findall(qn("w:tr")):
+            tbl.remove(tr)
+        for tr in _interpretation_rows(doc, block_rows, v):
+            tbl.append(tr)
+        parts = [cap, tbl] + ([copy.deepcopy(abbrev)] if abbrev is not None else [])
+        for proto, key in ((evidence, "evidence"), (omim, "omim_phenotype")):
+            text = vr.clean_narrative(v.get(key, ""))
+            if proto is not None and text:
+                para = copy.deepcopy(proto)
+                _set_para_tail(para, text)
+                if key == "omim_phenotype":
+                    _link_omim_in_para(para, doc.part)
+                parts.append(para)
+        for part in parts:
+            anchor.addnext(part)
+            anchor = part
+    for el in [caption, interp] + after:
+        if el is not None and el.getparent() is not None:
+            el.getparent().remove(el)
+
+
 def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banner: bool,
                       whole_doc: bool = True):
     """One set: a row in the Results table and one block (8 rows) in the Variant
@@ -769,15 +881,37 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
         _drop_interpretation(doc, tbl, whole_doc)
         return
     mode = vr.report_mode(chosen, data.result_tag)
+    fixed = get_template(data.template_key).fixed_result
     if banner:                      # the result line and its wording are the primary set's
-        _set_banner(doc, mode)
+        if not fixed:               # else the template's own result line stays
+            _set_banner(doc, mode)
         # Heading: user pick overrides auto; auto only changes for VUS mode.
         heading_text = data.primary_title or (
             "List of uncertain significant variant(s) identified related to the phenotype:"
-            if mode == "vus_related" else None)
+            if mode == "vus_related" and not fixed else None)
         if heading_text:
-            _set_text(_find_para(doc, "List of significant variant(s)", "variant list heading"),
-                      heading_text)
+            heading = res.getprevious()             # the 'List of ...' line over the table
+            if heading is None or heading.tag != qn("w:p") or not _text(heading).startswith("List of"):
+                heading = _find_para(doc, "List of significant variant(s)", "variant list heading")
+            _set_text(heading, heading_text)
+    _add_result_rows(doc, res, proto, chosen)
+    # -- Variant Interpretation: the template's 8-row block, once per variant
+    rows = tbl.findall(qn("w:tr"))
+    block = [copy.deepcopy(r) for r in rows[:8]]
+    for tr in rows:
+        tbl.remove(tr)
+    for n, v in enumerate(chosen):
+        if n:                       # a gap between one variant's block and the next
+            tbl.append(_spacer_row(tbl))
+        for tr in _interpretation_rows(doc, block, v):
+            tbl.append(tr)
+    _fill_narrative(doc, tbl, chosen, whole_doc)
+
+
+def _add_result_rows(doc, res, proto, chosen: list[dict]) -> None:
+    """One row of the Results table per variant, made from the template row `proto`:
+    Gene | Variant | Allele | Region | Disease | Inheritance | Classification."""
+    from . import variants as vr
     for v in chosen:
         tr = copy.deepcopy(proto)
         cells = [[v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
@@ -802,59 +936,67 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
                 Run(r, None).bold = True
         _no_split(tr)
         res.append(tr)
-    # -- Variant Interpretation: the template's 8-row block, once per variant
-    rows = tbl.findall(qn("w:tr"))
-    block = [copy.deepcopy(r) for r in rows[:8]]
-    for tr in rows:
-        tbl.remove(tr)
-    for n, v in enumerate(chosen):
-        if n:                       # a gap between one variant's block and the next
-            tbl.append(_spacer_row(tbl))
-        pos1, pos2 = vr.genomic_position(v)
-        trs = [copy.deepcopy(r) for r in block]
-        tcs = [r.findall(qn("w:tc")) for r in trs]
-        for tc, lines in zip(tcs[1], [
-                [v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
-                [v["variant"]] + ([f"({v['protein']})"] if v.get("protein") else []),
-                vr.inheritance(v), vr.disease_lines(v),
-                [v.get("criteria", "").strip() or "-"], [vr.class_display(v)]]):
-            _set_cell_lines(tc, lines)
-        _color_class(tcs[1][-1], v)
-        _link_omim(tcs[1][3], doc.part)
-        for tc, lines in zip(tcs[3], [
-                [vr.region(v)], [vr.allele_status(v)], [vr.sequence_ontology(v)],
-                [vr.frequency(v)], [vr.allelic_depth(v)]]):
-            _set_cell_lines(tc, lines)
-        _set_pairs(tcs[5][0].find(qn("w:p")),
-                   [(k, vr.silico_case(v.get(key, "").strip()) or "-") for k, key in vr.insilico_tools(v)],
-                   bold=True)
-        _set_pairs(tcs[5][1].find(qn("w:p")),
-                   [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.CONSERVATION],
-                   bold=True)
-        for tc in tcs[5]:               # one centered line, whatever tabs / spaces the template has
-            _center_line(tc.find(qn("w:p")))
-        _set_cell_lines(tcs[7][0], [pos1] + ([pos2] if pos2 else []))
-        _set_pairs(tcs[7][1].find(qn("w:p")),
-                   [("ClinVar", vr.evidence_link(v.get("clinvar_link", ""), vr.CLINVAR_URL)),
-                    ("PubMed", vr.evidence_link(v.get("pubmed_link", ""), vr.PUBMED_URL))],
-                   part=doc.part)
-        for n, tr in enumerate(trs):
-            _no_split(tr)
-            if n < len(trs) - 1:        # keep the whole block on one page
-                for p in tr.iter(qn("w:p")):
-                    Paragraph(p, None).paragraph_format.keep_with_next = True
-            tbl.append(tr)
+
+
+def _interpretation_rows(doc, block, v) -> list:
+    """The template's 8-row Variant Interpretation block (a list of w:tr) filled
+    with one variant, kept together on one page."""
+    from . import variants as vr
+    pos1, pos2 = vr.genomic_position(v)
+    trs = [copy.deepcopy(r) for r in block]
+    tcs = [r.findall(qn("w:tc")) for r in trs]
+    for tc, lines in zip(tcs[1], [
+            [v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
+            [v["variant"]] + ([f"({v['protein']})"] if v.get("protein") else []),
+            vr.inheritance(v), vr.disease_lines(v),
+            [v.get("criteria", "").strip() or "-"], [vr.class_display(v)]]):
+        _set_cell_lines(tc, lines)
+    _color_class(tcs[1][-1], v)
+    _link_omim(tcs[1][3], doc.part)
+    for tc, lines in zip(tcs[3], [
+            [vr.region(v)], [vr.allele_status(v)], [vr.sequence_ontology(v)],
+            [vr.frequency(v)], [vr.allelic_depth(v)]]):
+        _set_cell_lines(tc, lines)
+    _set_pairs(tcs[5][0].find(qn("w:p")),
+               [(k, vr.silico_case(v.get(key, "").strip()) or "-") for k, key in vr.insilico_tools(v)],
+               bold=True)
+    _set_pairs(tcs[5][1].find(qn("w:p")),
+               [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.CONSERVATION],
+               bold=True)
+    for tc in tcs[5]:               # one centered line, whatever tabs / spaces the template has
+        _center_line(tc.find(qn("w:p")))
+    _set_cell_lines(tcs[7][0], [pos1] + ([pos2] if pos2 else []))
+    _set_pairs(tcs[7][1].find(qn("w:p")),
+               [("ClinVar", vr.evidence_link(v.get("clinvar_link", ""), vr.CLINVAR_URL)),
+                ("PubMed", vr.evidence_link(v.get("pubmed_link", ""), vr.PUBMED_URL))],
+               part=doc.part)
+    for n, tr in enumerate(trs):
+        _no_split(tr)
+        if n < len(trs) - 1:        # keep the whole block on one page
+            for p in tr.iter(qn("w:p")):
+                Paragraph(p, None).paragraph_format.keep_with_next = True
+    return trs
+
+
+def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> None:
+    """The evidence / OMIM phenotype paragraphs under an interpretation table, one
+    pair per variant, from the template's own paragraphs."""
+    from . import variants as vr
     # -- narrative: "#Clinical and Literature Evidences" / "OMIM phenotype"
-    omim_para = _para_near(doc, tbl, "OMIM phenotype", "OMIM phenotype paragraph",
-                           whole_doc=whole_doc)
+    # A template may lack one of the two (e.g. no OMIM phenotype paragraph), never both.
+    omim_para = _para_near(doc, tbl, "OMIM phenotype", "", required=False, whole_doc=whole_doc)
     evidence = _para_near(doc, tbl, "#Clinical and Literature Evidences", "", required=False,
                           whole_doc=whole_doc)
+    if omim_para is None and evidence is None:
+        raise TemplateError("Template is missing: OMIM phenotype / evidence paragraph")
     if evidence is None:            # a template without it: the OMIM paragraph's layout
         evidence = copy.deepcopy(omim_para)
         _set_lead(evidence, "#Clinical and Literature Evidences: ")
-    anchor = omim_para
+    protos = [(evidence, "evidence")] + ([(omim_para, "omim_phenotype")]
+                                         if omim_para is not None else [])
+    start = anchor = omim_para if omim_para is not None else evidence
     for v in chosen:                # both paragraphs are typed by the user
-        for proto, key in ((evidence, "evidence"), (omim_para, "omim_phenotype")):
+        for proto, key in protos:
             text = vr.clean_narrative(v.get(key, ""))
             if text:
                 para = copy.deepcopy(proto)
@@ -863,10 +1005,10 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
                     _link_omim_in_para(para, doc.part)
                 anchor.addnext(para)
                 anchor = para
-    if anchor is not omim_para:     # as the template's OMIM paragraph, the last one leaves a gap
+    if anchor is not start:         # as the template's last paragraph, the last one leaves a gap
         Paragraph(anchor, None).paragraph_format.space_after = Pt(8)   # before the notes under it
     for p in (evidence, omim_para):
-        if p.getparent() is not None:
+        if p is not None and p.getparent() is not None:
             p.getparent().remove(p)
 
 
@@ -913,30 +1055,29 @@ def _fit_variant_layout(doc) -> None:
     them - headings, notes, evidence / OMIM paragraphs - starting at the same left edge."""
     sec = doc.sections[0]
     width = round((sec.page_width - sec.left_margin - sec.right_margin) / 635)     # twips
-    for res, interp in _variant_sets(doc):
-        for tbl in (res, interp):
-            grid = tbl.find(qn("w:tblGrid"))
-            cols = grid.findall(qn("w:gridCol"))
-            total = sum(int(c.get(qn("w:w"))) for c in cols)
-            k = width / total
-            for c in cols:
-                c.set(qn("w:w"), str(round(int(c.get(qn("w:w"))) * k)))
-            for tc in tbl.iter(qn("w:tc")):
-                w = tc.find(qn("w:tcPr") + "/" + qn("w:tcW"))
-                if w is not None and w.get(qn("w:type")) == "dxa":
-                    w.set(qn("w:w"), str(round(int(w.get(qn("w:w"))) * k)))
-            pr = tbl.tblPr
-            for tag in ("w:tblInd", "w:jc", "w:tblW"):
-                for el in pr.findall(qn(tag)):
-                    pr.remove(el)
-            tblw = OxmlElement("w:tblW")
-            tblw.set(qn("w:w"), str(width))
-            tblw.set(qn("w:type"), "dxa")
-            jc = OxmlElement("w:jc")
-            jc.set(qn("w:val"), "center")
-            style = pr.find(qn("w:tblStyle"))
-            (style.addnext(tblw) if style is not None else pr.insert(0, tblw))
-            tblw.addnext(jc)
+    for tbl in [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]:
+        grid = tbl.find(qn("w:tblGrid"))
+        cols = grid.findall(qn("w:gridCol"))
+        total = sum(int(c.get(qn("w:w"))) for c in cols)
+        k = width / total
+        for c in cols:
+            c.set(qn("w:w"), str(round(int(c.get(qn("w:w"))) * k)))
+        for tc in tbl.iter(qn("w:tc")):
+            w = tc.find(qn("w:tcPr") + "/" + qn("w:tcW"))
+            if w is not None and w.get(qn("w:type")) == "dxa":
+                w.set(qn("w:w"), str(round(int(w.get(qn("w:w"))) * k)))
+        pr = tbl.tblPr
+        for tag in ("w:tblInd", "w:jc", "w:tblW"):
+            for el in pr.findall(qn(tag)):
+                pr.remove(el)
+        tblw = OxmlElement("w:tblW")
+        tblw.set(qn("w:w"), str(width))
+        tblw.set(qn("w:type"), "dxa")
+        jc = OxmlElement("w:jc")
+        jc.set(qn("w:val"), "center")
+        style = pr.find(qn("w:tblStyle"))
+        (style.addnext(tblw) if style is not None else pr.insert(0, tblw))
+        tblw.addnext(jc)
     for p in doc.paragraphs:
         text = p.text.strip()
         if text.startswith(("*Genetic test results", "No other variant", "List of ",

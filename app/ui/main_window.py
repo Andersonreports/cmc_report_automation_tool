@@ -858,6 +858,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._variants: list[dict] = []
         self._current = -1                    # variant index shown in the detail form
         self.secondary_separate = False       # the template has its own Secondary findings set
+        self.fixed_result = False             # the template's result line never changes: no Result picker
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 12, 0, 0)
         lay.setSpacing(10)
@@ -1100,8 +1101,9 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._show_tools(False)
 
     def _show_tools(self, on: bool):
-        for w in (self.search, self.result_row, self.body):
+        for w in (self.search, self.body):
             w.setVisible(on)
+        self.result_row.setVisible(on and not self.fixed_result)
         if on:
             self._toggle_list(shown=True)
 
@@ -1964,6 +1966,7 @@ class MainWindow(QMainWindow):
             play.addWidget(grp)
             if "patient_id" in keys:
                 self.patient_id_label = gf.labelForField(self.fields["patient_id"])
+                self._patient_form = gf
         self.fields["received_date"].textChanged.connect(self._received_changed)
         play.addStretch(1)
 
@@ -2154,6 +2157,8 @@ class MainWindow(QMainWindow):
         """A step's required boxes and their text: (the box to outline, text)."""
         if step == 0:
             keys = PATIENT_GROUP + SAMPLE_GROUP
+            if not get_template(self.template_combo.currentData()).hospital_row:
+                keys = tuple(k for k in keys if k != "hospital")     # not in this report
         elif step == 1:
             keys = ("report_date",)
         else:
@@ -2250,6 +2255,13 @@ class MainWindow(QMainWindow):
         self.variants_panel.secondary_separate = cfg.secondary_findings
         self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
         self.variants_panel.primary_row.setVisible(cfg.pathogenic)
+        panel = self.variants_panel
+        panel.fixed_result = cfg.fixed_result
+        panel.result_row.setVisible(bool(panel.variants()) and not cfg.fixed_result)
+        if cfg.fixed_result and panel.result_tag():
+            panel.set_result_tag("")
+        # No Hospital/Clinic box in this template's patient table: hide the field.
+        self._patient_form.setRowVisible(self.fields["hospital"], cfg.hospital_row)
         self.tabs.setTabVisible(self._variants_tab, on)
         if not on and self.tabs.currentIndex() == self._variants_tab:
             self.tabs.setCurrentIndex(0)

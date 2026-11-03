@@ -490,10 +490,12 @@ label.req::after{content:" *";color:var(--warn)}
           </div>
 
           <div class="variants-tools" id="variants-tools" style="display:none">
-            <label>Result:</label>
-            <select id="f-result_tag">
-              <option value="">Automatic (from the classifications)</option>
-            </select>
+            <div id="result-tag-row" style="display:flex;flex-direction:column;gap:4px">
+              <label>Result:</label>
+              <select id="f-result_tag">
+                <option value="">Automatic (from the classifications)</option>
+              </select>
+            </div>
             <div id="primary-title-row" style="display:none;flex-direction:column;gap:4px">
               <label>Variant list title:</label>
               <div id="oc-primary_title" class="other-choice" style="display:flex;flex-direction:column;gap:4px">
@@ -787,10 +789,16 @@ function visibleSteps() {
   return [...$qa('.tab-btn')].filter(b => b.style.display !== 'none').map(b => b.dataset.tab);
 }
 
+function stepReq(tab) {
+  // A template without a Hospital/Clinic box doesn't ask for it.
+  return (STEP_REQ[tab] || []).filter(([id]) => !(id === 'oc-hospital' && G.noHospital));
+}
+
 function stepState(tab) {
   if (STEP_REQ[tab]) {
-    const total = STEP_REQ[tab].length;
-    const missing = STEP_REQ[tab].filter(([id]) => !reqValue(id)).length;
+    const req = stepReq(tab);
+    const total = req.length;
+    const missing = req.filter(([id]) => !reqValue(id)).length;
     const sub = !missing ? 'Complete' : missing === total ? 'Not started' : `${missing} of ${total} left`;
     return { complete: !missing, sub };
   }
@@ -1075,6 +1083,17 @@ async function onTemplateChange(key, force=false) {
   // Primary variant list title row (shown for pathogenic templates)
   const priRow = $('primary-title-row');
   priRow.style.display = (info.pathogenic && info.variants) ? 'flex' : 'none';
+
+  // A template whose result line is fixed has no Result picker
+  $('result-tag-row').style.display = info.fixed_result ? 'none' : 'flex';
+  if (info.fixed_result && $('f-result_tag').value) {
+    $('f-result_tag').value = '';
+    applyResultTagColor();
+  }
+
+  // No Hospital/Clinic box in this template's patient table: hide the field
+  G.noHospital = info.hospital_row === false;
+  $('oc-hospital').closest('.form-group').style.display = G.noHospital ? 'none' : '';
 
 
   schedulePreview();

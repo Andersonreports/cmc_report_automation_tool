@@ -58,6 +58,16 @@ class TemplateConfig:
     # The template has a second set of tables for the Excel's Secondary Findings; the
     # result tag and its classification then apply to the other variants only.
     secondary_findings: bool = False
+    # The template's result line and variant list heading stay as written, whatever
+    # the classifications (e.g. "No pathogenic ... causative" over incidental findings);
+    # the UI then hides the Result picker.
+    fixed_result: bool = False
+    # The patient table has a Hospital/Clinic box; without it the UI hides the field.
+    hospital_row: bool = True
+    # Variant Interpretation as one captioned block per variant ("Variant 1": its own
+    # table, abbreviation line, evidence and OMIM paragraphs), after the variant
+    # list and the Secondary findings list, instead of one shared table per list.
+    variant_captions: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,6 +145,45 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_sheet="WES",
         variants=True,
         pathogenic=True,
+    ),
+    # Whole Exome report with no causative variant but incidental finding(s): green
+    # "No pathogenic ... causative" result line over "List of Incidental significant
+    # variant(s)", a Variant Interpretation page, and no Hospital/Clinic in the table.
+    "WES_INCIDENTAL": TemplateConfig(
+        key="WES_INCIDENTAL",
+        name="Whole Exome Sequencing - Incidental finding",
+        docx_file="whole_exome_incidental.docx",
+        patient_id_label="Patient name",
+        specimen="Peripheral Blood",
+        patient_sheet="WES",
+        file_suffix="wes_report",
+        new_page_before=("Variant Interpretation",),
+        reviewer="SARATH",
+        variants=True,
+        pathogenic=True,
+        fixed_result=True,
+        hospital_row=False,
+    ),
+    # Whole Exome + Mitochondrial report with no causative variant but additional
+    # variant(s): green "No pathogenic ... causative" result line, an "Additional
+    # Variant(s)" list, an optional Secondary findings list, and one captioned
+    # interpretation block per variant ("Variant 1", "Variant 2", ...).
+    "WES_MITO_ADDITIONAL": TemplateConfig(
+        key="WES_MITO_ADDITIONAL",
+        name="Whole Exome & Mitochondrial - Additional variants",
+        docx_file="whole_exome_mito_additional.docx",
+        patient_id_label="Patient name",
+        specimen="Peripheral Blood",
+        file_suffix="WES_&_Mito_report",
+        new_page_before=("Variant Interpretation",),
+        keep_layout=True,
+        secondary_findings=True,
+        reviewer="SARATH",
+        patient_sheet="WES",
+        variants=True,
+        pathogenic=True,
+        fixed_result=True,
+        variant_captions=True,
     ),
     "WES_MITO": TemplateConfig(
         key="WES_MITO",
