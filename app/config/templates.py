@@ -68,6 +68,9 @@ class TemplateConfig:
     # table, abbreviation line, evidence and OMIM paragraphs), after the variant
     # list and the Secondary findings list, instead of one shared table per list.
     variant_captions: bool = False
+    # Keep the template's own title size and patient-table padding instead of the
+    # app's usual 20 pt title and 0.2 cm cell margins (for a lab's exact layout).
+    own_styles: bool = False
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         pathogenic=True,
         fixed_result=True,
         variant_captions=True,
+        own_styles=True,
     ),
     "WES_MITO": TemplateConfig(
         key="WES_MITO",

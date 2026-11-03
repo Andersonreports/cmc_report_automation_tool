@@ -126,6 +126,8 @@ def _fill_patient(doc, data: ReportData):
             label = id_label if attr == "patient_id" else _text(p).split(":")[0].strip()
             value = (getattr(data.patient, attr, "") or "").strip()
             _set_text(p, f"{label}: {value}")
+    if get_template(data.template_key).own_styles:
+        return                      # the template's own padding and indents stay
     # No paragraph indentation or spacing inside the demography table; the gap
     # to the cell borders comes from the table's cell margins instead, so the
     # text doesn't touch the lines.
@@ -761,10 +763,36 @@ def _fill_variants(doc, data: ReportData):
             if n and data.secondary_title.strip():
                 _set_text(_find_para(doc, "List of Secondary", "Secondary findings heading"),
                           data.secondary_title.strip())
-            heading = res.getprevious()                 # 'List of ...' stays with its table,
-            for p in ([heading] if heading is not None and heading.tag == qn("w:p") else []) + [
-                    p for tr in res.findall(qn("w:tr"))[:-1] for p in tr.iter(qn("w:p"))]:
-                Paragraph(p, None).paragraph_format.keep_with_next = True   # and its header row
+            _keep_list_together(res)
+
+
+def _keep_list_together(res) -> None:
+    """Page breaks around a variant list: its 'List of ...' heading (and the blank
+    lines under it - one without keep-with-next breaks the chain) stays with the
+    header row and the first variant, so a heading is never left alone at the foot
+    of a page. A long table may go on over the page, its header row repeated there;
+    the last variant stays with the notes under the table, which never split."""
+    heading = res.getprevious()
+    while heading is not None and not (heading.tag == qn("w:p") and _text(heading).strip()):
+        heading = heading.getprevious()
+    keep = []
+    el = heading if heading is not None and _text(heading).startswith("List of") else res
+    while el is not None and el is not res:
+        if el.tag == qn("w:p"):
+            keep.append(el)
+        el = el.getnext()
+    rows = res.findall(qn("w:tr"))
+    keep += [p for tr in (rows[:1] + rows[-1:]) for p in tr.iter(qn("w:p"))]
+    for p in keep:
+        Paragraph(p, None).paragraph_format.keep_with_next = True
+    tr_pr = rows[0].get_or_add_trPr()       # the header row again on the next page
+    if tr_pr.find(qn("w:tblHeader")) is None:
+        tr_pr.append(OxmlElement("w:tblHeader"))
+    note = res.getnext()
+    while note is not None and note.tag == qn("w:p") and not _text(note).strip():
+        note = note.getnext()
+    if note is not None and note.tag == qn("w:p"):
+        Paragraph(note, None).paragraph_format.keep_together = True
 
 
 def _remove_between(first, stop_prefixes: tuple[str, ...]) -> None:
@@ -808,8 +836,7 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
         _add_result_rows(doc, res, proto, group)
         if title.strip() and heading is not None and _text(heading).startswith("List of"):
             _set_text(heading, title.strip())
-        for p in [heading] + [p for tr in res.findall(qn("w:tr"))[:-1] for p in tr.iter(qn("w:p"))]:
-            Paragraph(p, None).paragraph_format.keep_with_next = True   # heading stays with its table
+        _keep_list_together(res)
 
     # -- the sample block: caption, table, abbreviation, evidence / OMIM paragraphs
     caption = interp.getprevious()
@@ -822,7 +849,6 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
             ("*genetic test results", "no other variant", "cnv findings")):
         after.append(el)
         el = el.getnext()
-    abbrev = next((p for p in after if _text(p).strip().startswith("Abbreviation:")), None)
     evidence = next((p for p in after if _text(p).strip().lstrip("#").lower().startswith("clinical")), None)
     omim = next((p for p in after if _text(p).strip().lower().startswith("omim phenotype")), None)
     ordered = [v for group in groups for v in group]
@@ -850,11 +876,15 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
             tbl.remove(tr)
         for tr in _interpretation_rows(doc, block_rows, v):
             tbl.append(tr)
-        parts = [cap, tbl] + ([copy.deepcopy(abbrev)] if abbrev is not None else [])
-        for proto, key in ((evidence, "evidence"), (omim, "omim_phenotype")):
+        parts = [cap, tbl]
+        for p in after:             # the template's lines under the table, blank ones included
+            key = "evidence" if p is evidence else "omim_phenotype" if p is omim else ""
+            if not key:
+                parts.append(copy.deepcopy(p))
+                continue
             text = vr.clean_narrative(v.get(key, ""))
-            if proto is not None and text:
-                para = copy.deepcopy(proto)
+            if text:                # an empty evidence / OMIM paragraph is left out
+                para = copy.deepcopy(p)
                 _set_para_tail(para, text)
                 if key == "omim_phenotype":
                     _link_omim_in_para(para, doc.part)
@@ -1701,7 +1731,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         # the classification rows get less padding than elsewhere.
         _tidy_classification_table(doc, pad=70)
         _result_tag_size(doc)
-        _title_size(doc)
+        if not cfg.own_styles:
+            _title_size(doc)
         _justify_section(doc, "Disclaimer")
     _space_after_tables(doc)
     _keep_headings_with_next(doc)
