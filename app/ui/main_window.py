@@ -16,8 +16,8 @@ import tempfile
 import traceback
 from datetime import datetime
 
-from PySide6.QtCore import QDate, QPoint, QSettings, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtCore import QDate, QPoint, QRect, QRectF, QSettings, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
@@ -453,6 +453,24 @@ OTHER_PLACEHOLDERS = {
     "specimen": "Type the specimen",
 }
 DATE_FIELDS = {"collection_date", "received_date", "report_date"}
+# The Patient & sample step shows these in two groups; the report date is
+# entered under Report details.
+PATIENT_GROUP = ("patient_id", "age", "gender", "referring_clinician", "hospital")
+SAMPLE_GROUP = ("sample_number", "specimen", "collection_date", "received_date")
+
+
+def class_colors(label: str) -> tuple[str, str, str] | None:
+    """(text, tint, border) colours for a classification, by severity."""
+    low = (label or "").strip().lower()
+    if low.startswith("pathogenic"):
+        return "#b91c1c", "#fef2f2", "#fca5a5"
+    if low.startswith("likely pathogenic"):
+        return "#b45309", "#fffbeb", "#fcd34d"
+    if "uncertain" in low or low.startswith("vus"):
+        return "#1d4ed8", "#eff6ff", "#93c5fd"
+    if low in ("benign", "likely benign"):
+        return "#166534", "#f0fdf4", "#86efac"
+    return None
 
 
 class GeneTableEditor(QWidget):
@@ -524,6 +542,122 @@ class GeneTableEditor(QWidget):
             self.paste()
         else:
             super().keyPressEvent(e)
+
+
+class StepTabBar(QTabBar):
+    """The report steps, drawn like the web app's: a numbered circle (a tick once
+    the step is complete), the step name and a status line under it; the open
+    step is tinted and underlined."""
+    CIRCLE = 28
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("steps")
+        self.setDrawBase(False)
+        self.setExpanding(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMouseTracking(True)
+        self._hover = -1
+        self._steps: dict[int, tuple[str, str, bool]] = {}    # index: (name, status, complete)
+        self.full_width = 0                 # the tab widget's width, set by StepTabs
+
+    def set_step(self, i: int, name: str, status: str, complete: bool):
+        self._steps[i] = (name, status, complete)
+        self.setTabText(i, name.replace("&", "&&"))     # && = a literal & in a tab's text
+        self.update()
+
+    def _fonts(self) -> tuple[QFont, QFont]:
+        name = QFont(self.font())
+        name.setBold(True)
+        status = QFont(self.font())
+        status.setPointSizeF(self.font().pointSizeF() - 1)
+        return name, status
+
+    def tabSizeHint(self, i: int) -> QSize:
+        name, status, _ = self._steps.get(i, (self.tabText(i), "", False))
+        f_name, f_status = self._fonts()
+        text = max(QFontMetrics(f_name).horizontalAdvance(name),
+                   QFontMetrics(f_status).horizontalAdvance(status))
+        shown = sum(1 for t in range(self.count()) if self.isTabVisible(t)) or 1
+        share = self.full_width // shown        # the steps share the panel's width
+        return QSize(max(12 + self.CIRCLE + 10 + text + 14, share), 58)
+
+    def minimumTabSizeHint(self, i: int) -> QSize:
+        return self.tabSizeHint(i)
+
+    def mouseMoveEvent(self, e):
+        hover = self.tabAt(e.position().toPoint())
+        if hover != self._hover:
+            self._hover = hover
+            self.update()
+        super().mouseMoveEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = -1
+        self.update()
+        super().leaveEvent(e)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(style.LINE), 1))
+        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        f_name, f_status = self._fonts()
+        for i in range(self.count()):
+            if not self.isTabVisible(i):
+                continue
+            r = self.tabRect(i)
+            name, status, complete = self._steps.get(i, (self.tabText(i), "", False))
+            active = i == self.currentIndex()
+            if active:
+                p.fillRect(r, QColor("#e6f1f3"))
+                p.fillRect(r.left(), r.bottom() - 2, r.width(), 3, QColor(style.ACCENT))
+            elif i == self._hover:
+                p.fillRect(r, QColor("#eef4f5"))
+            circle = QRectF(r.left() + 12, r.center().y() - self.CIRCLE / 2,
+                            self.CIRCLE, self.CIRCLE)
+            ring = style.ACCENT if complete or active else "#b8c7d0"
+            p.setPen(QPen(QColor(ring), 2))
+            p.setBrush(QColor(style.ACCENT if complete else style.SURFACE))
+            p.drawEllipse(circle.adjusted(1, 1, -1, -1))
+            p.setFont(f_name)
+            p.setPen(QColor("white" if complete else style.ACCENT if active else style.MUTED))
+            p.drawText(circle, Qt.AlignCenter, "✓" if complete else str(i + 1))
+            left = int(circle.right()) + 10
+            text_w = r.right() - left - 8
+            mid = r.center().y()
+            p.setPen(QColor(style.ACCENT if active else style.INK))
+            p.drawText(QRect(left, mid - 19, text_w, 20), Qt.AlignLeft | Qt.AlignBottom,
+                       QFontMetrics(f_name).elidedText(name, Qt.ElideRight, text_w))
+            p.setFont(f_status)
+            partial = not complete and status != "Not started"
+            p.setPen(QColor("#b45309" if partial else style.MUTED))
+            p.drawText(QRect(left, mid + 1, text_w, 18), Qt.AlignLeft | Qt.AlignTop,
+                       QFontMetrics(f_status).elidedText(status, Qt.ElideRight, text_w))
+        p.end()
+
+
+class StepTabs(QTabWidget):
+    """QTabWidget with the StepTabBar, its steps spread across the full width."""
+
+    def __init__(self):
+        super().__init__()
+        self.setTabBar(StepTabBar())
+
+    def resizeEvent(self, e):
+        bar = self.tabBar()
+        if bar.full_width != self.width():
+            bar.full_width = self.width()
+            bar.setElideMode(bar.elideMode())    # re-lay the tabs out at the new width
+        super().resizeEvent(e)
+
+    def tabInserted(self, index: int):
+        super().tabInserted(index)
+        self.tabBar().setElideMode(self.tabBar().elideMode())
+
+    def tabRemoved(self, index: int):
+        super().tabRemoved(index)
+        self.tabBar().setElideMode(self.tabBar().elideMode())
 
 
 class PreviewScroll(QScrollArea):
@@ -717,6 +851,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                   4: "Type the number before the sentence, e.g. 0.012; the wording can be edited too"}
     SEARCH_KEYS = ("gene", "variant", "protein", "zygosity", "exon", "inheritance",
                    "classification", "disease", "criteria", "frequency")
+    AUTO_TITLE = "Auto (from result)"    # the variant list heading follows the result
 
     def __init__(self):
         super().__init__()
@@ -758,6 +893,21 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_result.currentIndexChanged.connect(self._result_changed)
         rr.addWidget(self.f_result, 1)
         lay.addWidget(self.result_row)
+        self.primary_row = QWidget()        # the heading over the variant list (pathogenic templates)
+        pr = QHBoxLayout(self.primary_row)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pr.addWidget(QLabel("Variant list title:"))
+        self.f_primary_title = StableCombo()
+        self.f_primary_title.setEditable(True)          # pick one, or type another wording
+        self.f_primary_title.addItems([self.AUTO_TITLE, *variants_core.PRIMARY_TITLES])
+        self.f_primary_title.setToolTip("Heading over the variant list in the report; "
+                                        "Auto follows the result")
+        self.f_primary_title.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.f_primary_title.setMinimumContentsLength(12)
+        self.f_primary_title.currentTextChanged.connect(lambda *_: self.changed.emit())
+        pr.addWidget(self.f_primary_title, 1)
+        self.primary_row.setVisible(False)
+        lay.addWidget(self.primary_row)
         self.secondary_row = QWidget()      # the Secondary findings table's title
         sr = QHBoxLayout(self.secondary_row)
         sr.setContentsMargins(0, 0, 0, 0)
@@ -1018,8 +1168,14 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_class.blockSignals(True)
         self.f_class.clear()
         self.f_class.addItems(options)
+        for i, label in enumerate(options):     # each choice in its severity colour
+            colors = class_colors(label)
+            if colors:
+                self.f_class.setItemData(i, QColor(colors[0]), Qt.ForegroundRole)
+                self.f_class.setItemData(i, QColor(colors[1]), Qt.BackgroundRole)
         self.f_class.setCurrentText(v.get("classification", options[0]))
         self.f_class.blockSignals(False)
+        self._class_style()
         for key, edit in self.f_typed.items():
             edit.setText(v.get(key, ""))
         freq = self.f_typed["frequency"]
@@ -1144,6 +1300,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                     self.f_class.addItem(label)
                 self.f_class.setCurrentText(label)
                 self.f_class.blockSignals(False)
+                self._class_style()
         self.changed.emit()
 
     def result_tag(self) -> str:
@@ -1154,6 +1311,16 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_result.setCurrentIndex(max(0, self.f_result.findData(key or "")))
         self.f_result.blockSignals(False)
         self._result_changed_style()
+
+    def primary_title(self) -> str:
+        """The variant list heading; '' when it is Auto (follows the result)."""
+        text = self.f_primary_title.currentText().strip()
+        return "" if text == self.AUTO_TITLE else text
+
+    def set_primary_title(self, text: str):
+        self.f_primary_title.blockSignals(True)
+        self.f_primary_title.setCurrentText(text or self.AUTO_TITLE)
+        self.f_primary_title.blockSignals(False)
 
     def secondary_title(self) -> str:
         """The Secondary findings title; '' when it is the template's own."""
@@ -1171,9 +1338,17 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             self.changed.emit()
 
     def _classified(self, text: str):
+        self._class_style()
         if 0 <= self._current < len(self._variants):
             self._variants[self._current]["classification"] = text
             self.changed.emit()
+
+    def _class_style(self):
+        """The Classification box in its severity colour, on a light tint."""
+        colors = class_colors(self.f_class.currentText())
+        self.f_class.setStyleSheet(
+            f"QComboBox {{ color: {colors[0]}; font-weight: 700; background: {colors[1]};"
+            f" border: 1px solid {colors[2]}; }}" if colors else "")
 
     def _ticked(self, item):
         r = self.table.row(item)
@@ -1749,11 +1924,8 @@ class MainWindow(QMainWindow):
         patient_page, report_page = QWidget(), QWidget()
         play, rlay = QVBoxLayout(patient_page), QVBoxLayout(report_page)
 
-        pgrp = QGroupBox("Patient details")
-        pf = QFormLayout(pgrp)
-        pf.setVerticalSpacing(10)
-        pf.setHorizontalSpacing(14)
         self.fields: dict[str, QLineEdit | ChoiceBox | DateField] = {}
+        labels = {}
         for key, label, example in PATIENT_FIELDS:
             if key in PATIENT_CHOICES:     # dropdown + "Other" (typed by the user)
                 le = OtherChoiceBox(PATIENT_CHOICES[key], OTHER_PLACEHOLDERS[key])
@@ -1764,21 +1936,40 @@ class MainWindow(QMainWindow):
                 le.setPlaceholderText(example)
             le.textChanged.connect(self._edited)
             self.fields[key] = le
-            if key == "pin":
-                pf.addRow(label, self._pin_row(le))
-                self.fetch_status = QLabel()
-                self.fetch_status.setWordWrap(True)
-                pf.addRow("", self.fetch_status)
-                self._set_fetch_status(
-                    "" if sheet_client.is_configured() else
-                    "Patient sheet not set up - enter the details manually.", "gray")
-            else:
-                pf.addRow(label, le)
-            if key == "patient_id":
-                self.patient_id_label = pf.labelForField(le)
-        play.addWidget(pgrp)
+            labels[key] = label
+
+        def form_of(box: QWidget) -> QFormLayout:
+            f = QFormLayout(box)
+            f.setVerticalSpacing(10)
+            f.setHorizontalSpacing(14)
+            return f
+
+        # The PIN first: Fetch fills most of the step from the sample sheet.
+        pin_box = QGroupBox("PIN")
+        pf = form_of(pin_box)
+        pf.addRow(self._pin_row(self.fields["pin"]))
+        self.fetch_status = QLabel()
+        self.fetch_status.setWordWrap(True)
+        pf.addRow(self.fetch_status)
+        self._set_fetch_status(
+            "Fetching fills patient ID, age, gender, sample number and dates from the "
+            "sample sheet." if sheet_client.is_configured() else
+            "Patient sheet not set up - enter the details manually.", "gray")
+        play.addWidget(pin_box)
+        for title, keys in (("Patient", PATIENT_GROUP), ("Sample", SAMPLE_GROUP)):
+            grp = QGroupBox(title)
+            gf = form_of(grp)
+            for key in keys:
+                gf.addRow(labels[key], self.fields[key])
+            play.addWidget(grp)
+            if "patient_id" in keys:
+                self.patient_id_label = gf.labelForField(self.fields["patient_id"])
         self.fields["received_date"].textChanged.connect(self._received_changed)
         play.addStretch(1)
+
+        dgrp = QGroupBox("Report date")
+        form_of(dgrp).addRow(labels["report_date"], self.fields["report_date"])
+        rlay.addWidget(dgrp)
 
         hgrp = QGroupBox("Clinical history")
         hl = QVBoxLayout(hgrp)
@@ -1811,20 +2002,23 @@ class MainWindow(QMainWindow):
         ll.addWidget(self.url_edit)
         rlay.addWidget(lgrp)
 
-        self.tabs = QTabWidget()
+        self.tabs = StepTabs()
         self.tabs.setObjectName("innerTabs")
-        self.tabs.tabBar().setExpanding(True)     # tabs share the full width evenly
-        self.tabs.tabBar().setDrawBase(False)
-        self.tabs.addTab(self._scroll_page(patient_page), "Patient Details")
-        self.tabs.addTab(self._scroll_page(report_page), "Report Details")
+        self.tabs.addTab(self._scroll_page(patient_page), "")
+        self.tabs.addTab(self._scroll_page(report_page), "")
         self.gene_editor = GeneTableEditor()
         self.gene_editor.changed.connect(self._edited)
-        self.tabs.addTab(self.gene_editor, "Gene Coverage")
+        self.tabs.addTab(self.gene_editor, "")
         # Variants: only for templates with the variant tables (CMC - Pathogenic).
         self.variants_panel = VariantsPanel()
         self.variants_panel.changed.connect(self._edited)
         self.variants_panel.upload_requested.connect(self._upload_variants)
-        self._variants_tab = self.tabs.addTab(self.variants_panel, "Variants")
+        self._variants_tab = self.tabs.addTab(self.variants_panel, "")
+        # Tabs are numbered steps showing what is left; a step's empty required
+        # fields are outlined once the user has moved on from it.
+        self._step_tab = self.tabs.currentIndex()
+        self._steps_left: set[int] = set()
+        self.tabs.currentChanged.connect(self._step_changed)
         # Manual entry and bulk upload are separate tabs.
         self.bulk_panel = BulkPanel()
         self.bulk_panel.shown.connect(self._bulk_show)
@@ -1904,6 +2098,9 @@ class MainWindow(QMainWindow):
         self.preview_status = QLabel()
         self.preview_status.setObjectName("hint")
         bar.addWidget(self.preview_status, 1)
+        self.result_badge = QLabel()        # the result picked in the Variants step
+        self.result_badge.hide()
+        bar.addWidget(self.result_badge)
         pl.addLayout(bar)
         self.scroll = PreviewScroll()
         self.scroll.setWidgetResizable(True)
@@ -1939,11 +2136,77 @@ class MainWindow(QMainWindow):
             variants=self.variants_panel.variants(),
             result_tag=self.variants_panel.result_tag(),
             secondary_title=self.variants_panel.secondary_title(),
+            primary_title=(self.variants_panel.primary_title()
+                           if not self.variants_panel.primary_row.isHidden() else ""),
         )
 
     def _edited(self, *_):
+        self._update_steps()
         if not self._preview_timer.isActive():
             self._preview_timer.start()
+
+    # -- steps -------------------------------------------------------------
+    STEP_NAMES = ("Patient & sample", "Report details", "Gene coverage", "Variants")
+    RESULT_BADGES = {"pathogenic": "Pathogenic", "likely": "Likely Pathogenic",
+                     "vus_related": "VUS"}
+
+    def _required(self, step: int) -> list[tuple[QWidget, str]]:
+        """A step's required boxes and their text: (the box to outline, text)."""
+        if step == 0:
+            keys = PATIENT_GROUP + SAMPLE_GROUP
+        elif step == 1:
+            keys = ("report_date",)
+        else:
+            return []
+        out = []
+        for key in keys:
+            le = self.fields[key]
+            out.append((le.edit if isinstance(le, DateField) else le, le.text().strip()))
+        if step == 1:
+            out += [(self.history_edit, self.history_edit.toPlainText().strip()),
+                    (self.reads_edit, self.reads_edit.text().strip()),
+                    (self.q30_edit, self.q30_edit.text().strip())]
+        return out
+
+    def _step_state(self, step: int) -> tuple[bool, str]:
+        """(complete, status line) of a step."""
+        if step in (0, 1):
+            req = self._required(step)
+            missing = sum(1 for _, text in req if not text)
+            return (not missing, "Complete" if not missing else "Not started"
+                    if missing == len(req) else f"{missing} of {len(req)} left")
+        if step == 2:
+            n = len(self.gene_editor.genes())
+            return n > 0, f"{n} gene{'s' if n != 1 else ''}" if n else "Not started"
+        variants = self.variants_panel.variants()
+        n = sum(1 for v in variants if v.get("selected"))
+        return n > 0, f"{n} selected" if variants else "Not started"
+
+    def _update_steps(self):
+        for i, name in enumerate(self.STEP_NAMES):
+            done, status = self._step_state(i)
+            self.tabs.tabBar().set_step(i, name, status, done)
+        for step in (0, 1):
+            outline = step in self._steps_left
+            for box, text in self._required(step):
+                missing = outline and not text
+                if bool(box.property("missing")) != missing:
+                    box.setProperty("missing", missing)
+                    box.style().unpolish(box)
+                    box.style().polish(box)
+        key = self.variants_panel.result_tag() if self.tabs.isTabVisible(self._variants_tab) else ""
+        color = VariantsPanel.RESULT_COLORS.get(key)
+        self.result_badge.setVisible(bool(color))
+        if color:
+            self.result_badge.setText(self.RESULT_BADGES[key])
+            self.result_badge.setStyleSheet(
+                f"color: {color}; background: {VariantsPanel.RESULT_TINTS[key]}; border: 1.5px solid"
+                f" {color}; border-radius: 10px; padding: 3px 12px; font-weight: 700;")
+
+    def _step_changed(self, index: int):
+        self._steps_left.add(self._step_tab)        # outline what it left empty
+        self._step_tab = index
+        self._update_steps()
 
     def _template_changed(self, *_):
         """Pre-fill the chosen template's Hospital/Clinic, Referring Clinician
@@ -1973,6 +2236,7 @@ class MainWindow(QMainWindow):
         if not current or current == self._template_genes:
             self.gene_editor.set_genes(genes, "Showing the template's gene table.")
         self._template_genes = genes
+        self._update_steps()
         self._preview()
 
     def _set_actions_shown(self, shown: bool):
@@ -1982,12 +2246,14 @@ class MainWindow(QMainWindow):
         self.settings.setValue("actions_shown", "true" if shown else "false")
 
     def _show_variants_tab(self, on: bool):
-        self.variants_panel.secondary_separate = get_template(
-            self.template_combo.currentData()).secondary_findings
+        cfg = get_template(self.template_combo.currentData())
+        self.variants_panel.secondary_separate = cfg.secondary_findings
         self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
+        self.variants_panel.primary_row.setVisible(cfg.pathogenic)
         self.tabs.setTabVisible(self._variants_tab, on)
         if not on and self.tabs.currentIndex() == self._variants_tab:
             self.tabs.setCurrentIndex(0)
+        self._update_steps()
 
     def _upload_variants(self, path: str = ""):
         """Pick the listed-variants Excel: its variants are listed in the
@@ -2194,6 +2460,8 @@ class MainWindow(QMainWindow):
         self.variants_panel.set_variants(data.variants)
         self.variants_panel.set_result_tag(data.result_tag)
         self.variants_panel.set_secondary_title(data.secondary_title)
+        self.variants_panel.set_primary_title(data.primary_title)
+        self._update_steps()
         self._preview()
 
     def _load_bulk_draft(self, reports: list):

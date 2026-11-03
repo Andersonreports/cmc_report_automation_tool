@@ -113,6 +113,8 @@ QLineEdit, QPlainTextEdit, QComboBox {{ background: {SURFACE}; border: 1px solid
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{ border: 2px solid {ACCENT}; padding: 6px 9px; }}
 QLineEdit:read-only {{ background: #eef3fa; color: #4b5563; }}
 QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover {{ border: 1px solid #8fb4bc; }}
+QLineEdit[missing="true"], QPlainTextEdit[missing="true"], QComboBox[missing="true"] {{
+    border: 1.5px solid #e0a25a; background: #fffaf2; }}
 QComboBox {{ padding-right: 30px; combobox-popup: 0; }}
 QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right;
     width: 28px; border: none; }}
@@ -153,6 +155,8 @@ QTabBar::tab {{ background: #e1eced; color: #475569; padding: 8px 20px; margin: 
 QTabBar::tab:selected {{ color: white;
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1b6377, stop:1 #0f4c5c); }}
 QTabBar::tab:hover:!selected {{ background: #cfe2e4; color: {ACCENT}; }}
+QTabBar#steps::tab, QTabBar#steps::tab:selected, QTabBar#steps::tab:hover {{
+    background: transparent; border: none; margin: 0; padding: 0; }}
 
 QGroupBox {{ background: {SURFACE}; border: 1px solid #dbe5f1; border-radius: 12px;
     margin-top: 24px; padding: 16px 12px 12px 12px; }}

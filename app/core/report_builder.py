@@ -11,7 +11,9 @@ the report re-rendered with that section starting a new page.
 """
 from __future__ import annotations
 
+import atexit
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -120,44 +122,97 @@ def _via_libreoffice(soffice: str, docx_path: str, out_dir: str) -> None:
             raise ReportBuildError("PDF conversion timed out") from e
 
 
-# Persistent Word COM instance — kept alive between preview calls so
-# each conversion doesn't pay the Word startup cost (~2 s).
-_word_app = None
+class _WordThread:
+    """Microsoft Word kept open between conversions, so only the first pays its
+    start-up (~2 s). A COM object can only be used from the thread that made
+    it, and previews / exports / web requests each run on a thread of their
+    own, so one thread owns Word and every conversion is handed to it. Word is
+    a private instance (never the user's open Word) and quits at exit."""
 
+    def __init__(self):
+        self._jobs: queue.Queue = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._start = threading.Lock()
 
-def _get_word():
-    global _word_app
-    try:
+    def call(self, fn):
+        """Run fn(word) on the Word thread and return its result."""
+        with self._start:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._loop, name="word-pdf", daemon=True)
+                self._thread.start()
+        done, box = threading.Event(), {}
+        self._jobs.put((fn, done, box))
+        done.wait()
+        if "error" in box:
+            raise box["error"]
+        return box.get("result")
+
+    def _loop(self):
         import pythoncom
-        from win32com.client import Dispatch
+        from win32com.client import DispatchEx
         pythoncom.CoInitialize()
-        if _word_app is None:
-            _word_app = Dispatch("Word.Application")
-            _word_app.DisplayAlerts = 0
-            _word_app.Visible = False
-        return _word_app
-    except Exception:
-        _word_app = None
-        raise
+        word, stopped = None, None
+        try:
+            while True:
+                fn, done, box = self._jobs.get()
+                if fn is None:                      # quit(): answered once Word has closed
+                    stopped = done
+                    return
+                try:
+                    if word is None:
+                        word = DispatchEx("Word.Application")
+                        word.Visible = False
+                        word.DisplayAlerts = 0
+                    box["result"] = fn(word)
+                except Exception as e:  # noqa: BLE001 - re-raised in call()
+                    box["error"] = e
+                    try:                            # Word may have died: start afresh next time
+                        word.Quit()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    word = None
+                finally:
+                    done.set()
+        finally:
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:  # noqa: BLE001
+                    pass
+            pythoncom.CoUninitialize()
+            if stopped is not None:
+                stopped.set()
+
+    def quit(self, timeout: float = 15):
+        if self._thread is not None and self._thread.is_alive():
+            done = threading.Event()
+            self._jobs.put((None, done, {}))
+            done.wait(timeout)
+
+
+_WORD = _WordThread()
+atexit.register(_WORD.quit)
 
 
 def _via_word(docx_path: str, pdf_path: str) -> None:
     try:
-        import pythoncom
-        from win32com.client import Dispatch
+        import pythoncom  # noqa: F401 - only checks pywin32 is there
+        import win32com.client  # noqa: F401
     except ImportError as e:
         raise ReportBuildError(
             "No PDF converter found: install LibreOffice or Microsoft Word.") from e
+
+    def convert(word):
+        doc = word.Documents.Open(os.path.abspath(docx_path), False, True)
+        try:
+            doc.ExportAsFixedFormat(os.path.abspath(pdf_path), 17)   # 17 = PDF
+        finally:
+            doc.Close(False)
+
     with _LOCK:
         try:
-            word = _get_word()
-            doc = word.Documents.Open(os.path.abspath(docx_path), False, True)
-            doc.ExportAsFixedFormat(os.path.abspath(pdf_path), 17)   # 17 = PDF
-            doc.Close(False)
-        except Exception as e:
-            global _word_app
-            # If the persistent instance died, clear it so next call recreates it
-            _word_app = None
+            _WORD.call(convert)
+        except Exception as e:  # noqa: BLE001
             raise ReportBuildError(f"Word PDF conversion failed: {e}") from e
 
 
