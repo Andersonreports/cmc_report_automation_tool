@@ -212,12 +212,13 @@ TEMPLATES: dict[str, TemplateConfig] = {
         reviewer="SARATH",
         patient_sheet="WES",
     ),
-    # Trial: the WES, CMC - Pathogenic and WES - Incidental reports as one template;
-    # the Result option picks the layout and the other options its details.
+    # Trial: the WES reports (no pathogenic / pathogenic / incidental) as one template;
+    # the Result option picks the layout and the other options its details. It has
+    # its own .docx files: nothing is shared with the CMC templates.
     "WES_ALL": TemplateConfig(
         key="WES_ALL",
         name="Whole Exome Sequencing - All results (trial)",
-        docx_file="endocrinology.docx",
+        docx_file="wes_no_pathogenic.docx",
         patient_id_label="Patient name",
         specimen="Peripheral Blood",
         patient_sheet="WES",
@@ -247,10 +248,10 @@ OPTIONS: dict[str, tuple[str, list[tuple[str, str]]]] = {
 # What each Result brings: its layout (TemplateConfig fields) and the options'
 # starting values, as the lab's existing WES / CMC - Pathogenic / Incidental reports.
 RESULT_DEFAULTS: dict[str, tuple[dict, dict]] = {
-    "none": (dict(docx_file="endocrinology.docx"),
+    "none": (dict(docx_file="wes_no_pathogenic.docx"),
              dict(interpretation="no", parents="no", hospital="yes",
                   file_suffix="whole_exome_report", reviewer="ROBERT")),
-    "pathogenic": (dict(docx_file="whole_exome_patho.docx", variants=True, pathogenic=True),
+    "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
                    dict(interpretation="yes", parents="yes", hospital="yes",
                         file_suffix="whole_exome_report", reviewer="ROBERT")),
     "incidental": (dict(docx_file="whole_exome_incidental.docx", variants=True, pathogenic=True,
