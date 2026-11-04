@@ -994,6 +994,11 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         gr.addWidget(self.f_strand)
         dl.addRow("Gene:", gene_row)
         dl.addRow("Variant:", self.f_variant)
+        region = QLineEdit()                # "Exon 14": the Excel can list one exon per transcript
+        region.setToolTip("As the report shows it, e.g. Exon 14; filled from the Excel's exon(s)")
+        region.textEdited.connect(lambda text: self._typed("region", text))
+        self.f_typed["region"] = region
+        dl.addRow("Region:", region)
         dl.addRow("Report table:", self.f_table)
         dl.addRow("Classification:", self.f_class)
         omim_tip = ("OMIM number(s) shown as (OMIM#id); the Excel lists every phenotype of "
@@ -1209,6 +1214,8 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             self.detail_form.setRowVisible(edit, key in shown)
         if not v.get("genomic_position"):       # show the built value so it can be edited
             self.f_typed["genomic_position"].setText(variants_core.genomic_text(v))
+        if not v.get("region"):
+            self.f_typed["region"].setText(variants_core.region(v))
         opts = v.get("omim_options", "")
         self.f_typed["omim_id"].setPlaceholderText(f"Sheet has: {opts}" if opts else "")
 

@@ -115,6 +115,15 @@ TEMPLATES: dict[str, TemplateConfig] = {
         specimen="Peripheral Blood",
         patient_sheet="WES",
     ),
+    # Clinical Exome Sequencing with no pathogenic variant: the Endocrinology layout,
+    # "clinical exome" in the title and Methodology, as the lab's G Shivananda report.
+    "CLINICAL_EXOME": TemplateConfig(
+        key="CLINICAL_EXOME",
+        name="Clinical Exome Sequencing",
+        docx_file="clinical_exome.docx",
+        patient_id_label="Patient name",
+        file_suffix="Clinical_Exome_Report",
+    ),
     # Endocrinology layout with a pathogenic result: red result line, variant
     # list, a Variant Interpretation page and the parents-testing recommendation.
     # The variant tables hold the sample variant and are edited in the .docx.

@@ -198,26 +198,11 @@ def template_gene_list_url(template_key: str) -> str:
         return ""
 
 
-# Methodology opening per specimen: (template text, replacement). DNA keeps
-# the template wording as is.
-METHODOLOGY_OPENING = {
-    "Peripheral Blood": (
-        "DNA was used to perform whole exome using whole exome capture kit .The",
-        "DNA extracted from the Peripheral Blood was used to perform whole exome "
-        "using whole exome capture kit. The"),
-    "Amniotic fluid": (
-        "DNA was used to perform whole exome using whole exome capture kit .The",
-        "DNA extracted from the Amniotic fluid was used to perform whole exome "
-        "using whole exome capture kit. The"),
-    "CVS": (
-        "DNA was used to perform whole exome using whole exome capture kit .The",
-        "DNA extracted from the CVS was used to perform whole exome "
-        "using whole exome capture kit. The"),
-    "Product Of Conception": (
-        "DNA was used to perform whole exome using whole exome capture kit .The",
-        "DNA extracted from the Product Of Conception was used to perform whole exome "
-        "using whole exome capture kit. The"),
-}
+# Specimens named in the Methodology opening: "DNA was used to perform whole exome
+# using whole exome capture kit .The" becomes "DNA extracted from the <specimen>
+# was used to perform whole exome using whole exome capture kit. The" (or clinical
+# exome, as the template says). DNA keeps the template wording as is.
+METHODOLOGY_SPECIMENS = ("Peripheral Blood", "Amniotic fluid", "CVS", "Product Of Conception")
 
 # Specimens that require the PCPNDT notice in the report.
 _PCPNDT_SPECIMENS = frozenset({"Amniotic fluid", "CVS", "Product Of Conception"})
@@ -417,9 +402,15 @@ def _insert_sentence_to_disclaimer(doc, sentence: str):
 
 
 def _fill_methodology(doc, data: ReportData):
-    swap = METHODOLOGY_OPENING.get(data.patient.specimen.strip())
-    if swap:
-        _replace_in_para(_gene_list_link(doc).getparent(), *swap)
+    specimen = data.patient.specimen.strip()
+    if specimen in METHODOLOGY_SPECIMENS:
+        para = _gene_list_link(doc).getparent()
+        for kind in ("whole", "clinical"):
+            if _replace_in_para(
+                    para, f"DNA was used to perform {kind} exome using {kind} exome capture kit .The",
+                    f"DNA extracted from the {specimen} was used to perform {kind} exome "
+                    f"using {kind} exome capture kit. The"):
+                break
     _adjust_secondary_sentence(doc, data)
 
 
@@ -601,10 +592,30 @@ _BANNER = "Pathogenic variant related to the given phenotype was identified"
 OMIM_URL = "https://www.omim.org/entry/{}"
 
 
+def _set_disease_cell(tc, lines: list[str]) -> None:
+    """A Disease or Disorder cell: one paragraph per line, a disease in the style of
+    the template's first paragraph and an '(OMIM#...)' line in that of its last
+    (bold), whatever order and count the lines come in."""
+    paras = tc.findall(qn("w:p"))
+    text_proto, omim_proto = copy.deepcopy(paras[0]), copy.deepcopy(paras[-1])
+    anchor = paras[0]
+    for line in lines:
+        p = copy.deepcopy(omim_proto if line.startswith("(OMIM#") else text_proto)
+        _set_text(p, line)
+        anchor.addnext(p)
+        anchor = p
+    for p in paras:
+        tc.remove(p)
+
+
 def _link_omim(tc, part) -> None:
-    """The '(OMIM#id, id)' line of a Disease cell: each number a hyperlink to its
+    """Every '(OMIM#id, id)' line of a Disease cell: each number a hyperlink to its
     OMIM entry (blue, underlined), the rest as in the template."""
-    p = tc.findall(qn("w:p"))[-1]
+    for p in tc.findall(qn("w:p")):
+        _link_omim_line(p, part)
+
+
+def _link_omim_line(p, part) -> None:
     m = re.fullmatch(r"\(OMIM#([\d,\s]+)\)", _text(p).strip())
     runs = _runs(p)
     if not m or not runs:
@@ -958,8 +969,8 @@ def _add_result_rows(doc, res, proto, chosen: list[dict]) -> None:
         if crit:                    # the criteria go under the classification, bold black
             cells[-1].append(crit if crit.startswith("(") else f"({crit})")
         tcs_row = tr.findall(qn("w:tc"))
-        for tc, lines in zip(tcs_row, cells):
-            _set_cell_lines(tc, lines)
+        for n, (tc, lines) in enumerate(zip(tcs_row, cells)):
+            (_set_disease_cell if n == 4 else _set_cell_lines)(tc, lines)
         _cell_no_wrap(tcs_row[0])   # Gene column — never wrap the gene name
         _color_class(tcs_row[-1], v)
         _link_omim(tcs_row[4], doc.part)
@@ -980,12 +991,12 @@ def _interpretation_rows(doc, block, v) -> list:
     pos1, pos2 = vr.genomic_position(v)
     trs = [copy.deepcopy(r) for r in block]
     tcs = [r.findall(qn("w:tc")) for r in trs]
-    for tc, lines in zip(tcs[1], [
+    for n, (tc, lines) in enumerate(zip(tcs[1], [
             [v["gene"]] + ([f"({v['strand']})"] if v.get("strand") else []),
             [v["variant"]] + ([f"({v['protein']})"] if v.get("protein") else []),
             vr.inheritance(v), vr.disease_lines(v),
-            [v.get("criteria", "").strip() or "-"], [vr.class_display(v)]]):
-        _set_cell_lines(tc, lines)
+            [v.get("criteria", "").strip() or "-"], [vr.class_display(v)]])):
+        (_set_disease_cell if n == 3 else _set_cell_lines)(tc, lines)
     _color_class(tcs[1][-1], v)
     _link_omim(tcs[1][3], doc.part)
     for tc, lines in zip(tcs[3], [

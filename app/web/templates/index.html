@@ -1312,6 +1312,8 @@ function buildVariantDetailHTML(v, defs, idx) {
       <option value="-" ${v.strand==='-'?'selected':''}>- strand</option>
     </select></div>`;
   html += `<div class="detail-row"><label>Variant</label><div class="detail-readonly">${escHtml(v.variant||'')}</div></div>`;
+  html += field('region', 'Region:', v.region || (defs && defs.region) || '', false,
+                "As the report shows it, e.g. Exon 14; filled from the Excel's exon(s)");
   // Which table of the report it goes in (templates with a Secondary findings table)
   if (hasSecondaryTable()) {
     const sec = isSecondary(v);

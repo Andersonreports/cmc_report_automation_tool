@@ -96,7 +96,7 @@ def read_variants(path: str) -> list[dict]:
                 v["strand"] = m.group(1)
                 v["gene"] = re.sub(r"\s*\(\s*[+\-]\s*\)", "", gene_raw).strip()
         v["section"], v["selected"] = section, False
-        for typed in ("disease", "criteria", "frequency", "evidence", "omim_phenotype",
+        for typed in ("disease", "criteria", "frequency", "evidence", "omim_phenotype", "region",
                       "clinvar_link", "pubmed_link"):    # typed by the user in the app
             v.setdefault(typed, "")
         v["classification"] = (classification_options(v) or [""])[0]
@@ -283,6 +283,8 @@ PRIMARY_TITLES = (
     "List of pathogenic variant(s) identified related to the phenotype:",
     "List of likely pathogenic variant(s) identified related to the phenotype:",
     "List of uncertain significant variant(s) identified related to the phenotype:",
+    "List of additional significant variant(s) identified:",
+    "List of Incidental significant variant(s) identified:",
 )
 
 
@@ -323,23 +325,46 @@ def inheritance(v: dict) -> list[str]:
         if p and "somatic" not in p.lower() and p.upper() not in [q.upper() for q in parts]:
             parts.append(p)
     lines = []
-    for p in parts:
-        label = _INHERITANCE.get(p.upper(), p)
-        lines.extend(label.split())   # "Autosomal Dominant" → ["Autosomal", "Dominant"]
+    for n, p in enumerate(parts):
+        words = _INHERITANCE.get(p.upper(), p).split()  # "Autosomal Dominant" → 2 lines
+        if n < len(parts) - 1:
+            words[-1] += "/"            # "Autosomal Dominant/ Autosomal Recessive", as the lab writes it
+        lines.extend(words)
     return lines or ["-"]
 
 
 def disease_lines(v: dict) -> list[str]:
-    """Disease or Disorder cell: the text the user typed (e.g. '{Breast-ovarian
-    cancer, familial, 2}'), then the sheet's OMIM id as '(OMIM#612555)'."""
-    lines = [v.get("disease", "").strip()]
-    omim = v.get("omim_id", "").strip()
-    if omim:
-        lines.append(f"(OMIM#{omim})")
-    return [ln for ln in lines if ln] or ["-"]
+    """Disease or Disorder cell, as in the lab's reports: each disease the user typed
+    (separated by ';', e.g. '{Breast-ovarian cancer, familial, 2}') on its own line
+    with its own OMIM number(s) under it as '(OMIM#612555)'. Numbers that match no
+    typed disease go on a last line; text that matches none stays as one line."""
+    disease = v.get("disease", "").strip()
+    chosen = [i for i in re.split(r"[,\s]+", v.get("omim_id", "")) if i]
+    if not disease:
+        return [f"(OMIM#{', '.join(chosen)})"] if chosen else ["-"]
+    names = [(i.strip(), _disease_name(t)) for i, t in
+             zip(v.get("omim_options", "").split(","), v.get("omim_titles", "").split("|")) if t]
+    parts = [p.strip() for p in disease.split(";") if p.strip()]
+    lines, used = [], []
+    for part in parts:
+        ids = [i for i in chosen if i not in used and any(
+            n == i and name and name in part for n, name in names)]
+        used += ids
+        lines.append(part)
+        if ids:
+            lines.append(f"(OMIM#{', '.join(ids)})")
+    if not used:                    # typed freely: one line, every number under it
+        return [disease] + ([f"(OMIM#{', '.join(chosen)})"] if chosen else [])
+    rest = [i for i in chosen if i not in used]
+    if rest:
+        lines.append(f"(OMIM#{', '.join(rest)})")
+    return lines
 
 
 def region(v: dict) -> str:
+    """The Region cell: what the user typed, else 'Exon <the Excel's exon(s)>'."""
+    if v.get("region", "").strip():
+        return v["region"].strip()
     exon = v.get("exon", "")
     if exon:
         return f"Exon {exon}"

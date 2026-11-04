@@ -495,6 +495,7 @@ def api_variant_defaults():
         "classification_options": opts,
         "frequency_default": variants_core.default_frequency(v),
         "genomic_text": variants_core.genomic_text(v),
+        "region": variants_core.region(v),
         "suggested_disease": variants_core.suggested_disease(v),
         "suggested_inheritance": variants_core.suggested_inheritance(v),
         "suggested_evidence": variants_core.suggested_evidence(v),
