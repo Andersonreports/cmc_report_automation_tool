@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from ..config.templates import get_template
+from ..config.templates import effective, get_template
 from . import sheet_client
 from .models import PatientInfo, ReportData
 
@@ -174,7 +174,7 @@ def file_name_part(text: str) -> str:
 
 
 def file_stem(data: ReportData) -> str:
-    cfg = get_template(data.template_key)
+    cfg = effective(data.template_key, data.options)
     date = data.patient.report_date or datetime.now().strftime("%d/%m/%Y")
     return "_".join(filter(None, (file_name_part(data.patient.patient_id) or "report",
                                   cfg.file_suffix, date.replace("/", cfg.file_date_sep))))

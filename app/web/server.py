@@ -15,7 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from ..config.templates import DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, get_template
+from ..config.templates import (DEFAULT_TEMPLATE, OPTIONS, REVIEWERS, TEMPLATES, effective,
+                                get_template, option_values)
 from ..core import bulk, gnomad, ocr, sheet_client
 from ..core import variants as variants_core
 from ..core.docx_renderer import template_gene_list_url, template_gene_table
@@ -88,7 +89,13 @@ def api_init():
 
 @app.route("/api/template-info/<key>")
 def api_template_info(key):
-    cfg = get_template(key)
+    # An options template's layout follows the chosen options (?options=<json>).
+    try:
+        chosen = json.loads(request.args.get("options") or "{}")
+    except ValueError:
+        chosen = {}
+    cfg = effective(key, chosen if isinstance(chosen, dict) else {})
+    values = option_values(key, chosen if isinstance(chosen, dict) else {})
     genes = template_gene_table(key)
     try:
         url = template_gene_list_url(key)
@@ -103,6 +110,8 @@ def api_template_info(key):
         "patient_id_label": cfg.patient_id_label,
         "patient_id_prefix": cfg.patient_id_prefix or "",
         "genes": genes, "gene_list_url": url,
+        "options": [{"key": k, "label": label, "choices": choices, "value": values[k]}
+                    for k, (label, choices) in OPTIONS.items()] if values else [],
     })
 
 

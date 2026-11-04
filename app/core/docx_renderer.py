@@ -32,7 +32,7 @@ from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE as _RT
 from docx.text.paragraph import Paragraph
 
-from ..config.templates import REVIEWERS, get_template
+from ..config.templates import REVIEWERS, effective, get_template, option_values
 from .models import ReportData
 from .os_utils import resource_path
 
@@ -114,7 +114,7 @@ def _fill_patient(doc, data: ReportData):
     """Each box of the table is filled by its label, so templates may arrange
     the boxes differently or leave some out (e.g. no Hospital/Clinic)."""
     table = _find_table(doc, "Patient", "patient details table")
-    id_label = get_template(data.template_key).patient_id_label
+    id_label = _cfg(data).patient_id_label
     attrs = {label: attr for _, _, label, attr in PATIENT_CELLS}
     attrs["Patient name"] = "patient_id"
     for row in table.rows:
@@ -126,7 +126,7 @@ def _fill_patient(doc, data: ReportData):
             label = id_label if attr == "patient_id" else _text(p).split(":")[0].strip()
             value = (getattr(data.patient, attr, "") or "").strip()
             _set_text(p, f"{label}: {value}")
-    if get_template(data.template_key).own_styles:
+    if _cfg(data).own_styles:
         return                      # the template's own padding and indents stay
     # No paragraph indentation or spacing inside the demography table; the gap
     # to the cell borders comes from the table's cell margins instead, so the
@@ -338,8 +338,7 @@ def _adjust_secondary_sentence(doc, data: ReportData):
       - No secondary variants → sentence moves to Disclaimer.
     For all other templates the sentence is left exactly as in the template.
     Also removes the duplicate 'Gene list used in the assay.' that precedes it."""
-    from ..config.templates import get_template as _get_tpl
-    cfg = _get_tpl(data.template_key)
+    cfg = _cfg(data)
 
     # Find the paragraph that actually contains the secondary-findings sentence.
     p = _para_containing(doc, "Incidental or secondary findings")
@@ -723,9 +722,9 @@ def _fill_variants(doc, data: ReportData):
     the Excel's Secondary Findings variants in the second set; the second set is
     removed when none of them is ticked."""
     chosen = [v for v in data.variants if v.get("selected")]
-    if not data.variants or not get_template(data.template_key).variants:
+    if not data.variants or not _cfg(data).variants:
         return                      # no Excel uploaded: the template's sample stays
-    if get_template(data.template_key).variant_captions:
+    if _cfg(data).variant_captions:
         _fill_captioned_variants(doc, data, chosen)
         return
     sets = _variant_sets(doc)
@@ -823,7 +822,7 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
     'Variant N', its table, the abbreviation line, its evidence and OMIM paragraphs.
     The template holds one sample row per list and one sample block."""
     from . import variants as vr
-    cfg = get_template(data.template_key)
+    cfg = _cfg(data)
     gene_tables = [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]
     lists = [t for t in gene_tables if len(t.findall(qn("w:tr"))) < 8]
     interp = next(t for t in gene_tables if len(t.findall(qn("w:tr"))) >= 8)
@@ -927,7 +926,7 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
         _drop_interpretation(doc, tbl, whole_doc)
         return
     mode = vr.report_mode(chosen, data.result_tag)
-    fixed = get_template(data.template_key).fixed_result
+    fixed = _cfg(data).fixed_result
     if banner:                      # the result line and its wording are the primary set's
         if not fixed:               # else the template's own result line stays
             _set_banner(doc, mode)
@@ -1624,7 +1623,7 @@ def _fill_signatures(doc, data: ReportData):
     """Put the chosen clinical reviewer's signature block in place of the
     template's: the first picture after "This report has been reviewed and
     approved by". It keeps the template's width; the height follows the image."""
-    reviewer = REVIEWERS.get(data.reviewer or get_template(data.template_key).reviewer)
+    reviewer = REVIEWERS.get(data.reviewer or _cfg(data).reviewer)
     if reviewer is None:
         return
     body = list(doc.element.body.iterchildren(qn("w:p")))
@@ -1708,24 +1707,114 @@ def _drop_analysis_word(doc):
             t.text = t.text.replace("Sequencing Analysis", "Sequencing").rstrip() or t.text
 
 
+def _cfg(data: ReportData):
+    """The report's template, with an options template's layout resolved."""
+    return effective(data.template_key, data.options)
+
+
+# The patient table's boxes (row by row, left / right) with and without the
+# Hospital/Clinic box, as the lab's reports lay them out.
+_PATIENT_LAYOUTS = {
+    True: [("Patient name", "PIN"), ("Age", "Gender"), ("Hospital/Clinic", "Sample Number"),
+           ("Referring Clinician", "Sample Collection Date"), ("Specimen", "Sample Received Date"),
+           ("", "Report Date")],
+    False: [("Patient name", "PIN"), ("Age", "Gender"), ("Referring Clinician", "Sample Number"),
+            ("Specimen", "Sample Collection Date"), ("Report Date", "Sample Received Date")],
+}
+
+PARENTS_RECOMMENDATION = ("Sequencing the variant(s) in the parents and the other affected and "
+                          "unaffected members of the family is recommended to confirm the significance.")
+
+
+def _patient_layout(doc, hospital: bool) -> None:
+    """Relabel the patient table's boxes for the chosen layout (with or without the
+    Hospital/Clinic box), adding or removing its last row; _fill_patient then fills
+    them by label."""
+    tbl = _find_table(doc, "Patient", "patient details table")._tbl
+    layout = _PATIENT_LAYOUTS[hospital]
+    rows = tbl.findall(qn("w:tr"))
+    while len(rows) < len(layout):
+        rows[-1].addnext(copy.deepcopy(rows[-1]))
+        rows = tbl.findall(qn("w:tr"))
+    for tr in rows[len(layout):]:
+        tbl.remove(tr)
+    for tr, labels in zip(tbl.findall(qn("w:tr")), layout):
+        for tc, label in zip(tr.findall(qn("w:tc")), labels):
+            paras = tc.findall(qn("w:p"))
+            for p in paras[1:]:
+                tc.remove(p)
+            _set_text(paras[0], f"{label}: XX" if label else "")
+
+
+def _drop_interpretation_section(doc) -> None:
+    """No Variant Interpretation page: remove its heading, tables, evidence and the
+    notes repeated under it, up to the blank lines before 'CNV Findings'."""
+    head = next((p for p in doc.element.body.iterchildren(qn("w:p"))
+                 if _text(p).strip().lower() == "variant interpretation"), None)
+    if head is None:
+        return
+    end = _find_para(doc, "CNV Findings", "'CNV Findings' heading").getprevious()
+    while end is not None and end is not head and end.tag == qn("w:p") and not _text(end).strip():
+        end = end.getprevious()
+    el = head
+    while el is not None:
+        nxt = el.getnext()
+        el.getparent().remove(el)
+        if el is end:
+            break
+        el = nxt
+
+
+def _parents_recommendation(doc, wanted: bool) -> None:
+    """Add or remove the parents-testing line, the first of the Recommendations."""
+    head = _find_para(doc, "Recommendations", "'Recommendations' heading")
+    first = head.getnext()
+    while first is not None and first.tag == qn("w:p") and not _text(first).strip():
+        first = first.getnext()
+    if first is None or first.tag != qn("w:p"):
+        return
+    has = _text(first).strip().startswith("Sequencing the variant(s) in the parents")
+    if has and not wanted:
+        first.getparent().remove(first)
+    elif wanted and not has:
+        line = copy.deepcopy(first)
+        _set_text(line, PARENTS_RECOMMENDATION)
+        first.addprevious(line)
+
+
+def _title_with_analysis(doc) -> None:
+    """'Whole Exome Sequencing' -> 'Whole Exome Sequencing Analysis' in the title."""
+    title = next(p for p in doc.element.body.iterchildren(qn("w:p")) if _text(p).strip())
+    for t in title.iter(qn("w:t")):
+        if t.text and t.text.strip() == "Whole Exome Sequencing":
+            t.text = t.text.rstrip() + " Analysis"
+
+
 def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     """The filled template. new_pages: section headings to start on a new
     page on top of the template's own (see report_builder's layout check)."""
-    path = template_path(data.template_key)
+    cfg = _cfg(data)
+    path = resource_path("app", "templates", cfg.docx_file)
     if not os.path.exists(path):
         raise TemplateError(f"Template file not found: {path}")
     doc = Document(path)
+    options = option_values(data.template_key, data.options)
+    if options:
+        _patient_layout(doc, options["hospital"] == "yes")
     _fill_patient(doc, data)
     _insert_pcpndt_note(doc, data)
     _fill_history(doc, data)
-    keep = get_template(data.template_key).keep_layout
+    keep = _cfg(data).keep_layout
     _fill_qc(doc, data, restyle=not keep)
     _fill_gene_list_url(doc, data)
     _fill_methodology(doc, data)
     _insert_pcpndt_disclaimer(doc, data)
     _fill_gene_table(doc, data, blank_unused=not keep)
     _fill_variants(doc, data)
-    cfg = get_template(data.template_key)
+    if options:
+        if options["interpretation"] == "no":
+            _drop_interpretation_section(doc)
+        _parents_recommendation(doc, options["parents"] == "yes")
     if cfg.variants:
         if cfg.keep_layout:
             _fit_variant_layout(doc)
@@ -1752,7 +1841,9 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         _justify_section(doc, "Disclaimer")
     _space_after_tables(doc)
     _keep_headings_with_next(doc)
-    _new_pages(doc, get_template(data.template_key).new_page_before + tuple(new_pages))
+    _new_pages(doc, cfg.new_page_before + tuple(new_pages))
     _fix_page_count(doc)
     _drop_analysis_word(doc)
+    if options.get("title") == "analysis":
+        _title_with_analysis(doc)
     return doc

@@ -16,7 +16,7 @@ The UI's template picker lists it automatically, under "No pathogenic" or
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -71,6 +71,9 @@ class TemplateConfig:
     # Keep the template's own title size and patient-table padding instead of the
     # app's usual 20 pt title and 0.2 cm cell margins (for a lab's exact layout).
     own_styles: bool = False
+    # One template for every result: the user picks the result and the report's
+    # options (OPTIONS below) and the layout follows (see effective()).
+    options: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,10 +212,82 @@ TEMPLATES: dict[str, TemplateConfig] = {
         reviewer="SARATH",
         patient_sheet="WES",
     ),
+    # Trial: the WES, CMC - Pathogenic and WES - Incidental reports as one template;
+    # the Result option picks the layout and the other options its details.
+    "WES_ALL": TemplateConfig(
+        key="WES_ALL",
+        name="Whole Exome Sequencing - All results (trial)",
+        docx_file="endocrinology.docx",
+        patient_id_label="Patient name",
+        specimen="Peripheral Blood",
+        patient_sheet="WES",
+        options=True,
+    ),
 }
 
 DEFAULT_TEMPLATE = "ENDOCRINOLOGY"
 
+# The report options of an options template: key -> (label, [(value, text)]);
+# the first choice is the default unless the Result's RESULT_DEFAULTS say otherwise.
+OPTIONS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+    "result": ("Result", [
+        ("none", "No pathogenic variant"),
+        ("pathogenic", "Pathogenic / Likely pathogenic / VUS"),
+        ("incidental", "Incidental finding(s)"),
+    ]),
+    "interpretation": ("Variant Interpretation page", [("yes", "Yes"), ("no", "No")]),
+    "parents": ("Parents-testing recommendation", [("yes", "Yes"), ("no", "No")]),
+    "title": ("Title", [("short", "Whole Exome Sequencing"),
+                        ("analysis", "Whole Exome Sequencing Analysis")]),
+    "hospital": ("Hospital/Clinic row", [("yes", "Yes"), ("no", "No")]),
+    "file_suffix": ("File name", [("whole_exome_report", "<name>_whole_exome_report_<date>"),
+                                  ("wes_report", "<name>_wes_report_<date>")]),
+}
+
+# What each Result brings: its layout (TemplateConfig fields) and the options'
+# starting values, as the lab's existing WES / CMC - Pathogenic / Incidental reports.
+RESULT_DEFAULTS: dict[str, tuple[dict, dict]] = {
+    "none": (dict(docx_file="endocrinology.docx"),
+             dict(interpretation="no", parents="no", hospital="yes",
+                  file_suffix="whole_exome_report", reviewer="ROBERT")),
+    "pathogenic": (dict(docx_file="whole_exome_patho.docx", variants=True, pathogenic=True),
+                   dict(interpretation="yes", parents="yes", hospital="yes",
+                        file_suffix="whole_exome_report", reviewer="ROBERT")),
+    "incidental": (dict(docx_file="whole_exome_incidental.docx", variants=True, pathogenic=True,
+                        fixed_result=True),
+                   dict(interpretation="yes", parents="no", hospital="no",
+                        file_suffix="wes_report", reviewer="SARATH")),
+}
+
 
 def get_template(key: str) -> TemplateConfig:
     return TEMPLATES.get(key) or TEMPLATES[DEFAULT_TEMPLATE]
+
+
+def option_values(key: str, options: dict | None) -> dict:
+    """An options template's choices: the user's, else the Result's defaults, else
+    each option's first choice. Empty for any other template."""
+    if not get_template(key).options:
+        return {}
+    options = options or {}
+    result = options.get("result") if options.get("result") in RESULT_DEFAULTS else "none"
+    out = {k: choices[0][0] for k, (_, choices) in OPTIONS.items()}
+    out.update(RESULT_DEFAULTS[result][1], result=result)
+    out.update({k: v for k, v in options.items()
+                if k in OPTIONS and v in dict(OPTIONS[k][1])})
+    return out
+
+
+def effective(key: str, options: dict | None = None) -> TemplateConfig:
+    """The template as used for a report: an options template takes its layout from
+    the chosen Result and options; every other template is returned as it is."""
+    cfg = get_template(key)
+    if not cfg.options:
+        return cfg
+    values = option_values(key, options)
+    layout = RESULT_DEFAULTS[values["result"]][0]
+    interp = layout.get("variants") and values["interpretation"] == "yes"
+    return replace(cfg, **layout, hospital_row=values["hospital"] == "yes",
+                   file_suffix=values["file_suffix"],
+                   reviewer=RESULT_DEFAULTS[values["result"]][1]["reviewer"],
+                   new_page_before=("Variant Interpretation",) if interp else ())

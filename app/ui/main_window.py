@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from ..config.templates import DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, get_template
+from ..config.templates import (DEFAULT_TEMPLATE, OPTIONS, REVIEWERS, TEMPLATES, effective,
+                                get_template, option_values)
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
 from ..core import bulk, gnomad, ocr, sheet_client, variants as variants_core
@@ -1982,6 +1983,21 @@ class MainWindow(QMainWindow):
             f.setHorizontalSpacing(14)
             return f
 
+        # An options template's Report options (one dropdown per option) on top.
+        self.options_box = QGroupBox("Report options")
+        self._options_form = form_of(self.options_box)
+        self.option_combos: dict[str, QComboBox] = {}
+        for key, (label, choices) in OPTIONS.items():
+            combo = QComboBox()
+            for value, text in choices:
+                combo.addItem(text, value)
+            combo.currentIndexChanged.connect(lambda _=0, k=key: self._option_changed(k))
+            self._options_form.addRow(label, combo)
+            self.option_combos[key] = combo
+        self._options_key = ""          # the template the options were set for
+        self.options_box.hide()
+        play.addWidget(self.options_box)
+
         # The PIN first: Fetch fills most of the step from the sample sheet.
         pin_box = QGroupBox("PIN")
         pf = form_of(pin_box)
@@ -2177,7 +2193,40 @@ class MainWindow(QMainWindow):
             secondary_title=self.variants_panel.secondary_title(),
             primary_title=(self.variants_panel.primary_title()
                            if not self.variants_panel.primary_row.isHidden() else ""),
+            options=self._options(),
         )
+
+    def _options(self) -> dict:
+        """The Report options chosen; empty for a template without them."""
+        if not get_template(self.template_combo.currentData()).options:
+            return {}
+        return {k: c.currentData() for k, c in self.option_combos.items()}
+
+    def _cfg(self):
+        """The chosen template, its layout following the Report options."""
+        return effective(self.template_combo.currentData(), self._options())
+
+    def _set_options(self, chosen: dict):
+        """Show the template's Report options with these choices, the rest at
+        their defaults (hidden for a template without options)."""
+        key = self.template_combo.currentData()
+        values = option_values(key, chosen)
+        self.options_box.setVisible(bool(values))
+        self._options_key = key
+        for k, combo in self.option_combos.items():
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(combo.findData(values.get(k)), 0))
+            combo.blockSignals(False)
+        # No variants without a result: no Variant Interpretation choice.
+        self._options_form.setRowVisible(self.option_combos["interpretation"],
+                                         values.get("result") != "none")
+
+    def _option_changed(self, key: str):
+        """A new Result resets the other options to its defaults; any change
+        re-applies the template's layout."""
+        self._set_options({"result": self.option_combos["result"].currentData()}
+                          if key == "result" else self._options())
+        self._template_changed()
 
     def _edited(self, *_):
         self._update_steps()
@@ -2193,7 +2242,7 @@ class MainWindow(QMainWindow):
         """A step's required boxes and their text: (the box to outline, text)."""
         if step == 0:
             keys = PATIENT_GROUP + SAMPLE_GROUP
-            if not get_template(self.template_combo.currentData()).hospital_row:
+            if not self._cfg().hospital_row:
                 keys = tuple(k for k in keys if k != "hospital")     # not in this report
         elif step == 1:
             keys = ("report_date",)
@@ -2254,13 +2303,15 @@ class MainWindow(QMainWindow):
         and Specimen. A field is only replaced if it is empty or still holds the
         previous template's default, so the user's own edits are kept."""
         key = self.template_combo.currentData()
+        if key != self._options_key:        # another template: its own default options
+            self._set_options({})
         new = self._defaults_for(key)
         for name, value in new.items():
             le = self.fields[name]
             if not le.text().strip() or le.text() == self._template_defaults.get(name):
                 le.setText(value)
         self._template_defaults = new
-        cfg = get_template(key)
+        cfg = self._cfg()
         self._show_variants_tab(cfg.variants)
         # Clinical reviewer: the template's, unless the user picked another.
         if self.reviewer_combo.currentData() in (None, self._template_reviewer):
@@ -2287,7 +2338,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("actions_shown", "true" if shown else "false")
 
     def _show_variants_tab(self, on: bool):
-        cfg = get_template(self.template_combo.currentData())
+        cfg = self._cfg()
         self.variants_panel.secondary_separate = cfg.secondary_findings
         self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
         self.variants_panel.primary_row.setVisible(cfg.pathogenic)
@@ -2480,6 +2531,8 @@ class MainWindow(QMainWindow):
         self.template_combo.blockSignals(True)
         self.template_combo.setCurrentIndex(max(self.template_combo.findData(cfg.key), 0))
         self.template_combo.blockSignals(False)
+        self._set_options(data.options)
+        cfg = self._cfg()
         self._template_defaults = self._defaults_for(cfg.key)
         self._template_reviewer = cfg.reviewer
         self._set_reviewer(data.reviewer or cfg.reviewer)
@@ -2522,6 +2575,7 @@ class MainWindow(QMainWindow):
         self.template_combo.blockSignals(True)
         self.template_combo.setCurrentIndex(max(self.template_combo.findData(cfg.key), 0))
         self.template_combo.blockSignals(False)
+        self._set_options(first.options)
         self._template_defaults = self._defaults_for(cfg.key)
         self._template_reviewer = cfg.reviewer
         self._set_reviewer(first.reviewer or cfg.reviewer)

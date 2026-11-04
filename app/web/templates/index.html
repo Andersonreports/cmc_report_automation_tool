@@ -358,6 +358,11 @@ label.req::after{content:" *";color:var(--warn)}
 
       <!-- PATIENT TAB -->
       <div id="tab-patient" class="tab-panel active">
+        <div class="field-group" id="report-options" style="display:none">
+          <div class="group-label">Report options</div>
+          <div class="form-grid" id="report-options-grid"></div>
+        </div>
+
         <div class="pin-box">
           <label for="f-pin" style="font-size:12px;font-weight:600;color:var(--label)">PIN</label>
           <div class="pin-row">
@@ -624,6 +629,7 @@ label.req::after{content:" *";color:var(--warn)}
 const G = {
   init: null,           // data from /api/init
   templateInfo: null,   // data from /api/template-info
+  options: {},          // an options template's choices (Report options)
   mode: 'manual',
   activeTab: 'patient',
   touchedSteps: new Set(),
@@ -877,6 +883,7 @@ function collectData() {
     result_tag: $('f-result_tag').value || '',
     primary_title: getOtherChoice('oc-primary_title') || '',
     secondary_title: $('f-secondary_title').value || '',
+    options: (G.templateInfo && G.templateInfo.options && G.templateInfo.options.length) ? G.options : {},
   };
 }
 
@@ -1021,7 +1028,7 @@ function escHtml(s) {
 // TEMPLATE
 // ============================================================
 async function loadTemplateInfo(key) {
-  const info = await api(`/api/template-info/${key}`);
+  const info = await api(`/api/template-info/${key}?options=${encodeURIComponent(JSON.stringify(G.options))}`);
   G.templateInfo = info;
   return info;
 }
@@ -1038,8 +1045,10 @@ function syncTemplatePicker(key) {
 }
 
 async function onTemplateChange(key, force=false) {
+  if (key !== G.templateKey) G.options = {};   // another template: its own default options
   G.templateKey = key;
   const info = await loadTemplateInfo(key);
+  renderReportOptions(info);
 
   // Pre-fill defaults (only if empty or still the old default)
   const oldDef = G.templateDefaults;
@@ -1104,6 +1113,34 @@ async function onTemplateChange(key, force=false) {
 
 
   schedulePreview();
+}
+
+// The options template's Report options: one dropdown per option. A new Result
+// resets the others to that result's defaults; every change re-applies the layout.
+function renderReportOptions(info) {
+  const box = $('report-options'), grid = $('report-options-grid');
+  const opts = info.options || [];
+  box.style.display = opts.length ? '' : 'none';
+  grid.innerHTML = '';
+  G.options = {};
+  opts.forEach(o => {
+    G.options[o.key] = o.value;
+    const group = document.createElement('div');
+    group.className = 'form-group';
+    if (o.key === 'interpretation' && G.options.result === 'none') group.style.display = 'none';
+    const label = document.createElement('label');
+    label.textContent = o.label;
+    const sel = document.createElement('select');
+    o.choices.forEach(([value, text]) => sel.add(new Option(text, value)));
+    sel.value = o.value;
+    sel.addEventListener('change', () => {
+      G.options = sel.dataset.key === 'result' ? { result: sel.value } : { ...G.options, [o.key]: sel.value };
+      onTemplateChange(G.templateKey);
+    });
+    sel.dataset.key = o.key;
+    group.append(label, sel);
+    grid.append(group);
+  });
 }
 
 // ============================================================
@@ -1772,6 +1809,8 @@ async function loadDraft(file) {
 async function applyDraftData(raw) {
   const key = raw.template_key || G.init.default_template;
   syncTemplatePicker(key);
+  G.templateKey = key;
+  G.options = raw.options || {};
   await onTemplateChange(key, true);
 
   const p = raw.patient || {};
