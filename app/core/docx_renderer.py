@@ -855,7 +855,12 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
     if not ordered:                 # nothing ticked: no Additional variants part at all;
         start = _find_para(doc, "Additional Variant", "'Additional Variant(s)' heading")
         cnv = _find_para(doc, "CNV Findings", "'CNV Findings' heading")
-        last_note = cnv.getprevious()   # the results keep the last notes (above CNV Findings)
+        el = start.getprevious()        # notes already under the result line?
+        while el is not None and not (el.tag == qn("w:p") and _text(el).strip().lower().startswith(
+                ("*genetic test results", "results"))):
+            el = el.getprevious()
+        noted = el is not None and _text(el).strip().lower().startswith("*genetic test results")
+        last_note = None if noted else cnv.getprevious()    # else keep the last notes
         while last_note is not None and not _text(last_note).strip().lower().startswith(
                 "*genetic test results"):
             last_note = last_note.getprevious()

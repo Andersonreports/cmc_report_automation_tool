@@ -168,9 +168,10 @@ TEMPLATES: dict[str, TemplateConfig] = {
         hospital_row=False,
     ),
     # Whole Exome + Mitochondrial report with no causative variant but additional
-    # variant(s): green "No pathogenic ... causative" result line, an "Additional
-    # Variant(s)" list, an optional Secondary findings list, and one captioned
-    # interpretation block per variant ("Variant 1", "Variant 2", ...).
+    # variant(s), as the lab's Baby Infant Snoba report: green "No pathogenic ...
+    # causative" result line, an "Additional Variant(s)" list, an optional Secondary
+    # findings list, and one captioned interpretation block per variant ("Variant 1",
+    # "Variant 2", ...) following on the same page.
     "WES_MITO_ADDITIONAL": TemplateConfig(
         key="WES_MITO_ADDITIONAL",
         name="Whole Exome & Mitochondrial - Additional variants",
@@ -178,7 +179,6 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_id_label="Patient name",
         specimen="Peripheral Blood",
         file_suffix="WES_&_Mito_report",
-        new_page_before=("Variant Interpretation",),
         keep_layout=True,
         secondary_findings=True,
         reviewer="SARATH",

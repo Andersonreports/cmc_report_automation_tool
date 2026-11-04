@@ -217,6 +217,7 @@ label.req::after{content:" *";color:var(--warn)}
 .variant-item.active{background:var(--accent-light)}
 .variant-item input[type=checkbox]{cursor:pointer;flex-shrink:0;accent-color:var(--accent)}
 .variant-item-label{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.variant-item-tag{margin-left:auto;flex-shrink:0;font-size:10px;font-weight:700;color:#7c3aed;background:#f3eefe;border-radius:99px;padding:1px 8px}
 .variant-detail-col{flex:1;padding:14px;display:flex;flex-direction:column;gap:12px;position:relative;background:var(--surface)}
 .variant-detail-empty{color:var(--muted);font-size:12px;padding:30px 20px;text-align:center}
 .detail-section-title{font-size:11px;font-weight:700;color:var(--accent-mid);text-transform:uppercase;letter-spacing:.7px;margin-top:6px;padding-top:12px;border-top:2px solid var(--line);display:flex;align-items:center;gap:6px}
@@ -1095,6 +1096,12 @@ async function onTemplateChange(key, force=false) {
   G.noHospital = info.hospital_row === false;
   $('oc-hospital').closest('.form-group').style.display = G.noHospital ? 'none' : '';
 
+  // Secondary findings table or not: the list's tags and the Report table choice follow
+  if (G.variants.length) {
+    renderVariantList();
+    if (G.currentVariantIdx >= 0) showVariantDetail(G.currentVariantIdx);
+  }
+
 
   schedulePreview();
 }
@@ -1191,6 +1198,13 @@ function setVariantStatus(msg, cls='') {
   el.className = `variant-hint ${cls === 'ok' ? 'status-ok' : cls === 'bad' ? 'status-bad' : ''}`;
 }
 
+// The template has a Secondary findings table; a variant goes there when the user
+// picked it, else when it came from the Excel's "Secondary Findings" block.
+function hasSecondaryTable() { return !!(G.templateInfo && G.templateInfo.secondary_findings); }
+function isSecondary(v) {
+  return ('in_secondary' in v) ? !!v.in_secondary : /secondary/i.test(v.section || '');
+}
+
 function renderVariantList() {
   const list = $('variant-list');
   const search = $('variant-search').value.toLowerCase();
@@ -1214,6 +1228,12 @@ function renderVariantList() {
     lbl.className = 'variant-item-label';
     lbl.textContent = label || `Variant ${i+1}`;
     item.appendChild(cb); item.appendChild(lbl);
+    if (hasSecondaryTable() && isSecondary(v)) {
+      const tag = document.createElement('span');
+      tag.className = 'variant-item-tag';
+      tag.textContent = 'Secondary';
+      item.appendChild(tag);
+    }
     item.addEventListener('click', (e) => { if (e.target !== cb) showVariantDetail(i); });
     list.appendChild(item);
   });
@@ -1292,6 +1312,15 @@ function buildVariantDetailHTML(v, defs, idx) {
       <option value="-" ${v.strand==='-'?'selected':''}>- strand</option>
     </select></div>`;
   html += `<div class="detail-row"><label>Variant</label><div class="detail-readonly">${escHtml(v.variant||'')}</div></div>`;
+  // Which table of the report it goes in (templates with a Secondary findings table)
+  if (hasSecondaryTable()) {
+    const sec = isSecondary(v);
+    html += `<div class="detail-row"><label>Report table</label>
+      <select class="vd-field" data-key="in_secondary" title="The table this variant is listed in; from the Excel's block unless changed here">
+        <option value="" ${sec ? '' : 'selected'}>Variant list</option>
+        <option value="1" ${sec ? 'selected' : ''}>Secondary findings</option>
+      </select></div>`;
+  }
 
   // Classification
   const classOpts = (defs && defs.classification_options) || ['Pathogenic','Likely Pathogenic','Variant of Uncertain Significance'];
@@ -1399,6 +1428,7 @@ function bindVariantDetail(idx, defs) {
     el.addEventListener('change', async (e) => {
       const val = el.value;
       v[key] = val;
+      if (key === 'in_secondary') { v.in_secondary = val === '1'; renderVariantList(); }
       if (key === 'classification') { applySelectColor(el); schedulePreview(); }
       if (key === 'strand') schedulePreview();
       schedulePreview();

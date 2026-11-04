@@ -1,7 +1,8 @@
 """Listed-variants Excel (VarSeq export) for the pathogenic templates.
 
-The sheet has one or more blocks, each a title row (e.g. "Secondary Findings"),
-a header row starting with "S.NO" and one variant per row. Every variant is
+The sheet has one or more blocks, each a title row (e.g. "Secondary Findings",
+"LISTED VARIANT"), a header row with GENE and VARIANT columns (starting with
+"S.NO", "REMARKS", ...) and one variant per row. Every variant is
 kept as a flat dict of strings (see FIELDS) plus a "selected" flag the user
 ticks in the app; only the selected ones are written into the report.
 """
@@ -52,6 +53,13 @@ def _cell(value) -> str:
     return str(value).strip()
 
 
+def _is_header(row: list[str]) -> bool:
+    """A block's header row: it has GENE and VARIANT columns (it may start with
+    S.NO, REMARKS or anything else)."""
+    cells = {c.lower() for c in row}
+    return "gene" in cells and "variant" in cells
+
+
 def read_variants(path: str) -> list[dict]:
     """Every variant in the workbook, in sheet order, none selected."""
     from openpyxl import load_workbook
@@ -65,17 +73,15 @@ def read_variants(path: str) -> list[dict]:
         rows = []
         for ws in sheets:
             rows = [[_cell(c) for c in r] for r in ws.iter_rows(values_only=True)]
-            if any(r and r[0].lower() == "s.no" for r in rows):
+            if any(r and _is_header(r) for r in rows):
                 break
     finally:
         wb.close()
     out, cols, section = [], None, ""
     for i, row in enumerate(rows):
-        first = row[0].lower() if row else ""
-        if first == "s.no":                       # a header row starts a block
+        if row and _is_header(row):               # a header row starts a block
             cols = {HEADERS[h.lower()]: j for j, h in enumerate(row) if h.lower() in HEADERS}
-            if "gene" not in cols or "variant" not in cols:
-                raise VariantError("The Excel needs GENE and VARIANT columns.")
+            # The block's title row above it: "Secondary Findings", "LISTED VARIANT", ...
             section = next((r[0] for r in reversed(rows[:i])
                             if r and r[0] and not any(r[1:])), "")
             continue
@@ -111,7 +117,7 @@ def read_variants(path: str) -> list[dict]:
         out.append(v)
     if not out:
         raise VariantError("No variants found. Upload the VarSeq listed-variants Excel "
-                           "(a header row starting with S.NO, then one variant per row).")
+                           "(a header row with GENE and VARIANT columns, then one variant per row).")
     return out
 
 
@@ -281,7 +287,10 @@ PRIMARY_TITLES = (
 
 
 def is_secondary(v: dict) -> bool:
-    """A variant from the Excel's "Secondary Findings" block."""
+    """A variant for the Secondary findings table: the user's pick in the app
+    ("in_secondary"), else whether it came from the Excel's "Secondary Findings" block."""
+    if "in_secondary" in v:
+        return bool(v["in_secondary"])
     return "secondary" in v.get("section", "").lower()
 
 

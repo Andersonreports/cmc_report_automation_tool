@@ -971,6 +971,12 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_strand.currentIndexChanged.connect(self._stranded)
         self.f_variant = QLineEdit()
         self.f_variant.setReadOnly(True)
+        self.f_table = StableCombo()        # which table of the report the variant goes in
+        self.f_table.setToolTip("The table this variant is listed in; "
+                                "from the Excel's block unless changed here")
+        self.f_table.addItem("Variant list", False)
+        self.f_table.addItem("Secondary findings", True)
+        self.f_table.currentIndexChanged.connect(self._tabled)
         self.f_class = StableCombo()
         self.f_class.setToolTip("Classification shown in the report: Franklin / ACMG / ClinVar")
         self.f_class.currentTextChanged.connect(self._classified)
@@ -988,6 +994,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         gr.addWidget(self.f_strand)
         dl.addRow("Gene:", gene_row)
         dl.addRow("Variant:", self.f_variant)
+        dl.addRow("Report table:", self.f_table)
         dl.addRow("Classification:", self.f_class)
         omim_tip = ("OMIM number(s) shown as (OMIM#id); the Excel lists every phenotype of "
                     "the gene; delete the ones that do not apply")
@@ -1136,7 +1143,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.table.blockSignals(True)
         self.table.clear()
         for v in self._variants:
-            it = QListWidgetItem(f"{v.get('gene', '')}  {v.get('variant', '')}")
+            it = QListWidgetItem(self._item_text(v))
             it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked if v.get("selected") else Qt.Unchecked)
             self.table.addItem(it)
@@ -1164,6 +1171,10 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_strand.blockSignals(True)
         self.f_strand.setCurrentIndex(max(0, self.f_strand.findData(v.get("strand", "").strip())))
         self.f_strand.blockSignals(False)
+        self.detail_form.setRowVisible(self.f_table, self.secondary_separate)
+        self.f_table.blockSignals(True)
+        self.f_table.setCurrentIndex(1 if variants_core.is_secondary(v) else 0)
+        self.f_table.blockSignals(False)
         options = variants_core.classification_options(v) or [""]
         if v.get("classification") and v["classification"] not in options:
             options.append(v["classification"])
@@ -1338,6 +1349,24 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         if 0 <= self._current < len(self._variants):
             self._variants[self._current]["strand"] = self.f_strand.currentData() or ""
             self.changed.emit()
+
+    def _tabled(self, *_):
+        """The user moved the variant to the variant list or the Secondary findings table."""
+        if 0 <= self._current < len(self._variants):
+            self._variants[self._current]["in_secondary"] = bool(self.f_table.currentData())
+            self.refresh_labels()
+            self.changed.emit()
+
+    def _item_text(self, v: dict) -> str:
+        tag = "   · Secondary" if self.secondary_separate and variants_core.is_secondary(v) else ""
+        return f"{v.get('gene', '')}  {v.get('variant', '')}{tag}"
+
+    def refresh_labels(self):
+        """The list's texts: a variant going to the Secondary findings table is marked."""
+        self.table.blockSignals(True)
+        for r, v in enumerate(self._variants):
+            self.table.item(r).setText(self._item_text(v))
+        self.table.blockSignals(False)
 
     def _classified(self, text: str):
         self._class_style()
@@ -2256,6 +2285,8 @@ class MainWindow(QMainWindow):
         self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
         self.variants_panel.primary_row.setVisible(cfg.pathogenic)
         panel = self.variants_panel
+        panel.refresh_labels()              # "Secondary" marks and the Report table choice
+        panel._show_detail(panel._current)  # follow whether the template has that table
         panel.fixed_result = cfg.fixed_result
         panel.result_row.setVisible(bool(panel.variants()) and not cfg.fixed_result)
         if cfg.fixed_result and panel.result_tag():
