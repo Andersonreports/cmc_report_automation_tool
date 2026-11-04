@@ -261,12 +261,32 @@ def class_display(v: dict) -> str:
     return "Uncertain Significance" if label == _CLASS["vus"] else label
 
 
-# The result tag the user can pick (Variants tab): key -> sentence in the box.
+# The result tag the user can pick (Variants tab): key -> sentence in the box;
+# {gene} is the ticked variants' gene, in italics.
 RESULT_TAGS = (
     ("pathogenic", "Pathogenic variant related to the given phenotype was identified"),
     ("likely", "Likely pathogenic variant related to the given phenotype was identified"),
     ("vus_related", "Variant of uncertain significance related to the given phenotype was identified"),
+    # As the lab's newer WES / WES & Mito reports word it (LAB_RESULT_TAGS).
+    ("likely_identified", "Likely Pathogenic variant was identified related to the given phenotype"),
+    ("het_pathogenic_gene", "Heterozygous Pathogenic variant was identified in {gene} gene"),
+    ("vus_gene", "Variant of Uncertain Significance was identified in {gene} gene"),
+    ("compound_het", "Likely Compound Heterozygous variants were identified related to the "
+                     "given phenotype"),
+    ("compound_het_gene", "Likely Compound Heterozygous variants were identified in {gene} gene"),
 )
+# Offered only for templates with lab_wording (not the CMC ones).
+LAB_RESULT_TAGS = frozenset({"likely_identified", "het_pathogenic_gene", "vus_gene",
+                             "compound_het", "compound_het_gene"})
+# Each tag's colour in the report, as the lab's reports print it.
+RESULT_COLORS = {"pathogenic": "FF0000", "likely": "FF0000", "vus_related": "0070C0",
+                 "likely_identified": "FF0000", "het_pathogenic_gene": "002060",
+                 "vus_gene": "0070C0", "compound_het": "002060", "compound_het_gene": "002060"}
+# The kind of result each tag reports: the classification it gives the ticked variants
+# (none for compound heterozygous, whose variants keep their own) and the auto heading.
+RESULT_KIND = {"pathogenic": "pathogenic", "likely": "likely", "vus_related": "vus_related",
+               "likely_identified": "likely", "het_pathogenic_gene": "pathogenic",
+               "vus_gene": "vus_related", "compound_het": "", "compound_het_gene": ""}
 
 # Titles the user can pick for the Secondary findings table (Variants tab); the
 # first is the template's own. Any other wording can be typed in.
@@ -285,7 +305,19 @@ PRIMARY_TITLES = (
     "List of uncertain significant variant(s) identified related to the phenotype:",
     "List of additional significant variant(s) identified:",
     "List of Incidental significant variant(s) identified:",
+    # As the lab's newer WES / WES & Mito reports word it (LAB_PRIMARY_TITLES).
+    "List of significant variant(s) identified related to the given phenotype:",
+    "List of significant variant identified:",
+    "List of uncertain significant variant(s) identified:",
+    "List of additional uncertain significant variant(s) identified:",
 )
+# Offered only for templates with lab_wording (not the CMC ones).
+LAB_PRIMARY_TITLES = frozenset(PRIMARY_TITLES[-4:])
+
+# The note under the variant list for two variants in one gene (Report options).
+COMPOUND_HET_NOTE = ("The variants are reported to be in likely compound heterozygous state. "
+                     "These likely compound heterozygous variants are strongly recommended to "
+                     "confirm the Cis or Trans status by parental segregation analysis.")
 
 
 def is_secondary(v: dict) -> bool:

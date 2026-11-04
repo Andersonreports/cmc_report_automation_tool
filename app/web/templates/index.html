@@ -1094,6 +1094,9 @@ async function onTemplateChange(key, force=false) {
   const priRow = $('primary-title-row');
   priRow.style.display = (info.pathogenic && info.variants) ? 'flex' : 'none';
 
+  // The lab's newer result lines and list titles: only for the templates that use them
+  applyLabWording(!!info.lab_wording);
+
   // A template whose result line is fixed has no Result picker
   $('result-tag-row').style.display = info.fixed_result ? 'none' : 'flex';
   if (info.fixed_result && $('f-result_tag').value) {
@@ -1113,6 +1116,19 @@ async function onTemplateChange(key, force=false) {
 
 
   schedulePreview();
+}
+
+// Result lines / list titles marked data-lab are offered only when the template has
+// lab_wording; a hidden one that was picked goes back to Automatic / Auto.
+function applyLabWording(on) {
+  [$('f-result_tag'), $('f-primary_title')].forEach(sel => {
+    Array.from(sel.options).forEach(o => { if (o.dataset.lab) o.hidden = !on; });
+    const cur = sel.options[sel.selectedIndex];
+    if (cur && cur.hidden) {
+      sel.value = '';
+      if (sel.id === 'f-result_tag') applyResultTagColor();
+    }
+  });
 }
 
 // The options template's Report options: one dropdown per option. A new Result
@@ -1591,6 +1607,11 @@ const RESULT_TAG_COLORS = {
   pathogenic: { bg: '#fef2f2', color: '#b91c1c', border: '#fca5a5', label: 'Pathogenic' },
   likely:     { bg: '#fffbeb', color: '#b45309', border: '#fcd34d', label: 'Likely Pathogenic' },
   vus_related:{ bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd', label: 'VUS' },
+  likely_identified:   { bg: '#fffbeb', color: '#b45309', border: '#fcd34d', label: 'Likely Pathogenic' },
+  het_pathogenic_gene: { bg: '#eef2f8', color: '#002060', border: '#9fb0cf', label: 'Pathogenic' },
+  vus_gene:            { bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd', label: 'VUS' },
+  compound_het:        { bg: '#eef2f8', color: '#002060', border: '#9fb0cf', label: 'Compound het' },
+  compound_het_gene:   { bg: '#eef2f8', color: '#002060', border: '#9fb0cf', label: 'Compound het' },
 };
 /* Map classification label text → color tokens */
 function classColorFor(label) {
@@ -1649,7 +1670,7 @@ function applyResultTagColor() {
 function onResultTagChange() {
   const key = $('f-result_tag').value;
   const tagMap = { pathogenic: 'Pathogenic', likely: 'Likely Pathogenic', vus_related: 'Variant of Uncertain Significance' };
-  const label = tagMap[key];
+  const label = tagMap[(G.resultKinds || {})[key]];   // compound heterozygous: each keeps its own
   if (label) {
     const ticked = G.variants.filter(v => v.selected);
     const targets = ticked.length ? ticked : (G.currentVariantIdx >= 0 ? [G.variants[G.currentVariantIdx]] : []);
@@ -2056,9 +2077,12 @@ async function initApp() {
 
     // Result tags
     const rtSel = $('f-result_tag');
+    G.resultKinds = {};
     init.result_tags.forEach(rt => {
       const opt = document.createElement('option');
-      opt.value = rt.key; opt.textContent = rt.text;
+      opt.value = rt.key; opt.textContent = rt.text.replace('{gene}', '<gene>');
+      if (rt.lab) opt.dataset.lab = '1';
+      G.resultKinds[rt.key] = rt.kind;
       rtSel.appendChild(opt);
     });
     colorSelectOptions(rtSel);
@@ -2068,6 +2092,9 @@ async function initApp() {
     // Patch the first option label to "Auto (from result)"
     const ptSel = $('f-primary_title');
     if (ptSel.options[0]) ptSel.options[0].textContent = 'Auto (from result)';
+    Array.from(ptSel.options).forEach(o => {
+      if ((init.lab_primary_titles || []).includes(o.value)) o.dataset.lab = '1';
+    });
 
     // Secondary titles
     const stSel = $('f-secondary_title');

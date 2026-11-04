@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
-from ..config.templates import (DEFAULT_TEMPLATE, OPTIONS, REVIEWERS, TEMPLATES, effective,
-                                get_template, option_values)
+from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effective,
+                                get_template, option_values, template_options)
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
 from ..core import bulk, gnomad, ocr, sheet_client, variants as variants_core
@@ -839,10 +839,11 @@ class VariantsPanel(ExcelDropPanel, QWidget):
     changed = Signal()
     upload_requested = Signal(str)  # the Excel file dropped on the box, or "" to browse
     CHECK_NC_CHROMOSOME = True         # refuse an image's NC id of another chromosome
-    RESULT_COLORS = {"pathogenic": "#d00000", "likely": "#d00000",    # as in the report
-                     "vus_related": "#0070C0"}
-    RESULT_CLASS = {"pathogenic": "Pathogenic", "likely": "Likely Pathogenic",   # classification each
-                    "vus_related": "Variant of Uncertain Significance"}      # result tag sets
+    RESULT_COLORS = {k: "#d00000" if c == "FF0000" else f"#{c}"        # as in the report
+                     for k, c in variants_core.RESULT_COLORS.items()}
+    RESULT_CLASS = {k: {"pathogenic": "Pathogenic", "likely": "Likely Pathogenic",  # classification
+                        "vus_related": "Variant of Uncertain Significance"}[kind]   # each result tag
+                    for k, kind in variants_core.RESULT_KIND.items() if kind}   # sets
     LIST_COLS = ("Gene", "Variant")      # the picker: every variant of the Excel
     DETAIL_COLS = ("Gene", "Classification", "Disease or Disorder", "Criteria",
                    "Variant Frequency")  # the typed-in details of the ticked variants
@@ -887,7 +888,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_result = StableCombo()
         self.f_result.addItem("Automatic (from the classifications)", "")
         for key, text in variants_core.RESULT_TAGS:
-            self.f_result.addItem(text, key)
+            self.f_result.addItem(text.replace("{gene}", "<gene>"), key)
             self.f_result.setItemData(self.f_result.count() - 1,
                                       QColor(self.RESULT_COLORS[key]), Qt.ForegroundRole)
         self.f_result.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -1289,7 +1290,24 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             edit.setText(case(text))
             edit.setCursorPosition(pos)
 
-    RESULT_TINTS = {"pathogenic": "#fdeeee", "likely": "#fdeeee", "vus_related": "#eaf4fc"}
+    RESULT_TINTS = {"pathogenic": "#fdeeee", "likely": "#fdeeee", "vus_related": "#eaf4fc",
+                    "likely_identified": "#fdeeee", "het_pathogenic_gene": "#eef2f8",
+                    "vus_gene": "#eaf4fc", "compound_het": "#eef2f8", "compound_het_gene": "#eef2f8"}
+
+    def set_lab_wording(self, on: bool):
+        """Offer the lab's newer result lines and list titles only when the template
+        uses them; a hidden one that was picked goes back to Automatic / Auto."""
+        for combo, lab in ((self.f_result, lambda i: self.f_result.itemData(i)
+                            in variants_core.LAB_RESULT_TAGS),
+                           (self.f_primary_title, lambda i: self.f_primary_title.itemText(i)
+                            in variants_core.LAB_PRIMARY_TITLES)):
+            for i in range(combo.count()):
+                if lab(i):
+                    combo.view().setRowHidden(i, not on)
+        if not on and self.result_tag() in variants_core.LAB_RESULT_TAGS:
+            self.set_result_tag("")
+        if not on and self.primary_title() in variants_core.LAB_PRIMARY_TITLES:
+            self.set_primary_title("")
 
     def _result_changed_style(self):
         """The box looks like the report's result tag: the tag's colour for the text
@@ -1986,14 +2004,7 @@ class MainWindow(QMainWindow):
         # An options template's Report options (one dropdown per option) on top.
         self.options_box = QGroupBox("Report options")
         self._options_form = form_of(self.options_box)
-        self.option_combos: dict[str, QComboBox] = {}
-        for key, (label, choices) in OPTIONS.items():
-            combo = QComboBox()
-            for value, text in choices:
-                combo.addItem(text, value)
-            combo.currentIndexChanged.connect(lambda _=0, k=key: self._option_changed(k))
-            self._options_form.addRow(label, combo)
-            self.option_combos[key] = combo
+        self.option_combos: dict[str, QComboBox] = {}     # filled by _set_options
         self._options_key = ""          # the template the options were set for
         self.options_box.hide()
         play.addWidget(self.options_box)
@@ -2212,7 +2223,20 @@ class MainWindow(QMainWindow):
         key = self.template_combo.currentData()
         values = option_values(key, chosen)
         self.options_box.setVisible(bool(values))
+        if key != self._options_key:            # this template's own dropdowns
+            while self._options_form.rowCount():
+                self._options_form.removeRow(0)
+            self.option_combos = {}
+            for k, (label, choices) in template_options(key).items():
+                combo = QComboBox()
+                for value, text in choices:
+                    combo.addItem(text, value)
+                combo.currentIndexChanged.connect(lambda _=0, k=k: self._option_changed(k))
+                self._options_form.addRow(label, combo)
+                self.option_combos[k] = combo
         self._options_key = key
+        if not values:
+            return
         for k, combo in self.option_combos.items():
             combo.blockSignals(True)
             combo.setCurrentIndex(max(combo.findData(values.get(k)), 0))
@@ -2236,7 +2260,9 @@ class MainWindow(QMainWindow):
     # -- steps -------------------------------------------------------------
     STEP_NAMES = ("Patient & sample", "Report details", "Gene coverage", "Variants")
     RESULT_BADGES = {"pathogenic": "Pathogenic", "likely": "Likely Pathogenic",
-                     "vus_related": "VUS"}
+                     "vus_related": "VUS", "likely_identified": "Likely Pathogenic",
+                     "het_pathogenic_gene": "Pathogenic", "vus_gene": "VUS",
+                     "compound_het": "Compound het", "compound_het_gene": "Compound het"}
 
     def _required(self, step: int) -> list[tuple[QWidget, str]]:
         """A step's required boxes and their text: (the box to outline, text)."""
@@ -2313,6 +2339,7 @@ class MainWindow(QMainWindow):
         self._template_defaults = new
         cfg = self._cfg()
         self._show_variants_tab(cfg.variants)
+        self.variants_panel.set_lab_wording(cfg.lab_wording)
         # Clinical reviewer: the template's, unless the user picked another.
         if self.reviewer_combo.currentData() in (None, self._template_reviewer):
             self._set_reviewer(cfg.reviewer)
@@ -2560,6 +2587,7 @@ class MainWindow(QMainWindow):
                                    "Gene table from the draft." if data.genes
                                    else "Showing the template's gene table.")
         self._show_variants_tab(cfg.variants)
+        self.variants_panel.set_lab_wording(cfg.lab_wording)
         self.variants_panel.set_variants(data.variants)
         self.variants_panel.set_result_tag(data.result_tag)
         self.variants_panel.set_secondary_title(data.secondary_title)

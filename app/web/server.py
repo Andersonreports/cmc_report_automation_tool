@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, render_template, request, send_file
 
-from ..config.templates import (DEFAULT_TEMPLATE, OPTIONS, REVIEWERS, TEMPLATES, effective,
-                                get_template, option_values)
+from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effective,
+                                get_template, option_values, template_options)
 from ..core import bulk, gnomad, ocr, sheet_client
 from ..core import variants as variants_core
 from ..core.docx_renderer import template_gene_list_url, template_gene_table
@@ -64,7 +64,8 @@ def api_init():
             "patient_id_prefix": cfg.patient_id_prefix or "",
         })
     reviewers_list = [{"key": k, "name": r.name} for k, r in REVIEWERS.items()]
-    result_tags = [{"key": k, "text": t} for k, t in variants_core.RESULT_TAGS]
+    result_tags = [{"key": k, "text": t, "kind": variants_core.RESULT_KIND[k],
+                    "lab": k in variants_core.LAB_RESULT_TAGS} for k, t in variants_core.RESULT_TAGS]
     return jsonify({
         "templates": templates_list,
         "reviewers": reviewers_list,
@@ -76,6 +77,7 @@ def api_init():
         "result_tags": result_tags,
         "secondary_titles": list(variants_core.SECONDARY_TITLES),
         "primary_titles": list(variants_core.PRIMARY_TITLES),
+        "lab_primary_titles": sorted(variants_core.LAB_PRIMARY_TITLES),
         "frequency_text": variants_core.FREQUENCY_TEXT,
         "frequency_all": variants_core.FREQUENCY_ALL,
         "frequency_absent": variants_core.FREQUENCY_ABSENT,
@@ -105,13 +107,14 @@ def api_template_info(key):
         "key": cfg.key, "name": cfg.name, "pathogenic": cfg.pathogenic,
         "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
         "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row,
+        "lab_wording": cfg.lab_wording,
         "hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
         "specimen": cfg.specimen, "reviewer": cfg.reviewer,
         "patient_id_label": cfg.patient_id_label,
         "patient_id_prefix": cfg.patient_id_prefix or "",
         "genes": genes, "gene_list_url": url,
         "options": [{"key": k, "label": label, "choices": choices, "value": values[k]}
-                    for k, (label, choices) in OPTIONS.items()] if values else [],
+                    for k, (label, choices) in template_options(key).items()],
     })
 
 

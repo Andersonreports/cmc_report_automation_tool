@@ -671,9 +671,27 @@ def _color_class(tc, v) -> None:
         color.set(qn("w:val"), "0070C0" if vus else "FF0000")
 
 
-def _set_banner(doc, mode: str) -> None:
+def _split_run(r, parts) -> None:
+    """Replace run r by one copy of it per (text, italic) part."""
+    anchor = r
+    for text, italic in parts:
+        nr = copy.deepcopy(r)
+        ts = nr.findall(qn("w:t"))
+        for t in ts[1:]:
+            nr.remove(t)
+        ts[0].text = text
+        ts[0].set(qn("xml:space"), "preserve")
+        if italic:
+            Run(nr, None).italic = True
+        anchor.addnext(nr)
+        anchor = nr
+    r.getparent().remove(r)
+
+
+def _set_banner(doc, mode: str, genes: str = "") -> None:
     """The boxed result line under 'Results' (it exists twice in the XML: the
-    DrawingML shape and its VML fallback)."""
+    DrawingML shape and its VML fallback). genes: for a line that names the gene."""
+    from . import variants as vr
     if mode == "pathogenic":
         return
     if mode == "none":              # as the template's own no-variant result line
@@ -687,18 +705,14 @@ def _set_banner(doc, mode: str) -> None:
         found = mito.find(qn("w:r")).get_or_add_rPr().find(qn("w:color"))
         color = found.get(qn("w:val")) if found is not None else "0070C0"
     else:
-        text, color = {
-            "likely": ("Likely pathogenic variant related to the given phenotype was identified",
-                       "FF0000"),
-            "vus_related": ("Variant of uncertain significance related to the given phenotype "
-                            "was identified", "0070C0"),
-        }[mode]
-    for t in doc.element.body.iter(qn("w:t")):
-        if (t.text or "").strip() != _BANNER:
-            continue
+        text, color = dict(vr.RESULT_TAGS)[mode], vr.RESULT_COLORS[mode]
+    for t in [t for t in doc.element.body.iter(qn("w:t")) if (t.text or "").strip() == _BANNER]:
         t.text = text
         r = t.getparent()
         r.get_or_add_rPr().find(qn("w:color")).set(qn("w:val"), color)
+        if "{gene}" in text:            # the gene name in italics
+            head, tail = text.split("{gene}")
+            _split_run(r, [(head, False), (genes, True), (tail, False)])
 
 
 def _variant_sets(doc) -> list[tuple]:
@@ -929,11 +943,11 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
     fixed = _cfg(data).fixed_result
     if banner:                      # the result line and its wording are the primary set's
         if not fixed:               # else the template's own result line stays
-            _set_banner(doc, mode)
+            _set_banner(doc, mode, ", ".join(dict.fromkeys(v["gene"] for v in chosen)))
         # Heading: user pick overrides auto; auto only changes for VUS mode.
         heading_text = data.primary_title or (
             "List of uncertain significant variant(s) identified related to the phenotype:"
-            if mode == "vus_related" and not fixed else None)
+            if vr.RESULT_KIND.get(mode) == "vus_related" and not fixed else None)
         if heading_text:
             heading = res.getprevious()             # the 'List of ...' line over the table
             if heading is None or heading.tag != qn("w:p") or not _text(heading).startswith("List of"):
@@ -1746,23 +1760,53 @@ def _patient_layout(doc, hospital: bool) -> None:
             _set_text(paras[0], f"{label}: XX" if label else "")
 
 
+_SECTION_STARTS = ("list of", "additional variant", "cnv findings", "whole mitochondrial")
+
+
 def _drop_interpretation_section(doc) -> None:
-    """No Variant Interpretation page: remove its heading, tables, evidence and the
-    notes repeated under it, up to the blank lines before 'CNV Findings'."""
-    head = next((p for p in doc.element.body.iterchildren(qn("w:p"))
-                 if _text(p).strip().lower() == "variant interpretation"), None)
-    if head is None:
+    """No Variant Interpretation page: remove each Variant Interpretation part (its
+    heading, tables, evidence and the notes repeated under it) up to the blank lines
+    before what follows it: the Secondary findings list or CNV Findings."""
+    for head in [p for p in doc.element.body.iterchildren(qn("w:p"))
+                 if _text(p).strip().rstrip(":").lower() == "variant interpretation"]:
+        stop = head.getnext()
+        while stop is not None and not (stop.tag == qn("w:p") and
+                                        _text(stop).strip().lower().startswith(_SECTION_STARTS)):
+            stop = stop.getnext()
+        end = stop.getprevious() if stop is not None else None
+        while end is not None and end is not head and end.tag == qn("w:p") and not _text(end).strip():
+            end = end.getprevious()
+        el = head
+        while el is not None and el is not stop:
+            nxt = el.getnext()
+            el.getparent().remove(el)
+            if el is end:
+                break
+            el = nxt
+
+
+def _compound_het_note(doc) -> None:
+    """The likely compound heterozygous note, bold, under the first variant list (before
+    its '*Genetic test results' note), with Cis and Trans in italics."""
+    from . import variants as vr
+    res = next((t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"),
+               None)
+    if res is None:
         return
-    end = _find_para(doc, "CNV Findings", "'CNV Findings' heading").getprevious()
-    while end is not None and end is not head and end.tag == qn("w:p") and not _text(end).strip():
-        end = end.getprevious()
-    el = head
-    while el is not None:
-        nxt = el.getnext()
-        el.getparent().remove(el)
-        if el is end:
-            break
-        el = nxt
+    after = res.getnext()
+    while after is not None and after.tag == qn("w:p") and not _text(after).strip():
+        after = after.getnext()
+    model = after if after is not None and after.tag == qn("w:p") else None
+    note = copy.deepcopy(model) if model is not None else OxmlElement("w:p")
+    _set_text(note, vr.COMPOUND_HET_NOTE)
+    pf = Paragraph(note, None).paragraph_format     # the page's full width, single spaced
+    pf.right_indent, pf.line_spacing, pf.space_after = 0, 1.1, Pt(4)
+    r = _runs(note)[0]
+    Run(r, None).bold = True
+    head, rest = vr.COMPOUND_HET_NOTE.split("Cis", 1)
+    mid, tail = rest.split("Trans", 1)
+    _split_run(r, [(head, False), ("Cis", True), (mid, False), ("Trans", True), (tail, False)])
+    (model.addprevious if model is not None else res.addnext)(note)
 
 
 def _parents_recommendation(doc, wanted: bool) -> None:
@@ -1783,11 +1827,13 @@ def _parents_recommendation(doc, wanted: bool) -> None:
 
 
 def _title_with_analysis(doc) -> None:
-    """'Whole Exome Sequencing' -> 'Whole Exome Sequencing Analysis' in the title."""
-    title = next(p for p in doc.element.body.iterchildren(qn("w:p")) if _text(p).strip())
-    for t in title.iter(qn("w:t")):
-        if t.text and t.text.strip() == "Whole Exome Sequencing":
-            t.text = t.text.rstrip() + " Analysis"
+    """'Whole Exome Sequencing' -> 'Whole Exome Sequencing Analysis' in the title and
+    in a WES & Mito report's 'Whole Exome Sequencing' section heading."""
+    paras = [p for p in doc.element.body.iterchildren(qn("w:p")) if _text(p).strip()]
+    for p in [paras[0]] + [p for p in paras[1:] if _text(p).strip() == "Whole Exome Sequencing"]:
+        for t in p.iter(qn("w:t")):
+            if t.text and "Whole Exome Sequencing" in t.text and "Sequencing Analysis" not in t.text:
+                t.text = t.text.replace("Whole Exome Sequencing", "Whole Exome Sequencing Analysis", 1)
 
 
 def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
@@ -1815,6 +1861,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         if options["interpretation"] == "no":
             _drop_interpretation_section(doc)
         _parents_recommendation(doc, options["parents"] == "yes")
+        if options["compound_note"] == "yes" and cfg.variants:
+            _compound_het_note(doc)
     if cfg.variants:
         if cfg.keep_layout:
             _fit_variant_layout(doc)
