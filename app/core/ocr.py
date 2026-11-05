@@ -46,18 +46,20 @@ class OcrError(Exception):
 
 
 def find_tesseract() -> str:
-    """Path of tesseract.exe: on PATH, in the usual install folders, or bundled."""
+    """Path of tesseract: on PATH, in the usual install folders, or bundled (Windows only)."""
     from .os_utils import resource_path
     found = shutil.which("tesseract")
     if found:
         return found
-    roots = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", ""),
-             os.environ.get("ProgramFiles(x86)", "")]
-    paths = [os.path.join(r, *sub) for r in roots if r
-             for sub in (("Programs", "Tesseract-OCR", "tesseract.exe"),
-                         ("Tesseract-OCR", "tesseract.exe"))]
-    paths.append(resource_path("tesseract", "tesseract.exe"))
-    return next((p for p in paths if os.path.exists(p)), "")
+    if sys.platform == "win32":
+        roots = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", ""),
+                 os.environ.get("ProgramFiles(x86)", "")]
+        paths = [os.path.join(r, *sub) for r in roots if r
+                 for sub in (("Programs", "Tesseract-OCR", "tesseract.exe"),
+                             ("Tesseract-OCR", "tesseract.exe"))]
+        paths.append(resource_path("tesseract", "tesseract.exe"))
+        return next((p for p in paths if os.path.exists(p)), "")
+    return ""
 
 
 def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -106,7 +108,9 @@ def nc_from_image(path: str, expected: int = 0) -> str:
     from PIL import Image
     exe = find_tesseract()
     if not exe and sys.platform != "win32":
-        raise OcrError("Install Tesseract OCR to read an image.")
+        raise OcrError(
+            "Tesseract OCR is not installed. Run: sudo apt install tesseract-ocr"
+        )
     first = ""
     with Image.open(path) as im:
         im = im.convert("RGB")

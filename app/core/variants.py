@@ -112,6 +112,7 @@ def read_variants(path: str) -> list[dict]:
         v["omim_inh"] = "|".join(inh)             # AD / AR / "" per id, from OMIM genemap2
         v["omim_id"] = ", ".join(ids)           # all of the gene's; the user deletes the rest
         v["disease"] = suggested_disease(v)
+        v["gene_mim"] = gene_mim_number(v.get("gene", ""))
         v["omim_phenotype_prefix"] = v["omim_phenotype"] = omim_phenotype_prefix(v)
         v["inheritance"] = suggested_inheritance(v) or v["inheritance"]
         out.append(v)
@@ -148,6 +149,30 @@ def _genemap() -> dict[str, list[tuple[str, str]]]:
     except OSError:
         pass
     return out
+
+
+@lru_cache(maxsize=1)
+def _gene_mim_map() -> dict[str, str]:
+    """Gene symbol (upper) -> gene MIM number, from the bundled omim_mim2gene.txt.
+    Only 'gene' type entries are included (not phenotype-only MIM numbers)."""
+    from .os_utils import resource_path
+    out: dict[str, str] = {}
+    try:
+        with open(resource_path("app", "data", "omim_mim2gene.txt"), encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                cols = line.rstrip("\n").split("\t")
+                if len(cols) >= 4 and cols[1].strip() == "gene" and cols[3].strip():
+                    out[cols[3].strip().upper()] = cols[0].strip()
+    except OSError:
+        pass
+    return out
+
+
+def gene_mim_number(gene: str) -> str:
+    """Return the OMIM gene MIM number for a gene symbol, or '' if not found."""
+    return _gene_mim_map().get(gene.strip().upper(), "") if gene else ""
 
 
 def _omim_phenotypes(v: dict) -> tuple[list[str], list[str], list[str]]:

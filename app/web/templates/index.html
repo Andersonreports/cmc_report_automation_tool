@@ -230,6 +230,8 @@ label.req::after{content:" *";color:var(--warn)}
   width:100%;font-family:inherit;background:var(--surface);transition:border-color .15s;
 }
 .detail-row input:focus,.detail-row select:focus,.detail-row textarea:focus{outline:none;border-color:var(--accent-mid);box-shadow:0 0 0 2px var(--accent-light)}
+.gene-mim-badge{margin-top:4px;font-size:11px;color:var(--label)}
+.gene-mim-link{color:#0563C1;text-decoration:underline;font-weight:600;cursor:pointer}
 .detail-row textarea{min-height:70px;resize:vertical}
 .detail-row-inline{display:flex;gap:8px;align-items:flex-end}
 .detail-row-inline>*{flex:1}
@@ -1446,6 +1448,10 @@ function buildVariantDetailHTML(v, defs, idx) {
   html += textarea('evidence', 'Clinical and Literature Evidences:', v.evidence || (defs && defs.suggested_evidence) || '');
   const omimPhenotype = v.omim_phenotype || (defs && defs.omim_phenotype_prefix) || '';
   html += textarea('omim_phenotype', 'OMIM phenotype:', omimPhenotype);
+  if (defs && defs.gene_mim) {
+    const mimUrl = `https://www.omim.org/entry/${defs.gene_mim}`;
+    html += `<div class="gene-mim-badge">Gene MIM: <a href="${mimUrl}" target="_blank" rel="noopener" class="gene-mim-link">(OMIM*${defs.gene_mim})</a></div>`;
+  }
 
   return html;
 }

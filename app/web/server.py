@@ -512,6 +512,7 @@ def api_variant_defaults():
         "suggested_inheritance": variants_core.suggested_inheritance(v),
         "suggested_evidence": variants_core.suggested_evidence(v),
         "omim_phenotype_prefix": variants_core.omim_phenotype_prefix(v),
+        "gene_mim": variants_core.gene_mim_number(v.get("gene", "")),
         "insilico_tools": tools,
         "omim_ids_in": variants_core.omim_ids_in(v, disease),
     })

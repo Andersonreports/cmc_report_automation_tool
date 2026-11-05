@@ -1091,6 +1091,12 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             box.textChanged.connect(lambda k=key, b=box: self._typed(k, b.toPlainText()))
             self.f_notes[key] = box
             dl.addRow(label, box)
+        self.gene_mim_label = QLabel()
+        self.gene_mim_label.setTextFormat(Qt.RichText)
+        self.gene_mim_label.setOpenExternalLinks(True)
+        self.gene_mim_label.setStyleSheet("font-size:11px;color:#6b7280;")
+        self.gene_mim_label.hide()
+        dl.addRow("", self.gene_mim_label)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -1220,6 +1226,14 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             self.f_typed["region"].setText(variants_core.region(v))
         opts = v.get("omim_options", "")
         self.f_typed["omim_id"].setPlaceholderText(f"Sheet has: {opts}" if opts else "")
+        gene_mim = v.get("gene_mim", "")
+        if gene_mim:
+            url = f"https://www.omim.org/entry/{gene_mim}"
+            self.gene_mim_label.setText(
+                f'Gene MIM: <a href="{url}" style="color:#0563C1;">(OMIM*{gene_mim})</a>')
+            self.gene_mim_label.show()
+        else:
+            self.gene_mim_label.hide()
 
     def variants(self) -> list[dict]:
         return [dict(v) for v in self._variants]
