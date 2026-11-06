@@ -34,7 +34,7 @@ from ..core import bulk, gnomad, ocr, sheet_client, variants as variants_core
 from . import style
 from ..core.models import PatientInfo, ReportData, today_str
 
-APP_NAME = "CMC Report Automation"
+APP_NAME = "Germline Report Automation"
 
 # (attribute, label, example shown greyed in the empty box - never printed)
 PATIENT_FIELDS = [
