@@ -1827,30 +1827,22 @@ def _parents_recommendation(doc, wanted: bool) -> None:
 
 
 def _pseudogene_recommendation(doc, data: ReportData) -> None:
-    """Add a pseudogene note for each selected gene that has known pseudogene(s)."""
+    """Add a pseudogene note as the first item in Recommendations."""
     from . import variants as vr
     chosen = [v for v in data.variants if v.get("selected")]
     genes = vr.pseudogene_genes(chosen)
     if not genes:
         return
     head = _find_para(doc, "Recommendations", "'Recommendations' heading")
-    p = head.getnext()
-    anchor = None
-    while p is not None and p.tag == qn("w:p"):
-        if not _text(p).strip():
-            if anchor is None:
-                p = p.getnext()
-                continue
-            break
-        anchor = p
-        p = p.getnext()
-    if anchor is None:
+    first = head.getnext()
+    while first is not None and first.tag == qn("w:p") and not _text(first).strip():
+        first = first.getnext()
+    if first is None or first.tag != qn("w:p"):
         return
-    for gene in genes:
-        line = copy.deepcopy(anchor)
+    for gene in reversed(genes):
+        line = copy.deepcopy(first)
         _set_text(line, f"The {gene} gene has pseudogene(s) in the human genome.")
-        anchor.addnext(line)
-        anchor = line
+        first.addprevious(line)
 
 
 def _title_with_analysis(doc) -> None:
