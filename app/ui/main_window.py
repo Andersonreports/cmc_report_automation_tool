@@ -19,9 +19,9 @@ from datetime import datetime
 from PySide6.QtCore import QDate, QPoint, QRect, QRectF, QSettings, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton, QScrollArea,
+    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton, QRadioButton, QScrollArea,
     QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QTabBar, QTabWidget, QToolButton,
     QVBoxLayout, QWidget, QWidgetAction,
 )
@@ -1012,7 +1012,20 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             edit.setToolTip(tip)
             edit.textEdited.connect(lambda text, k=key: self._typed(k, text))
             self.f_typed[key] = edit
-            if key == "genomic_position":       # + a backup: read the NC id from an image
+            if key == "genomic_position":
+                radio_row = QWidget()
+                rl_radio = QHBoxLayout(radio_row)
+                rl_radio.setContentsMargins(0, 0, 0, 0)
+                self._gp_auto = QRadioButton("Auto-calculate")
+                self._gp_image = QRadioButton("From image")
+                self._gp_auto.setChecked(True)
+                gp_group = QButtonGroup(self)
+                gp_group.addButton(self._gp_auto)
+                gp_group.addButton(self._gp_image)
+                rl_radio.addWidget(self._gp_auto)
+                rl_radio.addWidget(self._gp_image)
+                rl_radio.addStretch()
+                dl.addRow(radio_row)
                 row = QWidget()
                 rl2 = QHBoxLayout(row)
                 rl2.setContentsMargins(0, 0, 0, 0)
@@ -1022,8 +1035,11 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                 btn.setToolTip("Pick a screenshot / photo that shows the NC accession "
                                "(e.g. NC_000013.11); it replaces the one built from the Excel")
                 btn.clicked.connect(self._nc_from_image)
+                btn.setVisible(False)
+                self._gp_image_btn = btn
                 rl2.addWidget(btn)
-                dl.addRow(row)                  # the section heading already says what it is
+                dl.addRow(row)
+                self._gp_auto.toggled.connect(self._gp_mode_changed)
                 return
             if key != "frequency":
                 dl.addRow(label, edit)
@@ -1237,6 +1253,16 @@ class VariantsPanel(ExcelDropPanel, QWidget):
 
     def variants(self) -> list[dict]:
         return [dict(v) for v in self._variants]
+
+    def _gp_mode_changed(self, auto_checked: bool):
+        """Toggle between auto-calculate and from-image for Genomic Position."""
+        self._gp_image_btn.setVisible(not auto_checked)
+        if auto_checked and 0 <= self._current < len(self._variants):
+            v = self._variants[self._current]
+            text = variants_core.genomic_text(v)
+            v["genomic_position"] = text
+            self.f_typed["genomic_position"].setText(text)
+            self.changed.emit()
 
     def _nc_from_image(self):
         """Backup for the Genomic Position: the NC accession read from an image

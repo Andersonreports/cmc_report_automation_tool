@@ -228,12 +228,17 @@ def omim_ids_in(v: dict, disease: str) -> list[str]:
 
 
 def omim_phenotype_prefix(v: dict) -> str:
-    """Start of the OMIM phenotype paragraph: '{Disease} (OMIM#id)'; the rest of the
-    sentence is typed by the user."""
+    """Start of the OMIM phenotype paragraph: '{Disease} (OMIM#id) ... gene (OMIM*gene_mim)';
+    the rest of the sentence is typed by the user."""
     disease, ids = v.get("disease", "").strip(), v.get("omim_id", "").strip()
     if not disease:
         return ""
-    return f"{disease} (OMIM#{ids})" if ids else disease
+    text = f"{disease} (OMIM#{ids})" if ids else disease
+    gene = v.get("gene", "").strip()
+    gmim = v.get("gene_mim", "") or gene_mim_number(gene)
+    if gmim and gene:
+        text += f" is caused by mutation in the {gene} gene (OMIM*{gmim})."
+    return text
 
 
 def suggested_inheritance(v: dict) -> str:
@@ -598,6 +603,24 @@ def genomic_position(v: dict) -> tuple[str, str]:
     text = v.get("genomic_position", "").strip() or genomic_text(v)
     m = re.search(r"\s*(\([A-Z]{2}_[^)]*\))\s*$", text)
     return (text[:m.start()].strip(), m.group(1)) if m else (text, "")
+
+
+PSEUDOGENE_GENES: frozenset[str] = frozenset({
+    "BRCA1", "PMS2", "CHEK2", "PKD1", "STRC", "CYP21A2",
+    "GBA", "GBA1", "SMN1", "SMN2", "VWF", "IKBKG", "HYDIN",
+})
+
+
+def pseudogene_genes(chosen: list[dict]) -> list[str]:
+    """Selected variant genes that have known pseudogene(s), in order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in chosen:
+        g = v.get("gene", "").strip()
+        if g.upper() in {s.upper() for s in PSEUDOGENE_GENES} and g not in seen:
+            seen.add(g)
+            out.append(g)
+    return out
 
 
 CLINVAR_URL = "https://www.ncbi.nlm.nih.gov/clinvar/variation/{}/"

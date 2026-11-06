@@ -1826,6 +1826,33 @@ def _parents_recommendation(doc, wanted: bool) -> None:
         first.addprevious(line)
 
 
+def _pseudogene_recommendation(doc, data: ReportData) -> None:
+    """Add a pseudogene note for each selected gene that has known pseudogene(s)."""
+    from . import variants as vr
+    chosen = [v for v in data.variants if v.get("selected")]
+    genes = vr.pseudogene_genes(chosen)
+    if not genes:
+        return
+    head = _find_para(doc, "Recommendations", "'Recommendations' heading")
+    p = head.getnext()
+    anchor = None
+    while p is not None and p.tag == qn("w:p"):
+        if not _text(p).strip():
+            if anchor is None:
+                p = p.getnext()
+                continue
+            break
+        anchor = p
+        p = p.getnext()
+    if anchor is None:
+        return
+    for gene in genes:
+        line = copy.deepcopy(anchor)
+        _set_text(line, f"The {gene} gene has pseudogene(s) in the human genome.")
+        anchor.addnext(line)
+        anchor = line
+
+
 def _title_with_analysis(doc) -> None:
     """'Whole Exome Sequencing' -> 'Whole Exome Sequencing Analysis' in the title and
     in a WES & Mito report's 'Whole Exome Sequencing' section heading."""
@@ -1864,6 +1891,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         if options["compound_note"] == "yes" and cfg.variants:
             _compound_het_note(doc)
     if cfg.variants:
+        _pseudogene_recommendation(doc, data)
         if cfg.keep_layout:
             _fit_variant_layout(doc)
         else:

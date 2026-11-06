@@ -1428,11 +1428,20 @@ function buildVariantDetailHTML(v, defs, idx) {
 
   // Genomic position
   const genomicVal = v.genomic_position || (defs && defs.genomic_text) || '';
+  const gpMode = v._gp_mode || 'auto';
   html += `<div class="detail-section-title">Genomic Position</div>`;
   html += `<div class="detail-row">
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px">
+        <input type="radio" name="gp-mode" value="auto" ${gpMode==='auto'?'checked':''} style="margin:0"> Auto-calculate
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px">
+        <input type="radio" name="gp-mode" value="image" ${gpMode==='image'?'checked':''} style="margin:0"> From image
+      </label>
+    </div>
     <div style="display:flex;gap:6px;align-items:flex-end">
       <input type="text" class="vd-field" data-key="genomic_position" value="${escHtml(genomicVal)}" style="flex:1">
-      <label class="btn" style="cursor:pointer;font-size:11px;white-space:nowrap">From image…
+      <label class="btn" id="ocr-btn" style="cursor:pointer;font-size:11px;white-space:nowrap;display:${gpMode==='image'?'':'none'}">From image…
         <input type="file" id="ocr-file-input" accept="image/*" style="display:none">
       </label>
     </div>
@@ -1515,6 +1524,23 @@ function bindVariantDetail(idx, defs) {
       schedulePreview();
     } catch(e) { toast(`gnomAD error: ${e.message}`); }
     finally { gnomBtn.disabled = false; gnomBtn.textContent = 'From gnomAD'; }
+  });
+
+  // Genomic position mode toggle
+  col.querySelectorAll('input[name="gp-mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const mode = radio.value;
+      v._gp_mode = mode;
+      const ocrBtn = col.querySelector('#ocr-btn');
+      if (ocrBtn) ocrBtn.style.display = mode === 'image' ? '' : 'none';
+      if (mode === 'auto') {
+        const autoText = (defs && defs.genomic_text) || '';
+        v.genomic_position = autoText;
+        const gpos = col.querySelector('.vd-field[data-key="genomic_position"]');
+        if (gpos) gpos.value = autoText;
+        schedulePreview();
+      }
+    });
   });
 
   // OCR button
