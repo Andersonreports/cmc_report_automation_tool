@@ -533,7 +533,7 @@ class GeneTableEditor(QWidget):
             return
         msg, color = f"Pasted {len(genes)} genes.", "#1a7f37"
         if problems:
-            shown = "; ".join(problems[:5]) + (" …" if len(problems) > 5 else "")
+            shown = "; ".join(problems[:5]) + (" ..." if len(problems) > 5 else "")
             msg += f" Skipped {len(problems)} cell pair(s) that aren't a gene + coverage: {shown}"
             color = "#b35c00"
         self.set_genes(genes, msg, color)
@@ -870,7 +870,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._accept_excel_drops(zone)
         top = QHBoxLayout()                 # the upload box and the search box side by side
         top.addWidget(zone, 3)
-        self.search = QLineEdit(placeholderText="Search variants…")
+        self.search = QLineEdit(placeholderText="Search variants...")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         top.addWidget(self.search, 2, Qt.AlignVCenter)
@@ -1022,7 +1022,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                 auto_btn.setToolTip("Recalculate the genomic position from the Excel data")
                 auto_btn.clicked.connect(self._gp_auto_calculate)
                 rl2.addWidget(auto_btn)
-                img_btn = QPushButton("From image…")
+                img_btn = QPushButton("From image...")
                 img_btn.setCursor(Qt.PointingHandCursor)
                 img_btn.setToolTip("Pick a screenshot / photo that shows the NC accession "
                                    "(e.g. NC_000013.11); it replaces the one built from the Excel")
@@ -1578,7 +1578,7 @@ class BulkPanel(ExcelDropPanel, QWidget):
         zone.chosen.connect(self.upload)
         self._accept_excel_drops(zone)
         lay.addWidget(zone)
-        self.search = QLineEdit(placeholderText="Search patients…")
+        self.search = QLineEdit(placeholderText="Search patients...")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         left = QWidget()
@@ -1715,7 +1715,7 @@ class BulkPanel(ExcelDropPanel, QWidget):
         self._show_tools(True)
         self.body.setCurrentWidget(self.table)
         self.status.setVisible(True)
-        self.status.setText(f"Looking up the patients… 0 of {self._total}")
+        self.status.setText(f"Looking up the patients... 0 of {self._total}")
         self.worker = PrepareWorker(rows, template_key, reviewer, report_date)
         self.worker.progress.connect(self._added)
         self.worker.start()
@@ -1772,7 +1772,7 @@ class BulkPanel(ExcelDropPanel, QWidget):
         self.table.setItem(r, 0, it)
         self.table.blockSignals(False)
         if done < total:
-            self.status.setText(f"Looking up the patients… {done} of {total}")
+            self.status.setText(f"Looking up the patients... {done} of {total}")
             return
         self.status.setVisible(False)   # the Status column says what needs attention
         first = next((r for r, i in enumerate(self.items) if i.data), None)
@@ -1867,11 +1867,11 @@ class BulkPanel(ExcelDropPanel, QWidget):
                     if os.path.exists(os.path.join(folder, f"{s}.{e}"))]
         if existing and QMessageBox.question(
                 win, "Files exist", "Already in the folder:\n" + "\n".join(existing[:15])
-                + ("\n…" if len(existing) > 15 else "") + "\n\nReplace?") != QMessageBox.Yes:
+                + ("\n..." if len(existing) > 15 else "") + "\n\nReplace?") != QMessageBox.Yes:
             return
         self._export_log = []
         self._folder = folder
-        self._progress = QProgressDialog("Saving reports…", "Stop", 0, len(chosen), win)
+        self._progress = QProgressDialog("Saving reports...", "Stop", 0, len(chosen), win)
         self._progress.setWindowTitle("Bulk upload")
         self._progress.setWindowModality(Qt.WindowModal)
         self._progress.setMinimumDuration(0)
@@ -1884,7 +1884,7 @@ class BulkPanel(ExcelDropPanel, QWidget):
 
     def _export_step(self, done: int, line: str):
         self._progress.setValue(done)
-        self._progress.setLabelText(f"Saving reports… {done} of {self._progress.maximum()}")
+        self._progress.setLabelText(f"Saving reports... {done} of {self._progress.maximum()}")
         self._export_log.append(line)
 
     def _export_done(self, made: int, failed: int):
@@ -2089,12 +2089,22 @@ class MainWindow(QMainWindow):
         rlay.addWidget(qgrp)
         self.qc_group = qgrp
 
-        lgrp = QGroupBox("Gene list link (Methodology “Click here”)")
+        lgrp = QGroupBox("Gene list link (Methodology Click here)")
         ll = QVBoxLayout(lgrp)
-        self.url_edit = QLineEdit(placeholderText="https://…")
+        url_row = QWidget()
+        url_rl = QHBoxLayout(url_row)
+        url_rl.setContentsMargins(0, 0, 0, 0)
+        self.url_edit = QLineEdit(placeholderText="https://...")
         self.url_edit.setToolTip("Paste this run's gene list link.")
         self.url_edit.textChanged.connect(self._edited)
-        ll.addWidget(self.url_edit)
+        url_rl.addWidget(self.url_edit, 1)
+        nav_btn = QPushButton("↗")
+        nav_btn.setFixedWidth(32)
+        nav_btn.setCursor(Qt.PointingHandCursor)
+        nav_btn.setToolTip("Open Gene Panel app to create the link")
+        nav_btn.clicked.connect(lambda: __import__("webbrowser").open("https://genepanel-bioinfo.streamlit.app/"))
+        url_rl.addWidget(nav_btn)
+        ll.addWidget(url_row)
         rlay.addWidget(lgrp)
 
         self.tabs = StepTabs()
@@ -2139,7 +2149,7 @@ class MainWindow(QMainWindow):
                                      os.path.join(os.path.expanduser("~"), "Downloads"))
         self.folder_edit.setReadOnly(True)
         row.addWidget(self.folder_edit, 1)
-        browse = self._button("Change folder…")
+        browse = self._button("Change folder...")
         browse.clicked.connect(self._choose_folder)
         row.addWidget(browse)
         fl.addLayout(row)
@@ -2508,7 +2518,7 @@ class MainWindow(QMainWindow):
             return
         self._fetched_pin = pin
         self.fetch_btn.setEnabled(False)
-        self._set_fetch_status(f"Looking up {pin} in the patient sheet…", "gray")
+        self._set_fetch_status(f"Looking up {pin} in the patient sheet...", "gray")
         self._fetch_worker = FetchWorker(pin, self.template_combo.currentData())
         self._fetch_worker.found.connect(self._fetch_found)
         self._fetch_worker.missing.connect(lambda p: self._set_fetch_status(
@@ -2708,7 +2718,7 @@ class MainWindow(QMainWindow):
         self._preview_snapshot = snapshot
         self._preview_seq += 1
         out = os.path.join(self._preview_dir, f"preview_{self._preview_seq}.pdf")
-        self.preview_status.setText("Rendering preview…")
+        self.preview_status.setText("Rendering preview...")
         self._preview_worker = RenderWorker(data, out, "pdf")
         self._preview_worker.done.connect(self._preview_ready)
         self._preview_worker.failed.connect(self._preview_failed)
