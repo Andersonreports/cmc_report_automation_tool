@@ -26,7 +26,7 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.shared import Cm, Pt
 from docx.enum.table import WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.text.run import Run
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE as _RT
@@ -149,6 +149,7 @@ def _fill_patient(doc, data: ReportData):
                 pf = p.paragraph_format
                 pf.left_indent = pf.right_indent = pf.first_line_indent = 0
                 pf.space_before = pf.space_after = 0
+                pf.line_spacing_rule = WD_LINE_SPACING.SINGLE
                 p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
@@ -187,6 +188,21 @@ def _fill_gene_list_url(doc, data: ReportData):
     url = data.gene_list_url.strip()
     if url:
         doc.part.rels[_gene_list_link(doc).get(qn("r:id"))]._target = url
+
+
+def _normalize_hyperlink_colors(doc, hex_color: str = "0563C1"):
+    """Set every hyperlink run's colour to hex_color throughout the document."""
+    for link in doc.element.body.iter(qn("w:hyperlink")):
+        for run in link.iter(qn("w:r")):
+            rpr = run.find(qn("w:rPr"))
+            if rpr is None:
+                rpr = OxmlElement("w:rPr")
+                run.insert(0, rpr)
+            color = rpr.find(qn("w:color"))
+            if color is None:
+                color = OxmlElement("w:color")
+                rpr.append(color)
+            color.set(qn("w:val"), hex_color)
 
 
 def template_gene_list_url(template_key: str) -> str:
@@ -926,6 +942,50 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
             el.getparent().remove(el)
 
 
+def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: bool) -> None:
+    """Multiple variants: each gets its own interpretation table with narrative
+    immediately below it, rather than all narratives grouped at the end."""
+    from . import variants as vr
+    omim_para = _para_near(doc, tbl, "OMIM phenotype", "", required=False, whole_doc=whole_doc)
+    evidence_el = _para_near(doc, tbl, "#Clinical and Literature Evidences", "", required=False,
+                             whole_doc=whole_doc)
+    if omim_para is None and evidence_el is None:
+        raise TemplateError("Template is missing: OMIM phenotype / evidence paragraph")
+    if evidence_el is None:
+        evidence_el = copy.deepcopy(omim_para)
+        _set_lead(evidence_el, "Clinical and Literature Evidences: ")
+    empty_tbl = copy.deepcopy(tbl)   # snapshot of empty table structure for reuse
+    anchor = tbl                     # tracks insertion point: each element goes after anchor
+    for n, v in enumerate(chosen):
+        if n == 0:
+            current_tbl = tbl
+        else:
+            current_tbl = copy.deepcopy(empty_tbl)
+            anchor.addnext(current_tbl)
+        for tr in _interpretation_rows(doc, block, v):
+            current_tbl.append(tr)
+        anchor = current_tbl
+        last_inserted = None
+        protos = [(evidence_el, "evidence")]
+        if omim_para is not None:
+            protos.append((omim_para, "omim_phenotype"))
+        for proto, key in protos:
+            text = vr.clean_narrative(v.get(key, ""))
+            if text:
+                para = copy.deepcopy(proto)
+                _set_para_tail(para, text)
+                if key == "omim_phenotype":
+                    _link_omim_in_para(para, doc.part)
+                anchor.addnext(para)
+                anchor = para
+                last_inserted = para
+        if last_inserted is not None:
+            Paragraph(last_inserted, None).paragraph_format.space_after = Pt(8)
+    for p in (evidence_el, omim_para):
+        if p is not None and p.getparent() is not None:
+            p.getparent().remove(p)
+
+
 def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banner: bool,
                       whole_doc: bool = True):
     """One set: a row in the Results table and one block (8 rows) in the Variant
@@ -959,12 +1019,12 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
     block = [copy.deepcopy(r) for r in rows[:8]]
     for tr in rows:
         tbl.remove(tr)
-    for n, v in enumerate(chosen):
-        if n:                       # a gap between one variant's block and the next
-            tbl.append(_spacer_row(tbl))
-        for tr in _interpretation_rows(doc, block, v):
+    if len(chosen) <= 1:
+        for tr in _interpretation_rows(doc, block, chosen[0] if chosen else {}):
             tbl.append(tr)
-    _fill_narrative(doc, tbl, chosen, whole_doc)
+        _fill_narrative(doc, tbl, chosen, whole_doc)
+    else:
+        _fill_variants_interleaved(doc, tbl, block, chosen, whole_doc)
 
 
 def _add_result_rows(doc, res, proto, chosen: list[dict]) -> None:
@@ -997,6 +1057,16 @@ def _add_result_rows(doc, res, proto, chosen: list[dict]) -> None:
         res.append(tr)
 
 
+def _conservation_display(value: str) -> str:
+    """'Conserved' -> 'C', 'Not Conserved' / blank -> '-', anything else uppercased."""
+    low = value.lower().strip()
+    if not low or "not" in low or low == "-":
+        return "-"
+    if low == "conserved":
+        return "C"
+    return value.upper()
+
+
 def _interpretation_rows(doc, block, v) -> list:
     """The template's 8-row Variant Interpretation block (a list of w:tr) filled
     with one variant, kept together on one page."""
@@ -1020,7 +1090,7 @@ def _interpretation_rows(doc, block, v) -> list:
                [(k, vr.silico_case(v.get(key, "").strip()) or "-") for k, key in vr.insilico_tools(v)],
                bold=True)
     _set_pairs(tcs[5][1].find(qn("w:p")),
-               [(k, v.get(key, "").strip().upper() or "-") for k, key in vr.CONSERVATION],
+               [(k, _conservation_display(v.get(key, "").strip())) for k, key in vr.CONSERVATION],
                bold=True)
     for tc in tcs[5]:               # one centered line, whatever tabs / spaces the template has
         _center_line(tc.find(qn("w:p")))
@@ -1050,7 +1120,7 @@ def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> Non
         raise TemplateError("Template is missing: OMIM phenotype / evidence paragraph")
     if evidence is None:            # a template without it: the OMIM paragraph's layout
         evidence = copy.deepcopy(omim_para)
-        _set_lead(evidence, "#Clinical and Literature Evidences: ")
+        _set_lead(evidence, "Clinical and Literature Evidences: ")
     protos = [(evidence, "evidence")] + ([(omim_para, "omim_phenotype")]
                                          if omim_para is not None else [])
     start = anchor = omim_para if omim_para is not None else evidence
@@ -1072,18 +1142,15 @@ def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> Non
 
 
 def _superscript_hash(doc) -> None:
-    """The '#' that marks the evidence headings ('#Clinical and Literature
-    Evidences:', the table heading) as a raised mark, in its own run."""
+    """Strip the leading '#' from any run whose text starts with '#' + letter
+    (e.g. '#Clinical and Literature Evidences' in the table header and narrative)."""
     for r in list(doc.element.body.iter(qn("w:r"))):
         t = r.find(qn("w:t"))
-        if t is None or not t.text or len(t.text) < 2 or t.text[0] != "#"                 or not t.text[1].isalpha():
+        if t is None or not t.text or len(t.text) < 2 or t.text[0] != "#" \
+                or not t.text[1].isalpha():
             continue
-        mark = copy.deepcopy(r)
-        mark.find(qn("w:t")).text = "#"
         t.text = t.text[1:]
         t.set(qn("xml:space"), "preserve")
-        r.addprevious(mark)
-        Run(mark, None).font.superscript = True
 
 
 def _align_result_notes(doc) -> None:
@@ -1865,7 +1932,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     doc = Document(path)
     options = option_values(data.template_key, data.options)
     if options:
-        _patient_layout(doc, options["hospital"] == "yes")
+        _patient_layout(doc, options.get("hospital", "yes") == "yes")
     _fill_patient(doc, data)
     _insert_pcpndt_note(doc, data)
     _fill_history(doc, data)
@@ -1879,7 +1946,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     if options:
         if options["interpretation"] == "no":
             _drop_interpretation_section(doc)
-        _parents_recommendation(doc, options["parents"] == "yes")
+        _parents_recommendation(doc, options.get("parents", "no") == "yes")
         if options["compound_note"] == "yes" and cfg.variants:
             _compound_het_note(doc)
     if cfg.variants:
@@ -1914,4 +1981,5 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _drop_analysis_word(doc)
     if options.get("title") == "analysis":
         _title_with_analysis(doc)
+    _normalize_hyperlink_colors(doc, hex_color="0000ED")
     return doc

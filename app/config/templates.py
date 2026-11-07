@@ -202,7 +202,6 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_sheet="WES",
         variants=True,
         pathogenic=True,
-        fixed_result=True,
         variant_captions=True,
         own_styles=True,
         lab_wording=True,
@@ -252,16 +251,17 @@ _YES_NO = [("yes", "Yes"), ("no", "No")]
 
 
 def _options(results, title, files) -> dict[str, tuple[str, list[tuple[str, str]]]]:
-    return {
+    opts: dict[str, tuple[str, list[tuple[str, str]]]] = {
         "result": ("Result", results),
         "interpretation": ("Variant Interpretation page", _YES_NO),
-        "parents": ("Parents-testing recommendation", _YES_NO),
         "compound_note": ("Compound heterozygous note", [("no", "No"), ("yes", "Yes")]),
-        "title": ("Title", [("short", title), ("analysis", title.replace(
-            "Whole Exome Sequencing", "Whole Exome Sequencing Analysis", 1))]),
-        "hospital": ("Hospital/Clinic row", _YES_NO),
-        "file_suffix": ("File name", files),
     }
+    if title is not None:
+        opts["title"] = ("Title", [("short", title), ("analysis", title.replace(
+            "Whole Exome Sequencing", "Whole Exome Sequencing Analysis", 1))])
+    if files is not None:
+        opts["file_suffix"] = ("File name", files)
+    return opts
 
 
 # The report options of each options template (TemplateConfig.options): key ->
@@ -270,19 +270,17 @@ def _options(results, title, files) -> dict[str, tuple[str, list[tuple[str, str]
 OPTIONS: dict[str, dict[str, tuple[str, list[tuple[str, str]]]]] = {
     "wes": _options(
         [("none", "No pathogenic variant"),
-         ("pathogenic", "Pathogenic / Likely pathogenic / VUS"),
-         ("incidental", "Incidental finding(s)")],
-        "Whole Exome Sequencing",
-        [("whole_exome_report|-", "<name>_whole_exome_report_<dd-mm-yyyy>"),
-         ("wes_report|-", "<name>_wes_report_<dd-mm-yyyy>")]),
+         ("pathogenic", "Pathogenic / Likely pathogenic"),
+         ("vus", "VUS")],
+        None,
+        None),
     "wes_mito": _options(
         [("none", "No pathogenic variant"),
-         ("pathogenic", "Pathogenic / Likely pathogenic / VUS"),
+         ("pathogenic", "Pathogenic / Likely pathogenic"),
+         ("vus", "VUS"),
          ("additional", "Additional variant(s)")],
-        "Whole Exome Sequencing & Whole Mitochondrial Genome Sequencing",
-        [("WES_&_Mito_report|-", "<name>_WES_&_Mito_report_<dd-mm-yyyy>"),
-         ("Whole_Exome_Whole_mitochondrial_Report|_",
-          "<name>_Whole_Exome_Whole_mitochondrial_Report_<dd_mm_yyyy>")]),
+        None,
+        None),
 }
 
 # What each Result brings: its layout (TemplateConfig fields) and the options'
@@ -290,32 +288,36 @@ OPTIONS: dict[str, dict[str, tuple[str, list[tuple[str, str]]]]] = {
 RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
     "wes": {
         "none": (dict(docx_file="wes_no_pathogenic.docx"),
-                 dict(interpretation="no", parents="no", hospital="yes",
+                 dict(interpretation="no",
                       file_suffix="whole_exome_report|-", reviewer="ROBERT")),
         "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True,
                             new_page_before=("Variant Interpretation",)),
-                       dict(interpretation="yes", parents="yes", hospital="yes",
+                       dict(interpretation="yes",
                             file_suffix="whole_exome_report|-", reviewer="ROBERT")),
-        "incidental": (dict(docx_file="whole_exome_incidental.docx", variants=True,
-                            pathogenic=True, fixed_result=True,
-                            new_page_before=("Variant Interpretation",)),
-                       dict(interpretation="yes", parents="no", hospital="no",
-                            file_suffix="wes_report|-", reviewer="SARATH")),
+        "vus": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True,
+                     new_page_before=("Variant Interpretation",)),
+                dict(interpretation="yes",
+                     file_suffix="whole_exome_report|-", reviewer="ROBERT")),
     },
     "wes_mito": {
         "none": (dict(docx_file="whole_exome_mito.docx", new_page_before=("Disclaimer",)),
-                 dict(interpretation="no", parents="no", hospital="yes",
+                 dict(interpretation="no",
                       file_suffix="Whole_Exome_Whole_mitochondrial_Report|_", reviewer="SARATH")),
         "pathogenic": (dict(docx_file="whole_exome_mito_patho.docx", variants=True,
                             pathogenic=True, keep_layout=True, secondary_findings=True,
                             new_page_before=("Variant Interpretation",)),
-                       dict(interpretation="yes", parents="yes", hospital="yes",
-                            file_suffix="WES_&_Mito_report|-", reviewer="SARATH")),
+                       dict(interpretation="yes",
+                            file_suffix="WES_Mito_report|_", reviewer="SARATH")),
+        "vus": (dict(docx_file="whole_exome_mito_patho.docx", variants=True,
+                     pathogenic=True, keep_layout=True, secondary_findings=True,
+                     new_page_before=("Variant Interpretation",)),
+                dict(interpretation="yes",
+                     file_suffix="WES_Mito_report|_", reviewer="SARATH")),
         "additional": (dict(docx_file="whole_exome_mito_additional.docx", variants=True,
                             pathogenic=True, keep_layout=True, secondary_findings=True,
                             fixed_result=True, variant_captions=True, own_styles=True),
-                       dict(interpretation="yes", parents="yes", hospital="yes",
-                            file_suffix="WES_&_Mito_report|-", reviewer="SARATH")),
+                       dict(interpretation="yes",
+                            file_suffix="WES_Mito_report|_", reviewer="SARATH")),
     },
 }
 
@@ -356,7 +358,9 @@ def effective(key: str, options: dict | None = None) -> TemplateConfig:
     pages = layout.pop("new_page_before", ())
     if values["interpretation"] == "no":
         pages = tuple(p for p in pages if p != "Variant Interpretation")
-    suffix, sep = values["file_suffix"].split("|")
-    return replace(cfg, **layout, hospital_row=values["hospital"] == "yes",
+    raw_suffix = values.get("file_suffix") or defaults.get("file_suffix", "whole_exome_report|-")
+    suffix, sep = raw_suffix.split("|")
+    hospital_row = (values["hospital"] == "yes") if "hospital" in values else True
+    return replace(cfg, **layout, hospital_row=hospital_row,
                    file_suffix=suffix, file_date_sep=sep, reviewer=defaults["reviewer"],
                    new_page_before=pages)

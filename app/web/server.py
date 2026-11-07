@@ -17,7 +17,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 
 from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effective,
                                 get_template, option_values, template_options)
-from ..core import bulk, gnomad, ocr, sheet_client
+from ..core import bulk, gnomad, mane, ocr, sheet_client
 from ..core import variants as variants_core
 from ..core.docx_renderer import template_gene_list_url, template_gene_table
 from ..core.gene_table import parse_pasted
@@ -351,6 +351,23 @@ def api_parse_genes():
     text = (request.json or {}).get("text", "")
     genes, problems = parse_pasted(text)
     return jsonify({"genes": [[g, c] for g, c in genes], "problems": problems})
+
+
+@app.route("/api/mane-check", methods=["POST"])
+def api_mane_check():
+    data = request.json or {}
+    gene = data.get("gene", "").strip()
+    nm_id = data.get("nm_id", "").strip()           # the NM ID to verify (may be edited)
+    original_nm = data.get("original_nm", "").strip()  # original Excel NM ID (for HGNC fallback)
+    if not gene or not nm_id:
+        return jsonify({"status": "none"})
+    try:
+        ok, mane_nm = mane.check_nm(gene, nm_id, original_nm)
+    except mane.ManeError as e:
+        return jsonify({"status": "error", "message": str(e)})
+    if ok is None:
+        return jsonify({"status": "none"})
+    return jsonify({"status": "match" if ok else "mismatch", "mane_nm": mane_nm})
 
 
 @app.route("/api/gnomad", methods=["POST"])

@@ -336,6 +336,7 @@ label.req::after{content:" *";color:var(--warn)}
   <div class="mode-btns">
     <button class="mode-btn active" data-mode="manual">Manual entry</button>
     <button class="mode-btn" data-mode="bulk">Bulk upload</button>
+    <button id="clear-data-btn" class="mode-btn" style="border-color:rgba(255,120,120,.5);color:rgba(255,200,200,.95)" title="Clear all form data">Clear</button>
   </div>
 </header>
 
@@ -1442,6 +1443,7 @@ function buildVariantDetailHTML(v, defs, idx) {
       </label>
     </div>
   </div>`;
+  html += `<div id="mane-status" style="min-height:18px;font-size:11px;padding:2px 0 2px 2px;"></div>`;
 
   // Evidence links
   html += `<div class="detail-section-title">Evidence Links</div>`;
@@ -1489,6 +1491,32 @@ function bindVariantDetail(idx, defs) {
       else if (key === 'evidence') { manual.evidence = true; v.evidence = val; schedulePreview(); }
       else if (key === 'omim_id') { v.omim_id = val; await onVariantFieldChange(idx, key, val, defs); }
       else if (key === 'clinvar_link' || key === 'pubmed_link') { v[key] = val; await refreshEvidence(idx); }
+      else if (key === 'genomic_position') {
+        v[key] = val; schedulePreview();
+        // Re-check MANE Select when the NM ID inside the brackets changes
+        const mEl = col.querySelector('#mane-status');
+        if (mEl) {
+          const nmMatch = val.match(/\(([A-Z]{2}_\d+(?:\.\d+)?)\)\s*$/);
+          clearTimeout(mEl._maneTimer);
+          if (nmMatch) {
+            mEl.textContent = 'Checking…'; mEl.style.color = '#888'; mEl.style.fontWeight = 'normal';
+            mEl._maneTimer = setTimeout(async () => {
+              try {
+                const r = await postJSON('/api/mane-check',
+                  { gene: v.gene, nm_id: nmMatch[1], original_nm: v.nm_id || nmMatch[1] });
+                if (!mEl.isConnected) return;
+                if (r.status === 'match') {
+                  mEl.textContent = `✓  NM ID matched with HGNC MANE Select (${r.mane_nm})`;
+                  mEl.style.color = '#1a7a1a'; mEl.style.fontWeight = 'bold';
+                } else if (r.status === 'mismatch') {
+                  mEl.textContent = `⚠  NM ID mismatch — HGNC MANE Select is ${r.mane_nm}`;
+                  mEl.style.color = '#cc0000'; mEl.style.fontWeight = 'bold';
+                } else { mEl.textContent = ''; }
+              } catch(e) { mEl.textContent = ''; }
+            }, 800);
+          } else { mEl.textContent = ''; }
+        }
+      }
       else { v[key] = val; schedulePreview(); }
     });
     el.addEventListener('change', async (e) => {
@@ -1549,6 +1577,30 @@ function bindVariantDetail(idx, defs) {
     } catch(e) { toast(`OCR error: ${e.message}`); }
     ocrInput.value = '';
   });
+
+  // MANE Select NM ID verification
+  const maneEl = col.querySelector('#mane-status');
+  function runManeCheck(nmToCheck) {
+    if (!maneEl || !v.gene || !nmToCheck) return;
+    maneEl.textContent = 'Checking NM ID…';
+    maneEl.style.color = '#888'; maneEl.style.fontWeight = 'normal';
+    // original_nm = Excel NM ID, used only as HGNC symbol-lookup fallback
+    postJSON('/api/mane-check', { gene: v.gene, nm_id: nmToCheck, original_nm: v.nm_id || nmToCheck })
+      .then(r => {
+        if (!maneEl.isConnected) return;
+        if (r.status === 'match') {
+          maneEl.textContent = `✓  NM ID matched with HGNC MANE Select (${r.mane_nm})`;
+          maneEl.style.color = '#1a7a1a'; maneEl.style.fontWeight = 'bold';
+        } else if (r.status === 'mismatch') {
+          maneEl.textContent = `⚠  NM ID mismatch — HGNC MANE Select is ${r.mane_nm}`;
+          maneEl.style.color = '#cc0000'; maneEl.style.fontWeight = 'bold';
+        } else if (r.status === 'error') {
+          maneEl.textContent = `MANE check failed: ${r.message}`;
+          maneEl.style.color = '#888'; maneEl.style.fontWeight = 'normal';
+        } else { maneEl.textContent = ''; }
+      }).catch(() => { if (maneEl.isConnected) maneEl.textContent = ''; });
+  }
+  if (v.gene && v.nm_id) runManeCheck(v.nm_id);
 }
 
 async function onVariantFieldChange(idx, key, val, defs) {
@@ -1705,8 +1757,12 @@ function onResultTagChange() {
 // ============================================================
 // PREVIEW
 // ============================================================
+let _saveTimer = null;
+function scheduleSave() { clearTimeout(_saveTimer); _saveTimer = setTimeout(saveFormState, 600); }
+
 function schedulePreview(force=false) {
   updateSteps();
+  scheduleSave();
   clearTimeout(G.previewTimer);
   G.previewTimer = setTimeout(() => doPreview(force), force ? 0 : 1200);
 }
@@ -2234,6 +2290,16 @@ async function initApp() {
     G.templateKey = init.default_template;
     await onTemplateChange(init.default_template, true);
 
+    // Restore saved form state (overwrites defaults only if data was saved)
+    await restoreFormState();
+
+    // Auto-save state on any input change
+    $('manual-panel').addEventListener('input', scheduleSave);
+    $('manual-panel').addEventListener('change', scheduleSave);
+
+    // Clear button
+    $('clear-data-btn').addEventListener('click', clearFormData);
+
     // Initial tab (patient is shown by default via CSS)
     $qa('.tab-panel').forEach(p => { if (p.id !== 'tab-patient') { p.style.display='none'; p.classList.remove('active'); } });
     updateSteps();
@@ -2245,6 +2311,86 @@ async function initApp() {
     document.body.innerHTML = `<div style="padding:40px;color:red;font-family:monospace">
       <b>Startup error:</b><br><pre>${escHtml(e.stack||e.message)}</pre></div>`;
   }
+}
+
+// ============================================================
+// FORM STATE PERSISTENCE (localStorage)
+// ============================================================
+const STATE_KEY = 'gra_form_state';
+
+function saveFormState() {
+  try {
+    const state = {
+      templateKey: G.templateKey,
+      mode: G.mode,
+      formFields: {
+        'f-pin': $('f-pin').value,
+        'f-patient_id': $('f-patient_id').value,
+        'f-age': $('f-age').value,
+        'f-gender': $('f-gender').value,
+        'f-sample_number': $('f-sample_number').value,
+        'f-collection_date': $('f-collection_date').value,
+        'f-received_date': $('f-received_date').value,
+        'f-report_date': $('f-report_date').value,
+        'f-clinical_history': $('f-clinical_history').value,
+        'f-total_reads': $('f-total_reads').value,
+        'f-q30': $('f-q30').value,
+        'f-gene_list_url': $('f-gene_list_url').value,
+      },
+      otherChoices: {
+        'oc-hospital': getOtherChoice('oc-hospital'),
+        'oc-referring_clinician': getOtherChoice('oc-referring_clinician'),
+        'oc-specimen': getOtherChoice('oc-specimen'),
+        'oc-primary_title': getOtherChoice('oc-primary_title'),
+      },
+      reviewer: $('reviewer-combo').value,
+      resultTag: $('f-result_tag').value,
+      secondaryTitle: $('f-secondary_title').value,
+      genes: collectGenes(),
+      variants: G.variants,
+      variantManualFields: G.variantManualFields,
+      options: G.options,
+    };
+    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+  } catch(e) {}
+}
+
+async function restoreFormState() {
+  try {
+    const raw = localStorage.getItem(STATE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    if (state.templateKey && state.templateKey !== G.templateKey) {
+      await onTemplateChange(state.templateKey, true);
+    }
+    for (const [id, val] of Object.entries(state.formFields || {})) {
+      const el = $(id);
+      if (el) el.value = val;
+    }
+    for (const [id, val] of Object.entries(state.otherChoices || {})) {
+      try { setOtherChoice(id, val); } catch(e) {}
+    }
+    if (state.reviewer) $('reviewer-combo').value = state.reviewer;
+    if (state.resultTag) $('f-result_tag').value = state.resultTag;
+    if (state.secondaryTitle) $('f-secondary_title').value = state.secondaryTitle;
+    if (state.genes && state.genes.length) renderGeneTable(state.genes);
+    if (state.variants && state.variants.length) {
+      G.variants = state.variants;
+      G.variantManualFields = state.variantManualFields || {};
+      renderVariantList();
+      const hint = $('variants-hint');
+      if (hint) { hint.style.display = ''; hint.textContent = `Restored ${G.variants.length} variant${G.variants.length===1?'':'s'}.`; hint.className = 'variant-hint status-ok'; }
+    }
+    if (state.options) G.options = state.options;
+    if (state.mode && state.mode !== G.mode) switchMode(state.mode);
+    return true;
+  } catch(e) { return false; }
+}
+
+function clearFormData() {
+  if (!confirm('Clear all form data? This cannot be undone.')) return;
+  try { localStorage.removeItem(STATE_KEY); } catch(e) {}
+  window.location.reload();
 }
 
 document.addEventListener('DOMContentLoaded', initApp);

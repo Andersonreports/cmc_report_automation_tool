@@ -30,7 +30,7 @@ from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effectiv
                                 get_template, option_values, template_options)
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
-from ..core import bulk, gnomad, ocr, sheet_client, variants as variants_core
+from ..core import bulk, gnomad, mane, ocr, sheet_client, variants as variants_core
 from . import style
 from ..core.models import PatientInfo, ReportData, today_str
 
@@ -130,6 +130,34 @@ class FetchWorker(QThread):
         out = dict(fields or {"pin": self.pin})
         out.update(qc or {})
         self.found.emit(self.pin, out, "\n".join(notes))
+
+
+class ManeWorker(QThread):
+    """Check the variant's NM ID against HGNC MANE Select off the UI thread."""
+    matched = Signal(str)       # mane_nm — IDs agree (versions stripped)
+    mismatched = Signal(str)    # mane_nm — IDs differ
+    not_found = Signal()        # gene not in HGNC / no MANE Select entry
+    failed = Signal(str)        # error message
+
+    def __init__(self, gene: str, nm_id: str):
+        super().__init__()
+        self.gene, self.nm_id = gene, nm_id
+
+    def run(self):
+        try:
+            ok, mane_nm = mane.check_nm(self.gene, self.nm_id)
+        except mane.ManeError as e:
+            self.failed.emit(str(e))
+            return
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(f"Unexpected error: {e}")
+            return
+        if ok is None:
+            self.not_found.emit()
+        elif ok:
+            self.matched.emit(mane_nm)
+        else:
+            self.mismatched.emit(mane_nm)
 
 
 PIN_PATTERN = re.compile(r"ADK\d{10}|PH\d{11}", re.I)    # patient sheet / WES sheet PINs
@@ -861,6 +889,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._current = -1                    # variant index shown in the detail form
         self.secondary_separate = False       # the template has its own Secondary findings set
         self.fixed_result = False             # the template's result line never changes: no Result picker
+        self._mane_worker: ManeWorker | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 12, 0, 0)
         lay.setSpacing(10)
@@ -1029,6 +1058,10 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                 img_btn.clicked.connect(self._nc_from_image)
                 rl2.addWidget(img_btn)
                 dl.addRow(row)
+                self.mane_status = QLabel()
+                self.mane_status.setWordWrap(True)
+                self.mane_status.setFixedHeight(18)
+                dl.addRow(self.mane_status)
                 return
             if key != "frequency":
                 dl.addRow(label, edit)
@@ -1239,6 +1272,43 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             self.gene_mim_label.show()
         else:
             self.gene_mim_label.hide()
+        self._start_mane_check(v)
+
+    def _start_mane_check(self, v: dict):
+        """Launch a background MANE Select verification for this variant's NM ID."""
+        gene = v.get("gene", "").strip()
+        nm_id = v.get("nm_id", "").strip()
+        self.mane_status.setText("")
+        if not gene or not nm_id:
+            return
+        # cancel any previous check
+        if hasattr(self, "_mane_worker") and self._mane_worker and self._mane_worker.isRunning():
+            self._mane_worker.matched.disconnect()
+            self._mane_worker.mismatched.disconnect()
+            self._mane_worker.not_found.disconnect()
+            self._mane_worker.failed.disconnect()
+        worker = ManeWorker(gene, nm_id)
+        self._mane_worker = worker
+        worker.matched.connect(self._mane_ok)
+        worker.mismatched.connect(self._mane_mismatch)
+        worker.not_found.connect(self._mane_not_found)
+        worker.failed.connect(self._mane_error)
+        worker.start()
+
+    def _mane_ok(self, mane_nm: str):
+        self.mane_status.setText(f"✓  NM ID matched with HGNC MANE Select ({mane_nm})")
+        self.mane_status.setStyleSheet("color: #1a7a1a; font-weight: bold; font-size: 11px;")
+
+    def _mane_mismatch(self, mane_nm: str):
+        self.mane_status.setText(f"⚠  NM ID mismatch — HGNC MANE Select is {mane_nm}")
+        self.mane_status.setStyleSheet("color: #cc0000; font-weight: bold; font-size: 11px;")
+
+    def _mane_not_found(self):
+        self.mane_status.setText("")
+
+    def _mane_error(self, msg: str):
+        self.mane_status.setText(f"MANE check failed: {msg}")
+        self.mane_status.setStyleSheet("color: #888; font-size: 11px;")
 
     def variants(self) -> list[dict]:
         return [dict(v) for v in self._variants]

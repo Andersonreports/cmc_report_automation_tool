@@ -23,12 +23,19 @@ HEADERS = {
     "chromosomal position": "chrom_pos", "ref/alt": "ref_alt", "nm id": "nm_id",
     "sequence ontology": "so", "exon": "exon", "disease label": "disease_label",
     # Optional columns: used when the sheet has them, "-" otherwise.
-    "lrt": "lrt", "cadd": "cadd",
-    "mt2": "mt2", "mutationtaster": "mt2", "phylop": "phylop", "gerp": "gerp",
-    "gerp++": "gerp", "strand": "strand",
+    "lrt": "lrt", "lrt pred": "lrt",
+    "cadd": "cadd",
+    "mt2": "mt2", "mutationtaster": "mt2", "mutationtaster pred": "mt2",
+    "sift prediction (vertebrates)": "sift",
+    "polyphen2 prediction (vertebrates)": "polyphen",
+    "phylop": "phylop", "phylop prediction (vertebrates)": "phylop",
+    "gerp": "gerp", "gerp++": "gerp", "gerp++ prediction (vertebrates)": "gerp",
+    "strand": "strand", "transcript strand": "strand",
+    "clinvar variant id": "clinvar_link",
+    "acmg classification criteria": "criteria",
 }
-# In silico prediction tools / conservation scores: the labels are fixed, the values
-# are typed by the user in the app (nothing is taken from the Excel).
+# In silico prediction tools / conservation scores: the labels are fixed; values
+# are auto-populated from the Excel when the sheet has them.
 SILICO = (("SIFT", "sift"), ("LRT", "lrt"), ("PolyPhen2", "polyphen"),
           ("GeneSplicer", "genesplicer"), ("MaxEntScan", "maxentscan"),
           ("NNSplice", "nnsplice"), ("PWM", "pwm"), ("CADD", "cadd"), ("MT2", "mt2"))     # every tool; see insilico_tools()
@@ -101,7 +108,7 @@ def read_variants(path: str) -> list[dict]:
             v.setdefault(typed, "")
         v["classification"] = (classification_options(v) or [""])[0]
         for _, key in SILICO + CONSERVATION:
-            v[key] = ""
+            v.setdefault(key, "")   # keep value from Excel if already populated
         v["inheritance"] = ", ".join(  # merged codes; the sheet repeats them per phenotype
             dict.fromkeys(p.strip() for p in re.split(r"[,/]", v.get("inheritance", ""))
                           if p.strip() and "somatic" not in p.lower()))
@@ -304,19 +311,96 @@ RESULT_TAGS = (
     ("compound_het", "Likely Compound Heterozygous variants were identified related to the "
                      "given phenotype"),
     ("compound_het_gene", "Likely Compound Heterozygous variants were identified in {gene} gene"),
+    # Extended result lines (manually chosen by the user).
+    ("no_pathogenic_detected",
+     "No pathogenic or likely pathogenic variant(s) causative of the reported phenotype was detected"),
+    ("patho_causative_related",
+     "Pathogenic variant(s) causative to the related phenotype was identified"),
+    ("patho_in_gene",
+     "Pathogenic variant(s) was identified in {gene} gene"),
+    ("patho_causative_reported",
+     "Pathogenic variant(s) causative of the reported phenotype was identified"),
+    ("patho_identified",
+     "Pathogenic variant(s) was identified"),
+    ("patho_of_phenotype",
+     "Pathogenic variant(s) of the reported phenotype was identified"),
+    ("likely_causative_related",
+     "Likely Pathogenic variant(s) causative to the related phenotype was identified"),
+    ("likely_causative_reported",
+     "Likely pathogenic variant(s) causative of the reported phenotype was identified"),
+    ("likely_of_phenotype",
+     "Likely pathogenic variant(s) of the reported phenotype was identified"),
+    ("likely_in_gene",
+     "Likely pathogenic variant(s) was identified in {gene} gene"),
+    ("likely_identified_only",
+     "Likely Pathogenic variant(s) was identified"),
+    ("vus_causative_reported",
+     "Variant of uncertain significance causative of the reported phenotype was identified"),
+    ("vus_causative_related",
+     "Variant of uncertain significance causative to the related phenotype was identified"),
+    ("vus_in_gene",
+     "Variant of uncertain significance was identified in {gene} gene"),
+    ("carrier_likely_gene",
+     "Carrier of likely pathogenic variant was identified in {gene} gene"),
+    ("carrier_patho_gene",
+     "Carrier of pathogenic variant was identified in {gene} gene"),
+    ("compound_het_phenotype",
+     "Likely compound heterozygous variants related to the phenotype were identified"),
+    ("compound_het_in_gene",
+     "Likely compound heterozygous variants were identified in {gene} gene"),
+    ("compound_het_related",
+     "Likely compound heterozygous variants were identified related to the phenotype"),
+    ("homo_vus_gene",
+     "Homozygous variant of uncertain significance was identified in {gene} gene"),
+    ("homo_related",
+     "Homozygous variant identified related to the phenotype"),
+    ("homo_likely_gene",
+     "Homozygous likely pathogenic variant was identified in {gene} gene"),
 )
 # Offered only for templates with lab_wording (not the CMC ones).
 LAB_RESULT_TAGS = frozenset({"likely_identified", "het_pathogenic_gene", "vus_gene",
                              "compound_het", "compound_het_gene"})
 # Each tag's colour in the report, as the lab's reports print it.
-RESULT_COLORS = {"pathogenic": "FF0000", "likely": "FF0000", "vus_related": "0070C0",
-                 "likely_identified": "FF0000", "het_pathogenic_gene": "002060",
-                 "vus_gene": "0070C0", "compound_het": "002060", "compound_het_gene": "002060"}
+RESULT_COLORS = {
+    "pathogenic": "FF0000", "likely": "FF0000", "vus_related": "0070C0",
+    "likely_identified": "FF0000", "het_pathogenic_gene": "002060",
+    "vus_gene": "0070C0", "compound_het": "002060", "compound_het_gene": "002060",
+    # Extended tags.
+    "no_pathogenic_detected": "00B050",
+    "patho_causative_related": "FF0000", "patho_in_gene": "FF0000",
+    "patho_causative_reported": "FF0000", "patho_identified": "FF0000",
+    "patho_of_phenotype": "FF0000",
+    "likely_causative_related": "FF0000", "likely_causative_reported": "FF0000",
+    "likely_of_phenotype": "FF0000", "likely_in_gene": "FF0000",
+    "likely_identified_only": "FF0000",
+    "vus_causative_reported": "0070C0", "vus_causative_related": "0070C0",
+    "vus_in_gene": "0070C0",
+    "carrier_likely_gene": "002060", "carrier_patho_gene": "002060",
+    "compound_het_phenotype": "002060", "compound_het_in_gene": "002060",
+    "compound_het_related": "002060",
+    "homo_vus_gene": "0070C0", "homo_related": "FF0000", "homo_likely_gene": "FF0000",
+}
 # The kind of result each tag reports: the classification it gives the ticked variants
 # (none for compound heterozygous, whose variants keep their own) and the auto heading.
-RESULT_KIND = {"pathogenic": "pathogenic", "likely": "likely", "vus_related": "vus_related",
-               "likely_identified": "likely", "het_pathogenic_gene": "pathogenic",
-               "vus_gene": "vus_related", "compound_het": "", "compound_het_gene": ""}
+RESULT_KIND = {
+    "pathogenic": "pathogenic", "likely": "likely", "vus_related": "vus_related",
+    "likely_identified": "likely", "het_pathogenic_gene": "pathogenic",
+    "vus_gene": "vus_related", "compound_het": "", "compound_het_gene": "",
+    # Extended tags.
+    "no_pathogenic_detected": "",
+    "patho_causative_related": "pathogenic", "patho_in_gene": "pathogenic",
+    "patho_causative_reported": "pathogenic", "patho_identified": "pathogenic",
+    "patho_of_phenotype": "pathogenic",
+    "likely_causative_related": "likely", "likely_causative_reported": "likely",
+    "likely_of_phenotype": "likely", "likely_in_gene": "likely",
+    "likely_identified_only": "likely",
+    "vus_causative_reported": "vus_related", "vus_causative_related": "vus_related",
+    "vus_in_gene": "vus_related",
+    "carrier_likely_gene": "pathogenic", "carrier_patho_gene": "pathogenic",
+    "compound_het_phenotype": "", "compound_het_in_gene": "", "compound_het_related": "",
+    "homo_vus_gene": "vus_related", "homo_related": "pathogenic",
+    "homo_likely_gene": "likely",
+}
 
 # Titles the user can pick for the Secondary findings table (Variants tab); the
 # first is the template's own. Any other wording can be typed in.
@@ -335,6 +419,8 @@ PRIMARY_TITLES = (
     "List of uncertain significant variant(s) identified related to the phenotype:",
     "List of additional significant variant(s) identified:",
     "List of Incidental significant variant(s) identified:",
+    "List of significant variant(s) identified:",
+    "List of significant carrier variant(s) identified:",
     # As the lab's newer WES / WES & Mito reports word it (LAB_PRIMARY_TITLES).
     "List of significant variant(s) identified related to the given phenotype:",
     "List of significant variant identified:",
@@ -532,9 +618,13 @@ def suggested_evidence(v: dict) -> str:
                  for n in v.get("disease", "").split(";")]
         disease = "; ".join(n for n in names if n) or "the disease"
         state = allele_status(v).lower()
-        parts.append(f"{article} {kind} in the same amino acid position ({pos}) has been "
-                     f"previously reported in a patient affected with {disease} "
-                     f"in {state} state.")
+        parts.append(
+            f"This variant has been previously reported in patients affected with {disease} "
+            f"in {state} state. "
+            f"{article} {kind} in the same amino acid position ({pos}) has been "
+            f"previously reported in patients affected with {disease} "
+            f"in {state} state."
+        )
     return " ".join(parts)
 
 
