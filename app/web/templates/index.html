@@ -355,10 +355,11 @@ label.req::after{content:" *";color:var(--warn)}
         <button class="tab-btn" data-tab="variants" id="variants-tab-btn" style="display:none"><span class="step-num">4</span><span class="step-text"><span class="step-name">Variants</span><span class="step-sub">Not started</span></span></button>
       </div>
 
-      <div class="step-head">
-        <h2 id="step-title">Patient &amp; sample</h2>
+      <div class="step-head" style="display:flex;align-items:center">
+        <h2 id="step-title" style="margin:0">Patient &amp; sample</h2>
         <a id="genepanel-nav" href="https://genepanel-bioinfo.streamlit.app/" target="_blank" rel="noopener"
            title="Open Gene Panel app" style="display:none;text-decoration:none;font-size:15px;vertical-align:middle;margin-left:8px">&#x2197;</a>
+        <button class="btn" id="show-preview-btn" onclick="togglePreview()" style="display:none;margin-left:auto;padding:4px 10px;font-size:12px">&#x2190; Show preview</button>
       </div>
 
       <!-- PATIENT TAB -->
@@ -470,26 +471,18 @@ label.req::after{content:" *";color:var(--warn)}
 
       <!-- GENES TAB -->
       <div id="tab-genes" class="tab-panel">
-        <details id="coverage-section" style="margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:0">
-          <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px;user-select:none">
+        <details id="coverage-section" style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;padding:0">
+          <summary style="cursor:pointer;padding:8px 14px;font-weight:600;font-size:13px;user-select:none">
             Generate from coverage CSV
           </summary>
-          <div style="padding:4px 14px 14px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
-            <div style="display:flex;gap:12px;flex-wrap:wrap">
-              <div style="flex:1 1 0;min-width:180px;overflow:hidden">
-                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Coverage CSV</label>
-                <div class="dropzone" id="coverage-dropzone" style="min-height:auto;padding:10px 14px;overflow:hidden">
-                  <input type="file" id="coverage-file-input" accept=".csv">
-                  <span id="coverage-file-label" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">Choose coverage CSV file</span>
-                </div>
-              </div>
-              <div style="flex:1 1 0;min-width:180px;overflow:hidden">
-                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Gene panel (comma-separated)</label>
-                <textarea id="coverage-gene-panel" rows="4"
-                  style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1px solid var(--border);border-radius:6px;color:inherit"
-                  placeholder="BRCA1, BRCA2, TP53, ATM, CHEK2, PALB2, ..."></textarea>
-              </div>
+          <div style="padding:4px 14px 12px;display:flex;flex-direction:column;gap:8px;overflow:hidden">
+            <div class="dropzone" id="coverage-dropzone" style="min-height:auto;padding:8px 14px;overflow:hidden">
+              <input type="file" id="coverage-file-input" accept=".csv">
+              <span id="coverage-file-label" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">Choose coverage CSV file</span>
             </div>
+            <textarea id="coverage-gene-panel" rows="3"
+              style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1px solid var(--border);border-radius:6px;color:inherit"
+              placeholder="Paste gene panel (comma-separated): BRCA1, BRCA2, TP53, …"></textarea>
             <div style="display:flex;align-items:center;gap:10px">
               <button class="btn btn-primary" id="coverage-generate-btn" style="white-space:nowrap">Generate gene table</button>
               <span id="coverage-status" style="font-size:12px"></span>
@@ -615,6 +608,7 @@ label.req::after{content:" *";color:var(--warn)}
       <button class="btn" id="refresh-preview-btn">Refresh preview</button>
       <span id="preview-status">Ready</span>
       <span id="result-badge" style="display:none;padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.3px"></span>
+      <button class="btn" id="toggle-preview-btn" title="Hide preview" style="padding:4px 10px;font-size:12px">Hide &#x2192;</button>
     </div>
     <div id="preview-scroll">
       <div id="preview-pages"></div>
@@ -1841,6 +1835,25 @@ function onResultTagChange() {
 let _saveTimer = null;
 function scheduleSave() { clearTimeout(_saveTimer); _saveTimer = setTimeout(saveFormState, 600); }
 
+function togglePreview() {
+  const rp = $('right-panel');
+  const lp = $('left-panel');
+  const hideBtn = $('toggle-preview-btn');
+  const showBtn = $('show-preview-btn');
+  const hidden = rp.style.display === 'none';
+  if (hidden) {
+    rp.style.display = '';
+    lp.style.width = '50%';
+    lp.style.flex = '';
+    showBtn.style.display = 'none';
+  } else {
+    rp.style.display = 'none';
+    lp.style.width = '100%';
+    lp.style.flex = '1';
+    showBtn.style.display = '';
+  }
+}
+
 function schedulePreview(force=false) {
   updateSteps();
   scheduleSave();
@@ -2367,6 +2380,7 @@ async function initApp() {
 
     // Refresh preview
     $('refresh-preview-btn').addEventListener('click', () => doPreview(true));
+    $('toggle-preview-btn').addEventListener('click', togglePreview);
 
     // Load initial template
     G.templateKey = init.default_template;
