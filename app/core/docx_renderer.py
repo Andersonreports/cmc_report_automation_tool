@@ -1036,7 +1036,7 @@ def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
         rpr.append(sz)
         rpr.append(szcs)
         color = OxmlElement("w:color")
-        color.set(qn("w:val"), "1A7A3B")
+        color.set(qn("w:val"), "0563C1")
         rpr.append(color)
         r.append(rpr)
         t = OxmlElement("w:t")
