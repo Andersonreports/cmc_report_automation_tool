@@ -810,7 +810,7 @@ function setOtherChoice(containerId, value) {
   }
 }
 
-const ADDL_DEFAULT_TEXT = "The additional variants identified which are significant but may not be related to patient’s phenotype. Phenotype – genotype correlation is recommended.";
+const ADDL_DEFAULT_TEXT = "The additional variants identified which are significant but may not be related to patient's phenotype. Phenotype - genotype correlation is recommended.";
 function toggleAdditionalText() {
   const title = getOtherChoice('oc-primary_title').toLowerCase();
   const show = title.includes('additional');
@@ -2317,9 +2317,9 @@ async function initApp() {
       if ((init.lab_primary_titles || []).includes(o.value)) o.dataset.lab = '1';
     });
     // Show "Additional Variant(s)" intro textarea when an "additional" title is picked
-    ptSel.addEventListener(‘change’, toggleAdditionalText);
-    $(‘oc-primary_title’).querySelector(‘.other-input’).addEventListener(‘input’, toggleAdditionalText);
-    $(‘f-additional_variants_text’).addEventListener(‘input’, schedulePreview);
+    ptSel.addEventListener('change', toggleAdditionalText);
+    $('oc-primary_title').querySelector('.other-input').addEventListener('input', toggleAdditionalText);
+    $('f-additional_variants_text').addEventListener('input', schedulePreview);
 
     // Secondary titles
     const stSel = $('f-secondary_title');
