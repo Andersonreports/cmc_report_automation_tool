@@ -430,6 +430,10 @@ PRIMARY_TITLES = (
 # Offered only for templates with lab_wording (not the CMC ones).
 LAB_PRIMARY_TITLES = frozenset(PRIMARY_TITLES[-4:])
 
+ADDITIONAL_VARIANTS_DEFAULT_TEXT = (
+    "The additional variants identified which are significant but may not be related to "
+    "patient’s phenotype. Phenotype – genotype correlation is recommended.")
+
 # The note under the variant list for two variants in one gene (Report options).
 COMPOUND_HET_NOTE = ("The variants are reported to be in likely compound heterozygous state. "
                      "These likely compound heterozygous variants are strongly recommended to "

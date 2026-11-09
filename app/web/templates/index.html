@@ -559,6 +559,11 @@ label.req::after{content:" *";color:var(--warn)}
                 <input type="text" class="other-input" placeholder="Type custom title…" style="padding:6px 10px;font-size:12px;width:100%;box-sizing:border-box">
               </div>
             </div>
+            <div id="additional-text-row" style="display:none;flex-direction:column;gap:4px">
+              <label>Additional Variant(s) intro text:</label>
+              <textarea id="f-additional_variants_text" rows="3"
+                style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1.5px solid var(--line);border-radius:6px;color:var(--ink)"></textarea>
+            </div>
             <select id="f-secondary_title" style="display:none"></select>
           </div>
 
@@ -805,6 +810,16 @@ function setOtherChoice(containerId, value) {
   }
 }
 
+const ADDL_DEFAULT_TEXT = 'The additional variants identified which are significant but may not be related to patient’s phenotype. Phenotype – genotype correlation is recommended.';
+function toggleAdditionalText() {
+  const title = getOtherChoice('oc-primary_title').toLowerCase();
+  const show = title.includes('additional');
+  $('additional-text-row').style.display = show ? 'flex' : 'none';
+  if (show && !$('f-additional_variants_text').value.trim()) {
+    $('f-additional_variants_text').value = ADDL_DEFAULT_TEXT;
+  }
+}
+
 // ============================================================
 // TABS
 // ============================================================
@@ -934,6 +949,7 @@ function collectData() {
     variants: G.variants,
     result_tag: $('f-result_tag').value || '',
     primary_title: getOtherChoice('oc-primary_title') || '',
+    additional_variants_text: $('f-additional_variants_text').value.trim(),
     secondary_title: $('f-secondary_title').value || '',
     options: (G.templateInfo && G.templateInfo.options && G.templateInfo.options.length) ? G.options : {},
   };
@@ -2076,6 +2092,8 @@ async function applyDraftData(raw) {
     $('f-result_tag').value = raw.result_tag || '';
     applyResultTagColor();
     setOtherChoice('oc-primary_title', raw.primary_title || '');
+    $('f-additional_variants_text').value = raw.additional_variants_text || '';
+    toggleAdditionalText();
     $('f-secondary_title').value = raw.secondary_title || '';
   }
 }
@@ -2298,6 +2316,10 @@ async function initApp() {
     Array.from(ptSel.options).forEach(o => {
       if ((init.lab_primary_titles || []).includes(o.value)) o.dataset.lab = '1';
     });
+    // Show "Additional Variant(s)" intro textarea when an "additional" title is picked
+    ptSel.addEventListener(‘change’, toggleAdditionalText);
+    $(‘oc-primary_title’).querySelector(‘.other-input’).addEventListener(‘input’, toggleAdditionalText);
+    $(‘f-additional_variants_text’).addEventListener(‘input’, schedulePreview);
 
     // Secondary titles
     const stSel = $('f-secondary_title');

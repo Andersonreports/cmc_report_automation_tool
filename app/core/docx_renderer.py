@@ -878,6 +878,15 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
             _set_text(heading, title.strip())
         _keep_list_together(res)
 
+    # Update the "Additional Variant(s)" intro text if the user edited it
+    if data.additional_variants_text.strip():
+        for p in doc.element.body.iter(qn("w:p")):
+            if _text(p).strip().lower().startswith("additional variant"):
+                intro = p.getnext()
+                if intro is not None and intro.tag == qn("w:p") and _text(intro).strip():
+                    _set_text(intro, data.additional_variants_text.strip())
+                break
+
     # -- the sample block: caption, table, abbreviation, evidence / OMIM paragraphs
     caption = interp.getprevious()
     while caption is not None and not (caption.tag == qn("w:p") and
@@ -986,6 +995,81 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
             p.getparent().remove(p)
 
 
+def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
+    """Insert the 'Additional Variant(s)' heading and intro text above
+    *list_heading* when the template doesn't already have one."""
+    from . import variants as vr
+    # Check if the template already contains the heading (e.g. additional template)
+    for p in doc.element.body.iter(qn("w:p")):
+        if _text(p).strip().lower().startswith("additional variant"):
+            # Already present — just update the intro text if the user edited it.
+            intro = p.getnext()
+            if intro is not None and intro.tag == qn("w:p") and _text(intro).strip():
+                txt = data.additional_variants_text.strip()
+                if txt:
+                    _set_text(intro, txt)
+            return
+    # Not present — create heading + intro paragraph before the list heading.
+    # Copy the formatting from the nearest section heading (e.g. "Results").
+    try:
+        results_h = _find_para(doc, "Results", "'Results' heading")
+    except TemplateError:
+        results_h = None
+    # Heading paragraph: "Additional Variant(s)"
+    if results_h is not None:
+        heading_p = copy.deepcopy(results_h)
+        _set_text(heading_p, "Additional Variant(s)")
+    else:
+        heading_p = OxmlElement("w:p")
+        r = OxmlElement("w:r")
+        rpr = OxmlElement("w:rPr")
+        b = OxmlElement("w:b")
+        rpr.append(b)
+        fonts = OxmlElement("w:rFonts")
+        for attr in ("w:ascii", "w:hAnsi", "w:cs"):
+            fonts.set(qn(attr), "Arial")
+        rpr.append(fonts)
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), "22")
+        szcs = OxmlElement("w:szCs")
+        szcs.set(qn("w:val"), "22")
+        rpr.append(sz)
+        rpr.append(szcs)
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "1A7A3B")
+        rpr.append(color)
+        r.append(rpr)
+        t = OxmlElement("w:t")
+        t.text = "Additional Variant(s)"
+        t.set(qn("xml:space"), "preserve")
+        r.append(t)
+        heading_p.append(r)
+    # Intro text paragraph
+    txt = data.additional_variants_text.strip() or vr.ADDITIONAL_VARIANTS_DEFAULT_TEXT
+    intro_p = OxmlElement("w:p")
+    ir = OxmlElement("w:r")
+    irpr = OxmlElement("w:rPr")
+    ifonts = OxmlElement("w:rFonts")
+    for attr in ("w:ascii", "w:hAnsi", "w:cs"):
+        ifonts.set(qn(attr), "Arial")
+    irpr.append(ifonts)
+    isz = OxmlElement("w:sz")
+    isz.set(qn("w:val"), "18")
+    iszcs = OxmlElement("w:szCs")
+    iszcs.set(qn("w:val"), "18")
+    irpr.append(isz)
+    irpr.append(iszcs)
+    ir.append(irpr)
+    it = OxmlElement("w:t")
+    it.text = txt
+    it.set(qn("xml:space"), "preserve")
+    ir.append(it)
+    intro_p.append(ir)
+    # Insert: heading, then intro, then the existing list heading follows
+    list_heading.addprevious(intro_p)
+    intro_p.addprevious(heading_p)
+
+
 def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banner: bool,
                       whole_doc: bool = True):
     """One set: a row in the Results table and one block (8 rows) in the Variant
@@ -1013,6 +1097,10 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
             if heading is None or heading.tag != qn("w:p") or not _text(heading).startswith("List of"):
                 heading = _find_para(doc, "List of significant variant(s)", "variant list heading")
             _set_text(heading, heading_text)
+            # When an "additional" title is chosen and the template lacks the
+            # "Additional Variant(s)" section, insert the heading + intro text.
+            if "additional" in heading_text.lower():
+                _ensure_additional_section(doc, data, heading)
     _add_result_rows(doc, res, proto, chosen)
     # -- Variant Interpretation: the template's 8-row block, once per variant
     rows = tbl.findall(qn("w:tr"))

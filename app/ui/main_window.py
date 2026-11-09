@@ -1003,10 +1003,21 @@ class VariantsPanel(ExcelDropPanel, QWidget):
                                         "Auto follows the result")
         self.f_primary_title.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.f_primary_title.setMinimumContentsLength(12)
-        self.f_primary_title.currentTextChanged.connect(lambda *_: self.changed.emit())
+        self.f_primary_title.currentTextChanged.connect(self._on_primary_title_changed)
         pr.addWidget(self.f_primary_title, 1)
         self.primary_row.setVisible(False)
         lay.addWidget(self.primary_row)
+        self.additional_row = QWidget()
+        al = QVBoxLayout(self.additional_row)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.addWidget(QLabel("Additional Variant(s) intro text:"))
+        self.f_additional_text = QPlainTextEdit()
+        self.f_additional_text.setPlaceholderText(variants_core.ADDITIONAL_VARIANTS_DEFAULT_TEXT)
+        self.f_additional_text.setMaximumHeight(60)
+        self.f_additional_text.textChanged.connect(lambda: self.changed.emit())
+        al.addWidget(self.f_additional_text)
+        self.additional_row.setVisible(False)
+        lay.addWidget(self.additional_row)
         self.secondary_row = QWidget()      # the Secondary findings table's title
         sr = QHBoxLayout(self.secondary_row)
         sr.setContentsMargins(0, 0, 0, 0)
@@ -1526,6 +1537,24 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_primary_title.blockSignals(True)
         self.f_primary_title.setCurrentText(text or self.AUTO_TITLE)
         self.f_primary_title.blockSignals(False)
+        self._toggle_additional_row()
+
+    def additional_variants_text(self) -> str:
+        return self.f_additional_text.toPlainText().strip()
+
+    def set_additional_variants_text(self, text: str):
+        self.f_additional_text.setPlainText(text)
+
+    def _on_primary_title_changed(self):
+        self._toggle_additional_row()
+        self.changed.emit()
+
+    def _toggle_additional_row(self):
+        title = self.f_primary_title.currentText().lower()
+        show = "additional" in title and title != self.AUTO_TITLE.lower()
+        self.additional_row.setVisible(show)
+        if show and not self.f_additional_text.toPlainText().strip():
+            self.f_additional_text.setPlainText(variants_core.ADDITIONAL_VARIANTS_DEFAULT_TEXT)
 
     def secondary_title(self) -> str:
         """The Secondary findings title; '' when it is the template's own."""
@@ -2380,6 +2409,8 @@ class MainWindow(QMainWindow):
             secondary_title=self.variants_panel.secondary_title(),
             primary_title=(self.variants_panel.primary_title()
                            if not self.variants_panel.primary_row.isHidden() else ""),
+            additional_variants_text=(self.variants_panel.additional_variants_text()
+                                     if not self.variants_panel.additional_row.isHidden() else ""),
             options=self._options(),
         )
 
@@ -2768,6 +2799,7 @@ class MainWindow(QMainWindow):
         self.variants_panel.set_result_tag(data.result_tag)
         self.variants_panel.set_secondary_title(data.secondary_title)
         self.variants_panel.set_primary_title(data.primary_title)
+        self.variants_panel.set_additional_variants_text(data.additional_variants_text)
         self._update_steps()
         self._preview()
 
