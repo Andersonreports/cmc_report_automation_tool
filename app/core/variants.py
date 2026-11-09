@@ -20,7 +20,8 @@ HEADERS = {
     "conditions": "conditions", "gnom ad exome sa v4": "gnomad_sa",
     "gnom ad exome all v4": "gnomad_all",
     "alpha missense": "alpha_missense", "revel": "revel",
-    "chromosomal position": "chrom_pos", "ref/alt": "ref_alt", "nm id": "nm_id",
+    "chromosomal position": "chrom_pos", "chr:pos": "chrom_pos",
+    "ref/alt": "ref_alt", "nm id": "nm_id",
     "sequence ontology": "so", "exon": "exon", "disease label": "disease_label",
     # Optional columns: used when the sheet has them, "-" otherwise.
     "lrt": "lrt", "lrt pred": "lrt",
@@ -67,6 +68,37 @@ def _is_header(row: list[str]) -> bool:
     return "gene" in cells and "variant" in cells
 
 
+def _complete_data_positions(wb) -> dict[str, list[tuple[str, str]]]:
+    """Build {gene -> [(chrom_pos, ref_alt), ...]} from the 'Complete Data' sheet."""
+    lookup: dict[str, list[tuple[str, str]]] = {}
+    for ws in wb.worksheets:
+        if ws.title.strip().lower() != "complete data":
+            continue
+        hdr_row = None
+        chrpos_col = refalt_col = gene_col = -1
+        for ri, row in enumerate(ws.iter_rows(values_only=True)):
+            cells = [_cell(c) for c in row]
+            if hdr_row is None:
+                lc = [c.lower() for c in cells]
+                if "chr:pos" in lc:
+                    hdr_row = ri
+                    chrpos_col = lc.index("chr:pos")
+                    refalt_col = lc.index("ref/alt") if "ref/alt" in lc else -1
+                    for target in ("gene names", "gene name"):
+                        if target in lc:
+                            gene_col = lc.index(target)
+                            break
+                continue
+            cp = cells[chrpos_col] if chrpos_col < len(cells) else ""
+            ra = cells[refalt_col] if 0 <= refalt_col < len(cells) else ""
+            gn = cells[gene_col] if 0 <= gene_col < len(cells) else ""
+            gn = gn.split(",")[0].strip()
+            if cp and gn:
+                lookup.setdefault(gn, []).append((cp, ra))
+        break
+    return lookup
+
+
 def read_variants(path: str) -> list[dict]:
     """Every variant in the workbook, in sheet order, none selected."""
     from openpyxl import load_workbook
@@ -82,6 +114,7 @@ def read_variants(path: str) -> list[dict]:
             rows = [[_cell(c) for c in r] for r in ws.iter_rows(values_only=True)]
             if any(r and _is_header(r) for r in rows):
                 break
+        cd_positions = _complete_data_positions(wb)
     finally:
         wb.close()
     out, cols, section = [], None, ""
@@ -122,6 +155,14 @@ def read_variants(path: str) -> list[dict]:
         v["gene_mim"] = gene_mim_number(v.get("gene", ""))
         v["omim_phenotype_prefix"] = v["omim_phenotype"] = omim_phenotype_prefix(v)
         v["inheritance"] = suggested_inheritance(v) or v["inheritance"]
+        if not v.get("chrom_pos") and cd_positions:
+            gene = v.get("gene", "").strip()
+            matches = cd_positions.get(gene, [])
+            if len(matches) == 1:
+                v["chrom_pos"], v["ref_alt"] = matches[0]
+                matches.clear()
+            elif matches:
+                v["chrom_pos"], v["ref_alt"] = matches.pop(0)
         out.append(v)
     if not out:
         raise VariantError("No variants found. Upload the VarSeq listed-variants Excel "
