@@ -1139,7 +1139,6 @@ async function generateFromCoverage() {
       cls = 'warn';
     }
     status.textContent = msg; status.className = 'status-' + cls;
-    setGeneStatus(msg, cls);
     schedulePreview();
   } catch(e) {
     status.textContent = 'Request failed: ' + e.message; status.className = 'status-bad';
