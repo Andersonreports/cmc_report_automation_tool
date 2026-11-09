@@ -180,8 +180,10 @@ label.req::after{content:" *";color:var(--warn)}
 #gene-table{width:100%;min-width:420px;border-collapse:collapse;table-layout:fixed}
 #gene-table th{background:var(--surface-2);color:var(--label);padding:9px 12px;font-size:11px;font-weight:700;text-align:center;position:sticky;top:0;letter-spacing:.4px;border-bottom:2px solid #e8a838;white-space:nowrap}
 #gene-table th:nth-child(1){width:56px}
-#gene-table th:nth-child(2){text-align:left;width:55%}
+#gene-table th:nth-child(2){text-align:left;width:50%}
 #gene-table th:nth-child(3){text-align:left}
+.gene-del-btn{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1}
+.gene-del-btn:hover{color:#c00;background:rgba(200,0,0,.08)}
 #gene-table td{padding:6px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink)}
 #gene-table td:first-child{width:42px;text-align:center;font-size:11px;font-weight:700;color:#e8a838;border-right:2px solid #e8a838;background:rgba(232,168,56,.04)}
 #gene-table td input{border:none;width:100%;padding:2px 2px;font-size:12.5px;background:transparent;font-family:inherit;color:var(--ink)}
@@ -499,7 +501,7 @@ label.req::after{content:" *";color:var(--warn)}
 
         <div class="gene-table-wrap">
           <table id="gene-table">
-            <thead><tr><th>#</th><th>Gene Name</th><th>% of coding region covered</th></tr></thead>
+            <thead><tr><th>#</th><th>Gene Name</th><th>% of coding region covered</th><th style="width:32px"></th></tr></thead>
             <tbody id="gene-tbody"></tbody>
           </table>
         </div>
@@ -940,8 +942,17 @@ function addGeneRow(gene='', cov='') {
   const tr = document.createElement('tr');
   tr.innerHTML = `<td class="gene-rownum">${rowNum}</td>
     <td><input type="text" value="${escHtml(gene)}" placeholder="Gene"></td>
-    <td><input type="text" value="${escHtml(cov)}" placeholder="100.0"></td>`;
+    <td><input type="text" value="${escHtml(cov)}" placeholder="100.0"></td>
+    <td><button type="button" class="gene-del-btn" title="Delete row">&times;</button></td>`;
   tr.querySelectorAll('input').forEach(i => i.addEventListener('input', () => { updateGeneCount(); schedulePreview(); }));
+  tr.querySelector('.gene-del-btn').addEventListener('click', () => {
+    const name = tr.querySelector('input').value.trim() || `row ${tr.querySelector('.gene-rownum').textContent}`;
+    if (!confirm(`Delete gene "${name}"?`)) return;
+    tr.remove();
+    reindexGeneRows();
+    updateGeneCount();
+    schedulePreview();
+  });
   tbody.appendChild(tr);
   updateGeneCount();
 }
