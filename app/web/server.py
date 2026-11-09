@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import gzip as _gzip
 import io
 import json
 import os
@@ -25,6 +26,29 @@ from ..core.models import PatientInfo, ReportData, today_str
 from ..core.report_builder import build_report, docx_to_pdf, render_docx
 
 app = Flask(__name__, template_folder="templates")
+
+
+@app.after_request
+def _gzip_response(response):
+    if (response.direct_passthrough
+            or response.status_code < 200
+            or response.status_code >= 300
+            or "Content-Encoding" in response.headers):
+        return response
+    ae = request.headers.get("Accept-Encoding", "")
+    if "gzip" not in ae:
+        return response
+    data = response.get_data()
+    if len(data) < 500:
+        return response
+    compressed = _gzip.compress(data, compresslevel=6)
+    if len(compressed) >= len(data):
+        return response
+    response.set_data(compressed)
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = len(compressed)
+    response.headers.add("Vary", "Accept-Encoding")
+    return response
 
 PATIENT_CHOICES = {
     "hospital": [
@@ -86,24 +110,19 @@ def api_init():
         # Only a browser on this machine can use the server's folder picker
         # and folders; other computers get the report as a download.
         "local": _is_local_request(),
+        "default_template_info": _template_info_dict(DEFAULT_TEMPLATE, {}),
     })
 
 
-@app.route("/api/template-info/<key>")
-def api_template_info(key):
-    # An options template's layout follows the chosen options (?options=<json>).
-    try:
-        chosen = json.loads(request.args.get("options") or "{}")
-    except ValueError:
-        chosen = {}
-    cfg = effective(key, chosen if isinstance(chosen, dict) else {})
-    values = option_values(key, chosen if isinstance(chosen, dict) else {})
+def _template_info_dict(key: str, chosen: dict) -> dict:
+    cfg = effective(key, chosen)
+    values = option_values(key, chosen)
     genes = template_gene_table(key)
     try:
         url = template_gene_list_url(key)
     except Exception:
         url = ""
-    return jsonify({
+    return {
         "key": cfg.key, "name": cfg.name, "pathogenic": cfg.pathogenic,
         "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
         "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row,
@@ -115,7 +134,19 @@ def api_template_info(key):
         "genes": genes, "gene_list_url": url,
         "options": [{"key": k, "label": label, "choices": choices, "value": values[k]}
                     for k, (label, choices) in template_options(key).items()],
-    })
+    }
+
+
+@app.route("/api/template-info/<key>")
+def api_template_info(key):
+    # An options template's layout follows the chosen options (?options=<json>).
+    try:
+        chosen = json.loads(request.args.get("options") or "{}")
+    except ValueError:
+        chosen = {}
+    if not isinstance(chosen, dict):
+        chosen = {}
+    return jsonify(_template_info_dict(key, chosen))
 
 
 @app.route("/api/preview", methods=["POST"])

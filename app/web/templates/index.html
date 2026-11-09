@@ -1201,7 +1201,14 @@ function escHtml(s) {
 // TEMPLATE
 // ============================================================
 async function loadTemplateInfo(key) {
-  const info = await api(`/api/template-info/${key}?options=${encodeURIComponent(JSON.stringify(G.options))}`);
+  const optJson = JSON.stringify(G.options);
+  const cached = G._templateCache;
+  if (cached && cached.key === key && cached.optJson === optJson) {
+    G.templateInfo = cached.info;
+    return cached.info;
+  }
+  const info = await api(`/api/template-info/${key}?options=${encodeURIComponent(optJson)}`);
+  G._templateCache = { key, optJson, info };
   G.templateInfo = info;
   return info;
 }
@@ -2476,6 +2483,11 @@ async function initApp() {
     // Refresh preview
     $('refresh-preview-btn').addEventListener('click', () => doPreview(true));
     $('toggle-preview-btn').addEventListener('click', togglePreview);
+
+    // Seed template cache with the info bundled in /api/init (saves one round trip)
+    if (init.default_template_info) {
+      G._templateCache = { key: init.default_template, optJson: '{}', info: init.default_template_info };
+    }
 
     // Load initial template
     G.templateKey = init.default_template;
