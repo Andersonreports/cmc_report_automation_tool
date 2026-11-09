@@ -476,16 +476,16 @@ label.req::after{content:" *";color:var(--warn)}
           <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px;user-select:none">
             Generate from coverage CSV
           </summary>
-          <div style="padding:4px 14px 14px;display:flex;flex-direction:column;gap:10px">
+          <div style="padding:4px 14px 14px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
             <div style="display:flex;gap:12px;flex-wrap:wrap">
-              <div style="flex:1;min-width:200px">
+              <div style="flex:1 1 0;min-width:180px;overflow:hidden">
                 <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Coverage CSV</label>
-                <div class="dropzone" id="coverage-dropzone" style="min-height:auto;padding:10px 14px">
+                <div class="dropzone" id="coverage-dropzone" style="min-height:auto;padding:10px 14px;overflow:hidden">
                   <input type="file" id="coverage-file-input" accept=".csv">
-                  <span id="coverage-file-label" style="font-size:12px">Choose coverage CSV file</span>
+                  <span id="coverage-file-label" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">Choose coverage CSV file</span>
                 </div>
               </div>
-              <div style="flex:1;min-width:200px">
+              <div style="flex:1 1 0;min-width:180px;overflow:hidden">
                 <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Gene panel (comma-separated)</label>
                 <textarea id="coverage-gene-panel" rows="4"
                   style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)"
