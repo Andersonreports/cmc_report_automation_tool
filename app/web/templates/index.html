@@ -975,6 +975,7 @@ function addGeneRow(gene='', cov='') {
     tr.remove();
     reindexGeneRows();
     updateGeneCount();
+    setGeneStatus(`Deleted "${name}" from the gene table.`, 'warn');
     schedulePreview();
   });
   tbody.appendChild(tr);
