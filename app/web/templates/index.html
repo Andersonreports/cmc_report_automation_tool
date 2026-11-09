@@ -357,6 +357,8 @@ label.req::after{content:" *";color:var(--warn)}
 
       <div class="step-head">
         <h2 id="step-title">Patient &amp; sample</h2>
+        <a id="genepanel-nav" href="https://genepanel-bioinfo.streamlit.app/" target="_blank" rel="noopener"
+           title="Open Gene Panel app" style="display:none;text-decoration:none;font-size:15px;vertical-align:middle;margin-left:8px">&#x2197;</a>
       </div>
 
       <!-- PATIENT TAB -->
@@ -460,11 +462,7 @@ label.req::after{content:" *";color:var(--warn)}
         <div class="field-group">
           <div class="group-label">Gene list link</div>
           <div class="form-group">
-            <label for="f-gene_list_url">Methodology "Click here" link
-              <a href="https://genepanel-bioinfo.streamlit.app/" target="_blank" rel="noopener"
-                 title="Open Gene Panel app to create the link"
-                 style="margin-left:6px;text-decoration:none;font-size:13px;vertical-align:middle">&#x2197;</a>
-            </label>
+            <label for="f-gene_list_url">Methodology "Click here" link</label>
             <input type="text" id="f-gene_list_url" placeholder="https://…">
           </div>
         </div>
@@ -873,6 +871,7 @@ function updateSteps() {
   });
 
   $('step-title').textContent = STEP_META[G.activeTab].name;
+  $('genepanel-nav').style.display = G.activeTab === 'genes' ? 'inline' : 'none';
 }
 
 // ============================================================
