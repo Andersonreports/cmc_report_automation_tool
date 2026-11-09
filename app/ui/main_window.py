@@ -30,7 +30,7 @@ from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effectiv
                                 get_template, option_values, template_options)
 from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
-from ..core import bulk, gnomad, mane, ocr, sheet_client, variants as variants_core
+from ..core import bulk, coverage, gnomad, mane, ocr, sheet_client, variants as variants_core
 from . import style
 from ..core.models import PatientInfo, ReportData, today_str
 
@@ -509,6 +509,36 @@ class GeneTableEditor(QWidget):
     def __init__(self):
         super().__init__()
         lay = QVBoxLayout(self)
+
+        # -- Coverage generation section --
+        cov_group = QGroupBox("Generate from coverage CSV")
+        cov_group.setCheckable(True)
+        cov_group.setChecked(False)
+        cov_lay = QVBoxLayout(cov_group)
+        csv_row = QHBoxLayout()
+        self._csv_path = QLineEdit(placeholderText="Coverage CSV file…", readOnly=True)
+        csv_browse = QPushButton("Browse")
+        csv_browse.setFixedWidth(70)
+        csv_browse.clicked.connect(self._browse_csv)
+        csv_row.addWidget(self._csv_path, 1)
+        csv_row.addWidget(csv_browse)
+        cov_lay.addLayout(csv_row)
+        cov_lay.addWidget(QLabel("Gene panel (comma-separated):"))
+        self._panel_edit = QPlainTextEdit()
+        self._panel_edit.setPlaceholderText("BRCA1, BRCA2, TP53, ATM, CHEK2, PALB2, …")
+        self._panel_edit.setMaximumHeight(80)
+        cov_lay.addWidget(self._panel_edit)
+        gen_row = QHBoxLayout()
+        gen_btn = QPushButton("Generate gene table")
+        gen_btn.clicked.connect(self._generate_from_coverage)
+        gen_row.addWidget(gen_btn)
+        self._cov_status = QLabel()
+        self._cov_status.setWordWrap(True)
+        gen_row.addWidget(self._cov_status, 1)
+        cov_lay.addLayout(gen_row)
+        lay.addWidget(cov_group)
+
+        # -- Existing paste/table controls --
         row = QHBoxLayout()
         paste = QPushButton("Paste table")
         paste.setToolTip("Replace the table with the one on the clipboard (Ctrl+V)")
@@ -571,6 +601,43 @@ class GeneTableEditor(QWidget):
             self.paste()
         else:
             super().keyPressEvent(e)
+
+    def _browse_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select coverage CSV", "", "CSV files (*.csv)")
+        if path:
+            self._csv_path.setText(path)
+
+    def _generate_from_coverage(self):
+        path = self._csv_path.text().strip()
+        panel = self._panel_edit.toPlainText().strip()
+        if not path:
+            self._cov_status.setText("Select a coverage CSV file first.")
+            self._cov_status.setStyleSheet("color:#c00000;")
+            return
+        if not panel:
+            self._cov_status.setText("Paste the gene panel first.")
+            self._cov_status.setStyleSheet("color:#c00000;")
+            return
+        try:
+            with open(path, "rb") as f:
+                csv_bytes = f.read()
+            genes, not_found = coverage.filter_coverage(csv_bytes, panel)
+        except Exception as e:
+            self._cov_status.setText(str(e))
+            self._cov_status.setStyleSheet("color:#c00000;")
+            return
+        if not genes:
+            self._cov_status.setText("No matching genes found in the CSV.")
+            self._cov_status.setStyleSheet("color:#c00000;")
+            return
+        msg = f"{len(genes)} genes loaded."
+        color = "#1a7f37"
+        if not_found:
+            shown = ", ".join(not_found[:5]) + (" …" if len(not_found) > 5 else "")
+            msg += f" {len(not_found)} not found in CSV: {shown}"
+            color = "#b35c00"
+        self.set_genes(genes, msg, color)
 
 
 class StepTabBar(QTabBar):

@@ -17,7 +17,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 
 from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effective,
                                 get_template, option_values, template_options)
-from ..core import bulk, gnomad, mane, ocr, sheet_client
+from ..core import bulk, coverage, gnomad, mane, ocr, sheet_client
 from ..core import variants as variants_core
 from ..core.docx_renderer import template_gene_list_url, template_gene_table
 from ..core.gene_table import parse_pasted
@@ -344,6 +344,25 @@ def api_upload_variants():
         return jsonify({"error": str(e)}), 500
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+@app.route("/api/coverage-genes", methods=["POST"])
+def api_coverage_genes():
+    file = request.files.get("coverage_csv")
+    panel_text = request.form.get("gene_panel", "")
+    if not file:
+        return jsonify({"error": "No coverage CSV uploaded"}), 400
+    if not panel_text.strip():
+        return jsonify({"error": "No gene panel provided"}), 400
+    try:
+        csv_bytes = file.read()
+        genes, not_found = coverage.filter_coverage(csv_bytes, panel_text)
+        return jsonify({
+            "genes": [[g, c] for g, c in genes],
+            "not_found": not_found,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/parse-genes", methods=["POST"])

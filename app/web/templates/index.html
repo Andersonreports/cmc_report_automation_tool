@@ -472,6 +472,33 @@ label.req::after{content:" *";color:var(--warn)}
 
       <!-- GENES TAB -->
       <div id="tab-genes" class="tab-panel">
+        <details id="coverage-section" style="margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:0">
+          <summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px;user-select:none">
+            Generate from coverage CSV
+          </summary>
+          <div style="padding:4px 14px 14px;display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Coverage CSV</label>
+                <div class="dropzone" id="coverage-dropzone" style="min-height:auto;padding:10px 14px">
+                  <input type="file" id="coverage-file-input" accept=".csv">
+                  <span id="coverage-file-label" style="font-size:12px">Choose coverage CSV file</span>
+                </div>
+              </div>
+              <div style="flex:1;min-width:200px">
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Gene panel (comma-separated)</label>
+                <textarea id="coverage-gene-panel" rows="4"
+                  style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)"
+                  placeholder="BRCA1, BRCA2, TP53, ATM, CHEK2, PALB2, ..."></textarea>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <button class="btn btn-primary" id="coverage-generate-btn" style="white-space:nowrap">Generate gene table</button>
+              <span id="coverage-status" style="font-size:12px"></span>
+            </div>
+          </div>
+        </details>
+
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <button class="btn" id="paste-genes-btn">Paste table</button>
           <button class="btn" id="add-gene-row-btn">+ Add row</button>
@@ -1025,6 +1052,59 @@ function setGeneStatus(msg, cls='') {
   const el = $('gene-status');
   el.textContent = msg;
   el.className = cls === 'ok' ? 'status-ok' : cls === 'warn' ? 'status-warn' : cls === 'bad' ? 'status-bad' : '';
+}
+
+// Coverage CSV + gene panel → gene table
+function initCoverageSection() {
+  const fileInput = $('coverage-file-input');
+  const dropzone = $('coverage-dropzone');
+  const label = $('coverage-file-label');
+
+  fileInput.addEventListener('change', () => {
+    label.textContent = fileInput.files.length ? fileInput.files[0].name : 'Choose coverage CSV file';
+  });
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    const f = [...e.dataTransfer.files].find(f => f.name.toLowerCase().endsWith('.csv'));
+    if (f) { fileInput.files = e.dataTransfer.files; label.textContent = f.name; }
+  });
+
+  $('coverage-generate-btn').addEventListener('click', generateFromCoverage);
+}
+
+async function generateFromCoverage() {
+  const fileInput = $('coverage-file-input');
+  const panel = $('coverage-gene-panel').value.trim();
+  const status = $('coverage-status');
+  if (!fileInput.files.length) { status.textContent = 'Please select a coverage CSV file.'; status.className = 'status-bad'; return; }
+  if (!panel) { status.textContent = 'Please paste the gene panel.'; status.className = 'status-bad'; return; }
+  status.textContent = 'Processing…'; status.className = '';
+
+  const fd = new FormData();
+  fd.append('coverage_csv', fileInput.files[0]);
+  fd.append('gene_panel', panel);
+
+  try {
+    const resp = await fetch('/api/coverage-genes', { method: 'POST', body: fd });
+    const r = await resp.json();
+    if (r.error) { status.textContent = r.error; status.className = 'status-bad'; return; }
+    if (!r.genes || !r.genes.length) { status.textContent = 'No matching genes found in the CSV.'; status.className = 'status-bad'; return; }
+    renderGeneTable(r.genes);
+    let msg = `${r.genes.length} gene${r.genes.length===1?'':'s'} loaded.`;
+    let cls = 'ok';
+    if (r.not_found && r.not_found.length) {
+      msg += ` ${r.not_found.length} not found in CSV: ${r.not_found.slice(0,5).join(', ')}${r.not_found.length>5?' …':''}`;
+      cls = 'warn';
+    }
+    status.textContent = msg; status.className = 'status-' + cls;
+    setGeneStatus(msg, cls);
+    schedulePreview();
+  } catch(e) {
+    status.textContent = 'Request failed: ' + e.message; status.className = 'status-bad';
+  }
 }
 
 function escHtml(s) {
@@ -2227,6 +2307,7 @@ async function initApp() {
     $('paste-genes-btn').addEventListener('click', pasteGenes);
     document.addEventListener('paste', onGenePasteKey);
     $('add-gene-row-btn').addEventListener('click', () => { addGeneRow(); schedulePreview(); });
+    initCoverageSection();
 
     // Variants
     setupDropzone('variants-dropzone', 'variants-file-input', uploadVariants);
