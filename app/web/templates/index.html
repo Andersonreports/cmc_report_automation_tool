@@ -100,7 +100,7 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 .tab-panel{display:none;flex:1;overflow-y:auto;padding:16px 24px 24px}
 .tab-panel.active{display:flex;flex-direction:column;gap:22px}
 #tab-genes.active{display:block}
-#tab-genes>*+*{margin-top:16px}
+#tab-genes>*+*{margin-top:12px}
 
 .pin-box{background:#eef5f8;border:1px solid #cfe0e8;border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;gap:8px}
 .field-group{display:flex;flex-direction:column;gap:12px}
@@ -175,25 +175,41 @@ label.req::after{content:" *";color:var(--warn)}
 .btn.danger:hover{background:#fee2e2}
 .btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
 
-/* ── GENE TABLE ── */
-#gene-status{font-size:12px;color:var(--muted)}
-#gene-count{font-size:11px;font-weight:600;color:var(--accent)}
-.gene-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
-#gene-table{width:100%;min-width:420px;border-collapse:collapse;table-layout:fixed}
-#gene-table th{background:var(--surface-2);color:var(--label);padding:9px 12px;font-size:11px;font-weight:700;text-align:center;position:sticky;top:0;letter-spacing:.4px;border-bottom:2px solid #e8a838;white-space:nowrap}
-#gene-table th:nth-child(1){width:56px}
-#gene-table th:nth-child(2){text-align:left;width:50%}
-#gene-table th:nth-child(3){text-align:left}
-.gene-del-btn{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1}
-.gene-del-btn:hover{color:#c00;background:rgba(200,0,0,.08)}
-#gene-table td{padding:6px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink)}
-#gene-table td:first-child{width:42px;text-align:center;font-size:11px;font-weight:700;color:#e8a838;border-right:2px solid #e8a838;background:rgba(232,168,56,.04)}
-#gene-table td input{border:none;width:100%;padding:2px 2px;font-size:12.5px;background:transparent;font-family:inherit;color:var(--ink)}
-#gene-table td input:focus{outline:1px solid var(--accent-mid);background:#fff;border-radius:3px}
-#gene-table tr:nth-child(even) td{background:var(--surface-2)}
-#gene-table tr:nth-child(even) td:first-child{background:rgba(232,168,56,.07)}
-#gene-table tr:hover td{background:var(--accent-light)}
-#gene-table tr:hover td:first-child{background:rgba(232,168,56,.15)}
+/* ── GENE COVERAGE TAB ── */
+#gene-status{font-size:12px}
+.status-ok{color:#1a7f37} .status-warn{color:var(--warn)} .status-bad{color:var(--bad)}
+#gene-count{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-light,#e8f4f8);padding:3px 10px;border-radius:99px;letter-spacing:.02em}
+
+/* Coverage card */
+.cov-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:12px;overflow:hidden}
+.cov-toggle{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink);user-select:none;border:none;background:none;width:100%;text-align:left;font-family:inherit}
+.cov-toggle .arrow{font-size:10px;color:var(--muted);transition:transform .15s}
+.cov-card.open .cov-toggle .arrow{transform:rotate(90deg)}
+.cov-body{display:none;padding:0 14px 14px;gap:10px;flex-direction:column}
+.cov-card.open .cov-body{display:flex}
+.cov-row{display:flex;gap:10px;align-items:stretch}
+@media(max-width:600px){.cov-row{flex-direction:column}}
+.cov-drop{flex:1;border:1.5px dashed var(--line-strong,#c4d4de);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--muted);text-align:center;cursor:pointer;transition:border-color .15s,background .15s;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.cov-drop:hover,.cov-drop.dragover{border-color:var(--accent);background:var(--accent-light,#e8f4f8);color:var(--accent)}
+.cov-drop .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-weight:500}
+.cov-genes{flex:1;min-height:72px;resize:vertical;border:1.5px solid var(--line);border-radius:6px;padding:8px 10px;font-size:12px;font-family:inherit;color:var(--ink);background:var(--surface);line-height:1.5;box-sizing:border-box;width:100%}
+.cov-genes:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+
+/* Gene table */
+.gene-table-wrap{border:1px solid var(--line);border-radius:var(--radius);overflow-x:auto;background:var(--surface)}
+#gene-table{width:100%;border-collapse:collapse;table-layout:fixed;font-variant-numeric:tabular-nums}
+#gene-table th{padding:9px 12px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);text-align:left;border-bottom:2px solid var(--accent);white-space:nowrap}
+#gene-table th:first-child{width:48px;text-align:center}
+#gene-table th:last-child{width:36px}
+#gene-table td{padding:7px 12px;font-size:13px;border-bottom:1px solid var(--line);color:var(--ink)}
+#gene-table td:first-child{text-align:center;color:var(--accent);font-weight:600;font-size:12px}
+#gene-table tr:last-child td{border-bottom:none}
+#gene-table tr:nth-child(even){background:color-mix(in srgb,var(--bg) 50%,transparent)}
+#gene-table td input{border:none;width:100%;padding:0;font:inherit;background:transparent;color:inherit;outline:none}
+#gene-table td input:focus{background:var(--accent-light,#e8f4f8);border-radius:3px;padding:0 4px;margin:0 -4px}
+.gene-del-btn{background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;opacity:.4;transition:opacity .1s,color .1s}
+#gene-table tr:hover .gene-del-btn{opacity:1}
+.gene-del-btn:hover{color:var(--bad,#c00);background:color-mix(in srgb,var(--bad,#c00) 8%,transparent)}
 
 /* ── VARIANTS PANEL ── */
 #variants-container{display:flex;flex-direction:column;gap:10px}
@@ -475,35 +491,37 @@ label.req::after{content:" *";color:var(--warn)}
 
       <!-- GENES TAB -->
       <div id="tab-genes" class="tab-panel">
-        <details id="coverage-section" style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;padding:0">
-          <summary style="cursor:pointer;padding:8px 14px;font-weight:600;font-size:13px;user-select:none">
+        <div class="cov-card" id="coverage-section">
+          <button class="cov-toggle" onclick="this.closest('.cov-card').classList.toggle('open')">
+            <span class="arrow">&#9654;</span>
             Generate from coverage CSV
-          </summary>
-          <div style="padding:4px 14px 12px;display:flex;flex-direction:column;gap:8px;overflow:hidden">
-            <div class="dropzone" id="coverage-dropzone" style="min-height:auto;padding:8px 14px;overflow:hidden">
-              <input type="file" id="coverage-file-input" accept=".csv">
-              <span id="coverage-file-label" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">Choose coverage CSV file</span>
+          </button>
+          <div class="cov-body">
+            <div class="cov-row">
+              <div class="cov-drop" id="coverage-dropzone">
+                <input type="file" id="coverage-file-input" accept=".csv" hidden>
+                <span id="coverage-file-label">Choose coverage CSV file</span>
+              </div>
+              <textarea id="coverage-gene-panel" class="cov-genes" rows="3"
+                placeholder="Paste gene panel (comma-separated): BRCA1, BRCA2, TP53, …"></textarea>
             </div>
-            <textarea id="coverage-gene-panel" rows="3"
-              style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1.5px solid #aab8c5;border-radius:6px;color:inherit;outline:none"
-              placeholder="Paste gene panel (comma-separated): BRCA1, BRCA2, TP53, …"></textarea>
             <div style="display:flex;align-items:center;gap:10px">
-              <button class="btn btn-primary" id="coverage-generate-btn" style="white-space:nowrap">Generate gene table</button>
+              <button class="btn primary" id="coverage-generate-btn">Generate gene table</button>
               <span id="coverage-status" style="font-size:12px"></span>
             </div>
           </div>
-        </details>
+        </div>
 
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn" id="paste-genes-btn">Paste table</button>
           <button class="btn" id="add-gene-row-btn">+ Add row</button>
-          <span id="gene-count" class="chip">0 genes</span>
+          <span id="gene-count">0 genes</span>
         </div>
-        <div id="gene-status" style="font-size:12px;color:var(--muted)"></div>
+        <div id="gene-status"></div>
 
         <div class="gene-table-wrap">
           <table id="gene-table">
-            <thead><tr><th>#</th><th>Gene Name</th><th>% of coding region covered</th><th style="width:32px"></th></tr></thead>
+            <thead><tr><th>#</th><th>Gene Name</th><th>% of coding region covered</th><th></th></tr></thead>
             <tbody id="gene-tbody"></tbody>
           </table>
         </div>
@@ -1070,7 +1088,13 @@ function initCoverageSection() {
   const label = $('coverage-file-label');
 
   fileInput.addEventListener('change', () => {
-    label.textContent = fileInput.files.length ? fileInput.files[0].name : 'Choose coverage CSV file';
+    if (fileInput.files.length) {
+      label.textContent = fileInput.files[0].name;
+      label.classList.add('fname');
+    } else {
+      label.textContent = 'Choose coverage CSV file';
+      label.classList.remove('fname');
+    }
   });
   dropzone.addEventListener('click', () => fileInput.click());
   dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
@@ -1078,7 +1102,11 @@ function initCoverageSection() {
   dropzone.addEventListener('drop', e => {
     e.preventDefault(); dropzone.classList.remove('dragover');
     const f = [...e.dataTransfer.files].find(f => f.name.toLowerCase().endsWith('.csv'));
-    if (f) { fileInput.files = e.dataTransfer.files; label.textContent = f.name; }
+    if (f) {
+      fileInput.files = e.dataTransfer.files;
+      label.textContent = f.name;
+      label.classList.add('fname');
+    }
   });
 
   $('coverage-generate-btn').addEventListener('click', generateFromCoverage);
