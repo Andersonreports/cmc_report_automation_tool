@@ -949,7 +949,8 @@ function addGeneRow(gene='', cov='') {
   tr.querySelectorAll('input').forEach(i => i.addEventListener('input', () => { updateGeneCount(); schedulePreview(); }));
   tr.querySelector('.gene-del-btn').addEventListener('click', () => {
     const name = tr.querySelector('input').value.trim() || `row ${tr.querySelector('.gene-rownum').textContent}`;
-    if (!confirm(`Delete gene "${name}"?`)) return;
+    const typed = prompt(`Type "${name}" to confirm deletion:`);
+    if (typed === null || typed.trim().toUpperCase() !== name.toUpperCase()) return;
     tr.remove();
     reindexGeneRows();
     updateGeneCount();
