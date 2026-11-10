@@ -1073,6 +1073,9 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setMinimumWidth(220)
+        self.table.setDragDropMode(QListWidget.InternalMove)
+        self.table.setDefaultDropAction(Qt.MoveAction)
+        self.table.model().rowsMoved.connect(self._rows_moved)
         self.table.itemChanged.connect(self._ticked)
         self.table.currentRowChanged.connect(self._show_detail)
         self.list_box = QWidget()           # the variant list with its collapse symbol
@@ -1302,7 +1305,8 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.table.clear()
         for v in self._variants:
             it = QListWidgetItem(self._item_text(v))
-            it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable
+                        | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
             it.setCheckState(Qt.Checked if v.get("selected") else Qt.Unchecked)
             self.table.addItem(it)
         self.table.blockSignals(False)
@@ -1630,6 +1634,16 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_class.setStyleSheet(
             f"QComboBox {{ color: {colors[0]}; font-weight: 700; background: {colors[1]};"
             f" border: 1px solid {colors[2]}; }}" if colors else "")
+
+    def _rows_moved(self, _parent, start, end, _dest_parent, dest_row):
+        """Sync self._variants after the QListWidget's internal drag-drop move."""
+        moved = self._variants[start:end + 1]
+        del self._variants[start:end + 1]
+        insert_at = dest_row if dest_row <= start else dest_row - (end - start + 1)
+        for i, v in enumerate(moved):
+            self._variants.insert(insert_at + i, v)
+        self._current = self.table.currentRow()
+        self.changed.emit()
 
     def _ticked(self, item):
         r = self.table.row(item)

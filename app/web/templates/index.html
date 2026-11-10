@@ -237,9 +237,11 @@ label.req::after{content:" *";color:var(--warn)}
 .variant-list-toggle{background:var(--surface);border:1.5px solid var(--line);cursor:pointer;padding:3px 9px;font-size:15px;font-weight:700;color:var(--ink);line-height:1;border-radius:var(--radius-sm);flex-shrink:0;box-shadow:var(--shadow-sm);transition:background .15s}
 .variant-list-toggle:hover{background:var(--accent-light);border-color:var(--accent-mid)}
 #variant-list{overflow-y:auto;flex:1;max-height:500px}
-.variant-item{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line)}
+.variant-item{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:grab;border-bottom:1px solid var(--line);transition:opacity .15s}
 .variant-item:hover{background:var(--surface-2)}
 .variant-item.active{background:var(--accent-light)}
+.variant-item.dragging{opacity:.35;cursor:grabbing}
+.variant-item.drag-over{box-shadow:0 -2px 0 0 var(--accent)}
 .variant-item input[type=checkbox]{cursor:pointer;flex-shrink:0;accent-color:var(--accent)}
 .variant-item-label{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 .variant-item-tag{margin-left:auto;flex-shrink:0;font-size:10px;font-weight:700;color:#7c3aed;background:#f3eefe;border-radius:99px;padding:1px 8px}
@@ -1507,6 +1509,36 @@ function renderVariantList() {
       tag.textContent = 'Secondary';
       item.appendChild(tag);
     }
+    item.draggable = true;
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(i));
+      requestAnimationFrame(() => item.classList.add('dragging'));
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      const from = +e.dataTransfer.getData('text/plain');
+      const to = i;
+      if (from === to) return;
+      const [moved] = G.variants.splice(from, 1);
+      G.variants.splice(from < to ? to - 1 : to, 0, moved);
+      const newIdx = from < to ? to - 1 : to;
+      renderVariantList();
+      showVariantDetail(newIdx);
+      schedulePreview();
+    });
     item.addEventListener('click', (e) => { if (e.target !== cb) showVariantDetail(i); });
     list.appendChild(item);
   });
