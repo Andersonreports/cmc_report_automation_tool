@@ -1277,7 +1277,9 @@ def _superscript_hash(doc) -> None:
 def _align_result_notes(doc) -> None:
     """The notes under the variant tables and the headings above them start a few twips
     in from the margin while the abbreviation line and the text start at it: line them
-    up. All variant tables are centered, the same width, so the sets line up too."""
+    up. All variant tables are scaled to the text width and centered."""
+    sec = doc.sections[0]
+    page_w = round((sec.page_width - sec.left_margin - sec.right_margin) / 635)
     for p in doc.paragraphs:
         if p.text.strip().startswith(("*Genetic test results", "No other variant",
                                       "List of ", "Variant Interpretation")):
@@ -1285,16 +1287,30 @@ def _align_result_notes(doc) -> None:
             first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
-    for res, interp in _variant_sets(doc):
-        for tbl in (res, interp):
-            pr = tbl.tblPr
-            for tag in ("w:tblInd", "w:jc"):
-                for el in pr.findall(qn(tag)):
-                    pr.remove(el)
-            jc = OxmlElement("w:jc")
-            jc.set(qn("w:val"), "center")
-            tblw = pr.find(qn("w:tblW"))
-            (tblw.addnext(jc) if tblw is not None else pr.append(jc))
+    for tbl in [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]:
+        pr = tbl.tblPr
+        grid = tbl.find(qn("w:tblGrid"))
+        if grid is not None:
+            cols = grid.findall(qn("w:gridCol"))
+            total = sum(int(c.get(qn("w:w"))) for c in cols) or 1
+            k = page_w / total
+            for c in cols:
+                c.set(qn("w:w"), str(round(int(c.get(qn("w:w"))) * k)))
+            for tc in tbl.iter(qn("w:tc")):
+                w = tc.find(qn("w:tcPr") + "/" + qn("w:tcW"))
+                if w is not None and w.get(qn("w:type")) == "dxa":
+                    w.set(qn("w:w"), str(round(int(w.get(qn("w:w"))) * k)))
+        for tag in ("w:tblInd", "w:jc", "w:tblW"):
+            for el in pr.findall(qn(tag)):
+                pr.remove(el)
+        tblw = OxmlElement("w:tblW")
+        tblw.set(qn("w:w"), str(page_w))
+        tblw.set(qn("w:type"), "dxa")
+        jc = OxmlElement("w:jc")
+        jc.set(qn("w:val"), "center")
+        style = pr.find(qn("w:tblStyle"))
+        (style.addnext(tblw) if style is not None else pr.insert(0, tblw))
+        tblw.addnext(jc)
 
 
 def _fit_variant_layout(doc) -> None:
