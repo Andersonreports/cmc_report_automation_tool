@@ -812,8 +812,8 @@ def _keep_list_together(res) -> None:
     """Page breaks around a variant list: its 'List of ...' heading (and the blank
     lines under it - one without keep-with-next breaks the chain) stays with the
     header row and the first variant, so a heading is never left alone at the foot
-    of a page. A long table may go on over the page, its header row repeated there;
-    the last variant stays with the notes under the table, which never split."""
+    of a page. The last variant stays with the notes under the table, which never
+    split. The header row is NOT repeated on continuation pages."""
     heading = res.getprevious()
     while heading is not None and not (heading.tag == qn("w:p") and _text(heading).strip()):
         heading = heading.getprevious()
@@ -827,9 +827,11 @@ def _keep_list_together(res) -> None:
     keep += [p for tr in (rows[:1] + rows[-1:]) for p in tr.iter(qn("w:p"))]
     for p in keep:
         Paragraph(p, None).paragraph_format.keep_with_next = True
-    tr_pr = rows[0].get_or_add_trPr()       # the header row again on the next page
-    if tr_pr.find(qn("w:tblHeader")) is None:
-        tr_pr.append(OxmlElement("w:tblHeader"))
+    # Ensure the header row does NOT repeat on subsequent pages
+    tr_pr = rows[0].get_or_add_trPr()
+    hdr = tr_pr.find(qn("w:tblHeader"))
+    if hdr is not None:
+        tr_pr.remove(hdr)
     note = res.getnext()
     while note is not None and note.tag == qn("w:p") and not _text(note).strip():
         note = note.getnext()
