@@ -396,6 +396,18 @@ def api_coverage_genes():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/mito-coverage", methods=["POST"])
+def api_mito_coverage():
+    file = request.files.get("mito_excel")
+    if not file:
+        return jsonify({"error": "No mitochondrial Excel uploaded"}), 400
+    try:
+        genes = coverage.parse_mito_excel(file.read())
+        return jsonify({"genes": [[g, c] for g, c in genes]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/parse-genes", methods=["POST"])
 def api_parse_genes():
     text = (request.json or {}).get("text", "")

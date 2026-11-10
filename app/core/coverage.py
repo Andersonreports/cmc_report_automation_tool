@@ -5,6 +5,8 @@ import csv
 import io
 import re
 
+import openpyxl
+
 
 def parse_gene_panel(text: str) -> list[str]:
     """Parse a comma/newline separated gene list, deduplicate, preserve order."""
@@ -65,6 +67,49 @@ def parse_coverage_csv(csv_bytes: bytes | str) -> dict[str, str]:
         coverage = row[cov_col].strip()
         if gene:
             result[gene.upper()] = coverage
+    return result
+
+
+def parse_mito_excel(data: bytes) -> list[tuple[str, str]]:
+    """Parse a mitochondrial coverage Excel (header in row 2).
+
+    Returns [(gene, coverage), ...] for every gene row found.
+    Looks for columns named gene/gene_name and a percentage/coverage column.
+    """
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+    if len(rows) < 2:
+        raise ValueError("Mitochondrial Excel has fewer than 2 rows")
+    header = [str(h or "").strip().lower() for h in rows[1]]
+    gene_col: int | None = None
+    cov_col: int | None = None
+    for i, h in enumerate(header):
+        if h in ("gene_name", "gene name", "gene"):
+            gene_col = i
+        elif "% 1x" in h or h == "% 1x" or h.startswith("%") or "coverage" in h:
+            cov_col = i
+    if gene_col is None:
+        for i, h in enumerate(header):
+            if "gene" in h and "id" not in h:
+                gene_col = i
+                break
+    if gene_col is None or cov_col is None:
+        raise ValueError(
+            "Could not find Gene and coverage columns in the mitochondrial Excel. "
+            f"Header (row 2): {', '.join(str(h) for h in rows[1])}"
+        )
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in rows[2:]:
+        if len(row) <= max(gene_col, cov_col):
+            continue
+        gene = str(row[gene_col] or "").strip()
+        cov = str(row[cov_col] or "").strip()
+        if gene and gene.upper() not in seen:
+            result.append((gene, cov))
+            seen.add(gene.upper())
     return result
 
 
