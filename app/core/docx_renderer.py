@@ -748,14 +748,39 @@ def _is_secondary(v: dict) -> bool:
     return vr.is_secondary(v)
 
 
+def _strip_variant_section(doc) -> None:
+    """Remove the entire variant section (list heading, results table, interpretation,
+    notes) from a pathogenic template that was used for its banner layout only.
+    Everything from the first 'List of ...' heading up to 'CNV Findings' is removed."""
+    body = doc.element.body
+    start = None
+    for p in body.iterchildren(qn("w:p")):
+        if _text(p).strip().lower().startswith("list of"):
+            start = p
+            break
+    if start is None:
+        return
+    el = start
+    while el is not None:
+        if el.tag == qn("w:p") and _text(el).strip().lower().startswith("cnv findings"):
+            break
+        nxt = el.getnext()
+        el.getparent().remove(el)
+        el = nxt
+    _set_banner(doc, "none")
+
+
 def _fill_variants(doc, data: ReportData):
     """Replace the template's sample variants with the variants the user ticked.
     A template with two sets of variant tables (primary / Secondary findings) gets
     the Excel's Secondary Findings variants in the second set; the second set is
     removed when none of them is ticked."""
     chosen = [v for v in data.variants if v.get("selected")]
-    if not data.variants or not _cfg(data).variants:
-        return                      # no Excel uploaded: the template's sample stays
+    if not _cfg(data).variants:
+        return
+    if not chosen:
+        _strip_variant_section(doc)
+        return
     if _cfg(data).variant_captions:
         _fill_captioned_variants(doc, data, chosen)
         return

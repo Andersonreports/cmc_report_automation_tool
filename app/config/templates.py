@@ -198,8 +198,8 @@ OPTIONS: dict[str, dict[str, tuple[str, list[tuple[str, str]]]]] = {
 # starting values, as the lab's existing reports of that kind.
 RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
     "wes": {
-        "none": (dict(docx_file="wes_no_pathogenic.docx"),
-                 dict(interpretation="no",
+        "none": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
+                 dict(interpretation="yes",
                       file_suffix="whole_exome_report|-", reviewer="ROBERT")),
         "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
                        dict(interpretation="yes",
