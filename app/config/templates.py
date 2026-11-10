@@ -124,6 +124,17 @@ TEMPLATES: dict[str, TemplateConfig] = {
         options="wes",
         lab_wording=True,
     ),
+    # POC (Product Of Conception) and Amniotic Fluid reports share one WES
+    # template; the user picks the specimen from the dropdown.
+    "WES_POC_AF": TemplateConfig(
+        key="WES_POC_AF",
+        name="Whole Exome Sequencing - POC / Amniotic Fluid",
+        docx_file="wes_no_pathogenic.docx",
+        patient_id_label="Patient name",
+        patient_sheet="WES",
+        options="wes_poc_af",
+        lab_wording=True,
+    ),
     # The Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
     # VUS / additional variants) as one template, the same way.
     "WES_MITO_ALL": TemplateConfig(
@@ -168,6 +179,12 @@ OPTIONS: dict[str, dict[str, tuple[str, list[tuple[str, str]]]]] = {
          ("vus", "VUS")],
         None,
         None),
+    "wes_poc_af": _options(
+        [("none", "No pathogenic variant"),
+         ("pathogenic", "Pathogenic / Likely pathogenic"),
+         ("vus", "VUS")],
+        None,
+        None),
     "wes_mito": _options(
         [("none", "No pathogenic variant"),
          ("pathogenic", "Pathogenic / Likely pathogenic"),
@@ -192,6 +209,19 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
                      new_page_before=("Variant Interpretation",)),
                 dict(interpretation="yes",
                      file_suffix="whole_exome_report|-", reviewer="ROBERT")),
+    },
+    "wes_poc_af": {
+        "none": (dict(docx_file="wes_no_pathogenic.docx"),
+                 dict(interpretation="no",
+                      file_suffix="whole_exome_report|_", reviewer="ROBERT")),
+        "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True,
+                            new_page_before=("Variant Interpretation",)),
+                       dict(interpretation="yes",
+                            file_suffix="whole_exome_report|_", reviewer="ROBERT")),
+        "vus": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True,
+                     new_page_before=("Variant Interpretation",)),
+                dict(interpretation="yes",
+                     file_suffix="whole_exome_report|_", reviewer="ROBERT")),
     },
     "wes_mito": {
         "none": (dict(docx_file="whole_exome_mito.docx", new_page_before=("Disclaimer",)),
