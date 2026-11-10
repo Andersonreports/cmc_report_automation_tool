@@ -20,7 +20,7 @@ from PySide6.QtCore import QDate, QPoint, QRect, QRectF, QSettings, QSize, Qt, Q
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
-    QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton, QScrollArea,
     QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QTabBar, QTabWidget, QToolButton,
     QVBoxLayout, QWidget, QWidgetAction,
@@ -551,9 +551,12 @@ class GeneTableEditor(QWidget):
         self.status = QLabel()
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Gene Name", "% of coding region covered"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Gene Name", "% of coding region covered", ""])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.table.horizontalHeader().resizeSection(2, 36)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.itemChanged.connect(lambda *_: self._changed())
         lay.addWidget(self.table, 1)
@@ -573,9 +576,39 @@ class GeneTableEditor(QWidget):
         for r, (gene, cov) in enumerate(genes):
             self.table.setItem(r, 0, QTableWidgetItem(gene))
             self.table.setItem(r, 1, QTableWidgetItem(cov))
+            self._add_delete_button(r)
         self.table.blockSignals(False)
         self.status.setText(status)
         self.status.setStyleSheet(f"color:{color};")
+        self._changed()
+
+    def _add_delete_button(self, row: int):
+        btn = QPushButton("×")
+        btn.setFixedSize(24, 24)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip("Delete this gene row")
+        btn.setStyleSheet("QPushButton { border: none; color: #999; font-size: 15px; } "
+                          "QPushButton:hover { color: #c00; background: #fee; border-radius: 4px; }")
+        btn.clicked.connect(lambda _=False, r=row: self._delete_gene(r))
+        self.table.setCellWidget(row, 2, btn)
+
+    def _delete_gene(self, row: int):
+        if row >= self.table.rowCount():
+            return
+        gene_item = self.table.item(row, 0)
+        name = gene_item.text().strip() if gene_item else f"row {row + 1}"
+        typed, ok = QInputDialog.getText(self, "Delete gene",
+                                         f'Type "{name}" to confirm deletion:')
+        if not ok or typed.strip().upper() != name.upper():
+            return
+        self.table.removeRow(row)
+        for r in range(self.table.rowCount()):
+            btn = self.table.cellWidget(r, 2)
+            if btn:
+                btn.clicked.disconnect()
+                btn.clicked.connect(lambda _=False, r=r: self._delete_gene(r))
+        self.status.setText(f"Deleted {name}.")
+        self.status.setStyleSheet("color:#b35c00;")
         self._changed()
 
     def _changed(self):
@@ -2170,6 +2203,12 @@ class MainWindow(QMainWindow):
         self.mode_bar.addTab("Manual entry")
         self.mode_bar.addTab("Bulk upload")
         row.addWidget(self.mode_bar)
+        clear_btn = self._button("Clear")
+        clear_btn.setToolTip("Clear all form data")
+        clear_btn.setStyleSheet("QPushButton { color: #c0392b; border-color: #e8a9a9; }"
+                                "QPushButton:hover { background: #fef2f2; }")
+        clear_btn.clicked.connect(self._clear_form_data)
+        row.addWidget(clear_btn)
         lay.addLayout(row)
 
         # Two tabs: patient demography / the rest of the report inputs.
@@ -2355,7 +2394,15 @@ class MainWindow(QMainWindow):
                                           "padding: 2px 6px; font-weight: 600; }")
         self.actions_toggle.clicked.connect(
             lambda: self._set_actions_shown(foot.isHidden()))
-        lay.addWidget(self.actions_toggle, 0, Qt.AlignRight)
+        self.show_preview_btn = self._button("← Show preview")
+        self.show_preview_btn.setToolTip("Show the preview panel")
+        self.show_preview_btn.clicked.connect(lambda: self._toggle_preview(True))
+        self.show_preview_btn.hide()
+        toggle_bar = QHBoxLayout()
+        toggle_bar.addWidget(self.show_preview_btn)
+        toggle_bar.addStretch(1)
+        toggle_bar.addWidget(self.actions_toggle)
+        lay.addLayout(toggle_bar)
         lay.addWidget(foot)
         self._actions_bar = foot
         self._set_actions_shown(str(self.settings.value("actions_shown", "true")).lower() != "false")
@@ -2372,6 +2419,10 @@ class MainWindow(QMainWindow):
         self.result_badge = QLabel()        # the result picked in the Variants step
         self.result_badge.hide()
         bar.addWidget(self.result_badge)
+        hide_preview = self._button("Hide preview")
+        hide_preview.setToolTip("Hide the preview panel to get more room for the form")
+        hide_preview.clicked.connect(lambda: self._toggle_preview(False))
+        bar.addWidget(hide_preview)
         pl.addLayout(bar)
         self.scroll = PreviewScroll()
         self.scroll.setWidgetResizable(True)
@@ -2383,6 +2434,7 @@ class MainWindow(QMainWindow):
         self.pages.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         self.scroll.setWidget(pages)
         pl.addWidget(self.scroll, 1)
+        self._preview_panel = preview
 
         split = QSplitter(Qt.Horizontal)
         split.addWidget(form)
@@ -2391,6 +2443,7 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(1, 1)
         split.setSizes([1000, 1000])
         split.setChildrenCollapsible(False)
+        self._main_split = split
         self.setCentralWidget(split)
 
     # -- data --------------------------------------------------------------
@@ -2571,6 +2624,14 @@ class MainWindow(QMainWindow):
         self.actions_toggle.setText("Hide actions ▾" if shown else "Show actions ▴")
         self.settings.setValue("actions_shown", "true" if shown else "false")
 
+    def _toggle_preview(self, shown: bool):
+        """Hide or show the right-hand preview panel."""
+        self._preview_panel.setVisible(shown)
+        self.show_preview_btn.setVisible(not shown)
+        if shown:
+            self._main_split.setSizes([1000, 1000])
+            self._preview(force=True)
+
     def _show_variants_tab(self, on: bool):
         cfg = self._cfg()
         self.variants_panel.secondary_separate = cfg.secondary_findings
@@ -2677,6 +2738,35 @@ class MainWindow(QMainWindow):
         self._fetched_pin = self._last_received = ""
         self._set_fetch_status("", "gray")
         self._edited()
+
+    def _clear_form_data(self):
+        """Reset every field to its empty / default state."""
+        if QMessageBox.question(self, "Clear", "Clear all form data? This cannot be undone.") != QMessageBox.Yes:
+            return
+        for key, le in self.fields.items():
+            if key == "report_date":
+                le.setText(today_str())
+            else:
+                le.setText(self._template_defaults.get(key, ""))
+        self.fields["pin"].setText("")
+        self.history_edit.clear()
+        self.reads_edit.clear()
+        self.q30_edit.clear()
+        self.url_edit.clear()
+        self._fetched_pin = self._last_received = ""
+        self._set_fetch_status("", "gray")
+        genes = template_gene_table(self.template_combo.currentData())
+        self._template_genes = genes
+        self.gene_editor.set_genes(genes, "Showing the template's gene table.")
+        self.variants_panel.set_variants([])
+        self.variants_panel.set_result_tag("")
+        self.variants_panel.set_primary_title("")
+        self.variants_panel.set_additional_variants_text("")
+        self.variants_panel.set_secondary_title("")
+        self._steps_left.clear()
+        self._update_steps()
+        self.tabs.setCurrentIndex(0)
+        self._preview()
 
     def _fetch(self, pin: str):
         pin = pin.strip().upper()

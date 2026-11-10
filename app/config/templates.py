@@ -103,24 +103,6 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_id_client="CHRISTIAN MEDICAL COLLEGE - MOLECULAR ENDOCRINOLOGY",
         patient_id_prefix="MEL",
     ),
-    # Renders with the Endocrinology layout until its own .docx is supplied.
-    "NEPHROLOGY": TemplateConfig(
-        key="NEPHROLOGY",
-        name="Nephrology",
-        docx_file="endocrinology.docx",
-        hospital="Christian Medical College - Nephrology",
-        referring_clinician="Dr. Suceena Alexander, MD., DM., FRCP(Lon), FASN, PhD.",
-    ),
-    # Endocrinology layout, but no default Hospital/Clinic or Referring
-    # Clinician and no MEL Patient ID rule; patient details from the WES sheet.
-    "WES": TemplateConfig(
-        key="WES",
-        name="Whole Exome Sequencing",
-        docx_file="endocrinology.docx",
-        patient_id_label="Patient name",
-        specimen="Peripheral Blood",
-        patient_sheet="WES",
-    ),
     # Clinical Exome Sequencing with no pathogenic variant: the Endocrinology layout,
     # "clinical exome" in the title and Methodology, as the lab's G Shivananda report.
     "CLINICAL_EXOME": TemplateConfig(
@@ -130,99 +112,11 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_id_label="Patient name",
         file_suffix="Clinical_Exome_Report",
     ),
-    # Endocrinology layout with a pathogenic result: red result line, variant
-    # list, a Variant Interpretation page and the parents-testing recommendation.
-    # The variant tables hold the sample variant and are edited in the .docx.
-    "CMC_PATHO": TemplateConfig(
-        key="CMC_PATHO",
-        name="CMC - Pathogenic",
-        docx_file="whole_exome_patho.docx",
-        hospital="Christian Medical College - Molecular Endocrinology",
-        referring_clinician="Dr. Aaron Chapla",
-        patient_id_client="CHRISTIAN MEDICAL COLLEGE - MOLECULAR ENDOCRINOLOGY",
-        patient_id_prefix="MEL",
-        specimen="Peripheral Blood",
-        new_page_before=("Variant Interpretation",),
-        variants=True,
-        pathogenic=True,
-    ),
-    # Whole Exome + Mitochondrial report with a result: the exome part has two sets of
-    # variant tables, the primary and the Secondary findings (the Excel's
-    # "Secondary Findings" block); the mitochondrial result stays as in the template.
-    "WES_MITO_PATHO": TemplateConfig(
-        key="WES_MITO_PATHO",
-        name="Whole Exome & Mitochondrial - Pathogenic",
-        docx_file="whole_exome_mito_patho.docx",
-        patient_id_label="Patient name",
-        specimen="Peripheral Blood",
-        file_suffix="WES_&_Mito_report",
-        new_page_before=("Variant Interpretation",),
-        keep_layout=True,
-        secondary_findings=True,
-        reviewer="SARATH",
-        patient_sheet="WES",
-        variants=True,
-        pathogenic=True,
-        lab_wording=True,
-    ),
-    # Whole Exome report with no causative variant but incidental finding(s): green
-    # "No pathogenic ... causative" result line over "List of Incidental significant
-    # variant(s)", a Variant Interpretation page, and no Hospital/Clinic in the table.
-    "WES_INCIDENTAL": TemplateConfig(
-        key="WES_INCIDENTAL",
-        name="Whole Exome Sequencing - Incidental finding",
-        docx_file="whole_exome_incidental.docx",
-        patient_id_label="Patient name",
-        specimen="Peripheral Blood",
-        patient_sheet="WES",
-        file_suffix="wes_report",
-        new_page_before=("Variant Interpretation",),
-        reviewer="SARATH",
-        variants=True,
-        pathogenic=True,
-        fixed_result=True,
-        hospital_row=False,
-        lab_wording=True,
-    ),
-    # Whole Exome + Mitochondrial report with no causative variant but additional
-    # variant(s), as the lab's Baby Infant Snoba report: green "No pathogenic ...
-    # causative" result line, an "Additional Variant(s)" list, an optional Secondary
-    # findings list, and one captioned interpretation block per variant ("Variant 1",
-    # "Variant 2", ...) following on the same page.
-    "WES_MITO_ADDITIONAL": TemplateConfig(
-        key="WES_MITO_ADDITIONAL",
-        name="Whole Exome & Mitochondrial - Additional variants",
-        docx_file="whole_exome_mito_additional.docx",
-        patient_id_label="Patient name",
-        specimen="Peripheral Blood",
-        file_suffix="WES_&_Mito_report",
-        keep_layout=True,
-        secondary_findings=True,
-        reviewer="SARATH",
-        patient_sheet="WES",
-        variants=True,
-        pathogenic=True,
-        variant_captions=True,
-        own_styles=True,
-        lab_wording=True,
-    ),
-    "WES_MITO": TemplateConfig(
-        key="WES_MITO",
-        name="Whole Exome & Mitochondrial",
-        docx_file="whole_exome_mito.docx",
-        patient_id_label="Patient name",
-        file_suffix="Whole_Exome_Whole_mitochondrial_Report",
-        file_date_sep="_",
-        new_page_before=("Disclaimer",),
-        reviewer="SARATH",
-        patient_sheet="WES",
-    ),
-    # Trial: the WES reports (no pathogenic / pathogenic / incidental) as one template;
-    # the Result option picks the layout and the other options its details. It has
-    # its own .docx files: nothing is shared with the CMC templates.
+    # The WES reports (no pathogenic / pathogenic / VUS) as one template;
+    # the Result option picks the layout and the other options its details.
     "WES_ALL": TemplateConfig(
         key="WES_ALL",
-        name="Whole Exome Sequencing - All results (trial)",
+        name="Whole Exome Sequencing - All results",
         docx_file="wes_no_pathogenic.docx",
         patient_id_label="Patient name",
         specimen="Peripheral Blood",
@@ -230,11 +124,11 @@ TEMPLATES: dict[str, TemplateConfig] = {
         options="wes",
         lab_wording=True,
     ),
-    # Trial: the Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
-    # additional variants) as one template, the same way.
+    # The Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
+    # VUS / additional variants) as one template, the same way.
     "WES_MITO_ALL": TemplateConfig(
         key="WES_MITO_ALL",
-        name="Whole Exome & Mitochondrial - All results (trial)",
+        name="Whole Exome & Mitochondrial - All results",
         docx_file="whole_exome_mito.docx",
         patient_id_label="Patient name",
         specimen="Peripheral Blood",
