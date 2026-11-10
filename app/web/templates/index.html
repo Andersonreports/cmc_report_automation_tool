@@ -2632,7 +2632,10 @@ async function restoreFormState() {
 }
 
 function clearFormData() {
-  if (!confirm('Clear all form data? This cannot be undone.')) return;
+  if (!confirm('Clear all form data and start a new report?')) return;
+  // Cancel pending auto-save so it cannot re-write state after removeItem
+  clearTimeout(_saveTimer); _saveTimer = null;
+  clearTimeout(G.previewTimer);
   try { localStorage.removeItem(STATE_KEY); } catch(e) {}
   window.location.reload();
 }
