@@ -589,7 +589,10 @@ def insilico_tools(v: dict) -> tuple[tuple[str, str], ...]:
 
 
 def sequence_ontology(v: dict) -> str:
-    return v.get("so", "").replace("_", " ").title() or "-"
+    label = v.get("so", "").replace("_", " ").title()
+    if label.endswith(" Variant"):
+        label = label[: -len(" Variant")]
+    return label or "-"
 
 
 def allelic_depth(v: dict) -> str:
