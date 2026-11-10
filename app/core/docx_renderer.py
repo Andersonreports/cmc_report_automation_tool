@@ -1773,11 +1773,18 @@ def _field_runs(rpr, instr: str):
 
 
 def _fix_page_count(doc):
-    """Replace the footer's typed 'of 4' with a live NUMPAGES field."""
+    """Replace the footer's typed 'of N' with a live NUMPAGES field.
+
+    Handles two layouts found in the templates:
+      • two runs: run "of" then run "4"
+      • one run:  " of 12" (all in a single w:t)
+    """
     for section in doc.sections:
         for txbx in section.footer._element.iter(qn("w:txbxContent")):
             for p in txbx.iter(qn("w:p")):
                 runs = _runs(p)
+                fixed = False
+                # Two-run layout: prev text == "of", next text is a digit
                 for prev, r in zip(runs, runs[1:]):
                     if (prev.find(qn("w:t")).text or "").strip() == "of" and \
                             (r.find(qn("w:t")).text or "").strip().isdigit():
@@ -1785,6 +1792,22 @@ def _fix_page_count(doc):
                                                        " NUMPAGES \\* MERGEFORMAT ")):
                             r.addnext(nr)
                         p.remove(r)
+                        fixed = True
+                        break
+                if fixed:
+                    continue
+                # Single-run layout: " of 12" in one w:t element
+                for r in runs:
+                    t_el = r.find(qn("w:t"))
+                    if t_el is None:
+                        continue
+                    m = re.match(r'^(\s*of\s+)\d+(\s*)$', t_el.text or "")
+                    if m:
+                        t_el.text = m.group(1) + m.group(2)
+                        t_el.set(qn("xml:space"), "preserve")
+                        for nr in reversed(_field_runs(r.find(qn("w:rPr")),
+                                                       " NUMPAGES \\* MERGEFORMAT ")):
+                            r.addnext(nr)
                         break
 
 

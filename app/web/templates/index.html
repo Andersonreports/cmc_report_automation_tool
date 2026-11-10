@@ -89,6 +89,8 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 }
 .tab-btn.active .step-num{border-color:var(--accent);color:var(--accent)}
 .tab-btn.done .step-num{background:var(--accent);border-color:var(--accent);color:#fff}
+.tab-btn.mismatch .step-num{background:#e53e3e;border-color:#e53e3e;color:#fff}
+.tab-btn.mismatch .step-sub{color:#e53e3e}
 .step-text{display:flex;flex-direction:column;gap:1px;min-width:0}
 .step-name{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tab-btn.active .step-name{color:var(--accent)}
@@ -469,7 +471,9 @@ label.req::after{content:" *";color:var(--warn)}
         </div>
         <div class="form-group">
           <label class="req" for="f-clinical_history">Clinical history</label>
-          <textarea id="f-clinical_history" placeholder="Proband, &lt;Patient ID&gt;, is suspected to be affected with &lt;indication&gt; and has been evaluated for pathogenic variations." style="min-height:120px"></textarea>        </div>
+          <textarea id="f-clinical_history" placeholder="Proband, &lt;Patient ID&gt;, is suspected to be affected with &lt;indication&gt; and has been evaluated for pathogenic variations." style="min-height:120px"></textarea>
+          <div id="clinical-mismatch-warn" style="display:none;margin-top:5px;font-size:12px;color:#c0392b;background:#fff5f5;border:1px solid #feb2b2;border-radius:5px;padding:6px 10px"></div>
+        </div>
         <div class="field-group">
           <div class="group-label">Sequence data attributes</div>
           <div class="form-grid">
@@ -516,7 +520,6 @@ label.req::after{content:" *";color:var(--warn)}
         </div>
 
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <button class="btn" id="paste-genes-btn">Paste table</button>
           <button class="btn" id="add-gene-row-btn">+ Add row</button>
           <span id="gene-count">0 genes</span>
         </div>
@@ -883,16 +886,55 @@ function stepState(tab) {
   return { complete: n > 0, sub: G.variants.length ? `${n} selected` : 'Not started' };
 }
 
+function detectClinicalMismatch() {
+  const history = ($('f-clinical_history').value || '').toLowerCase();
+  if (!history.trim()) return null;
+
+  const name   = ($('f-patient_id').value || '').trim();
+  const gender = ($('f-gender').value || '').trim().toLowerCase();
+  const reasons = [];
+
+  // Gender pronoun check — only flag when one side is exclusive
+  const hasFem  = /\b(she|her|herself)\b/.test(history);
+  const hasMale = /\b(he|him|himself)\b/.test(history);
+  if (/^m(ale)?$/.test(gender) && hasFem && !hasMale)
+    reasons.push('clinical history uses female pronouns (she/her) but patient is Male');
+  if (/^f(emale)?$/.test(gender) && hasMale && !hasFem)
+    reasons.push('clinical history uses male pronouns (he/him) but patient is Female');
+
+  // Name check: patient name should appear in clinical history
+  const nameParts = name.split(/[\s,\.]+/).filter(p => p.length > 2).map(p => p.toLowerCase());
+  if (nameParts.length > 0 && !nameParts.some(p => history.includes(p))) {
+    const m = history.match(/(?:proband[,\s]+|baby\s+|master[.\s]+|mr[.\s]+|mrs[.\s]+|ms[.\s]+)([a-z]+(?:\s+[a-z]+)?)/);
+    if (m) {
+      const histParts = m[1].trim().split(/\s+/).filter(p => p.length > 2);
+      if (!histParts.some(hp => nameParts.includes(hp)))
+        reasons.push(`clinical history appears to be for "${m[1].trim()}" — patient is "${name}"`);
+    }
+  }
+
+  return reasons.length ? reasons.join('; ') : null;
+}
+
 function updateSteps() {
+  const mismatch = detectClinicalMismatch();
+  const warn = $('clinical-mismatch-warn');
+  if (warn) {
+    warn.style.display = mismatch ? '' : 'none';
+    warn.textContent = mismatch ? '⚠️ ' + mismatch[0].toUpperCase() + mismatch.slice(1) + '.' : '';
+  }
+
   const steps = visibleSteps();
   steps.forEach((tab, i) => {
     const b = $q(`.tab-btn[data-tab="${tab}"]`);
     const st = stepState(tab);
-    b.classList.toggle('done', st.complete);
-    b.querySelector('.step-num').textContent = st.complete ? '✓' : String(i + 1);
+    const isMismatch = tab === 'report' && !!mismatch;
+    b.classList.toggle('done', st.complete && !isMismatch);
+    b.classList.toggle('mismatch', isMismatch);
+    b.querySelector('.step-num').textContent = isMismatch ? '!' : (st.complete ? '✓' : String(i + 1));
     const sub = b.querySelector('.step-sub');
-    sub.textContent = st.sub;
-    sub.classList.toggle('partial', !st.complete && st.sub !== 'Not started');
+    sub.textContent = isMismatch ? 'Patient mismatch' : st.sub;
+    sub.classList.toggle('partial', !isMismatch && !st.complete && st.sub !== 'Not started');
   });
 
   // Missing-field outline only once the user has moved past that step
@@ -1041,12 +1083,12 @@ function showPasteBox() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
   box.style.cssText = 'background:var(--surface);border-radius:10px;padding:20px;width:520px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.25)';
-  box.innerHTML = `<div style="font-weight:600;margin-bottom:8px">Paste gene table</div>
+  box.innerHTML = `<div style="font-weight:600;margin-bottom:8px">Add gene table</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Copy the gene + coverage cells from Excel/Word, then press Ctrl+V in the box below.</div>
     <textarea id="paste-box-input" rows="8" style="width:100%;box-sizing:border-box;font-size:12px;font-family:monospace;padding:8px;border:1.5px solid var(--line);border-radius:6px;resize:vertical" placeholder="Paste here (Ctrl+V)…"></textarea>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
       <button class="btn" id="paste-box-cancel">Cancel</button>
-      <button class="btn btn-accent" id="paste-box-ok">Apply</button>
+      <button class="btn btn-accent" id="paste-box-ok">Add to report</button>
     </div>`;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -2420,7 +2462,6 @@ async function initApp() {
     $('reviewer-combo').addEventListener('change', schedulePreview);
 
     // Gene table
-    $('paste-genes-btn').addEventListener('click', pasteGenes);
     document.addEventListener('paste', onGenePasteKey);
     $('add-gene-row-btn').addEventListener('click', () => { addGeneRow(); schedulePreview(); });
     initCoverageSection();

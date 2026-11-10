@@ -538,12 +538,8 @@ class GeneTableEditor(QWidget):
         cov_lay.addLayout(gen_row)
         lay.addWidget(cov_group)
 
-        # -- Existing paste/table controls --
+        # -- Gene count row --
         row = QHBoxLayout()
-        paste = QPushButton("Paste table")
-        paste.setToolTip("Replace the table with the one on the clipboard (Ctrl+V)")
-        paste.clicked.connect(self.paste)
-        row.addWidget(paste)
         row.addStretch(1)
         self.count = QLabel()
         row.addWidget(self.count)
