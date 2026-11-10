@@ -211,8 +211,9 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
                      file_suffix="whole_exome_report|-", reviewer="ROBERT")),
     },
     "wes_poc_af": {
-        "none": (dict(docx_file="wes_no_pathogenic.docx"),
-                 dict(interpretation="no",
+        "none": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True,
+                      new_page_before=("Variant Interpretation",)),
+                 dict(interpretation="yes",
                       file_suffix="whole_exome_report|_", reviewer="ROBERT")),
         "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True,
                             new_page_before=("Variant Interpretation",)),

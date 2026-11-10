@@ -715,11 +715,13 @@ def _set_banner(doc, mode: str, genes: str = "") -> None:
                      if p.getparent().tag == qn("w:txbxContent")
                      and "".join(t.text or "" for t in p.iter(qn("w:t"))).startswith(
                          "No pathogenic or likely pathogenic")), None)
-        if mito is None:
-            return
-        text = "".join(t.text or "" for t in mito.iter(qn("w:t")))
-        found = mito.find(qn("w:r")).get_or_add_rPr().find(qn("w:color"))
-        color = found.get(qn("w:val")) if found is not None else "0070C0"
+        if mito is not None:
+            text = "".join(t.text or "" for t in mito.iter(qn("w:t")))
+            found = mito.find(qn("w:r")).get_or_add_rPr().find(qn("w:color"))
+            color = found.get(qn("w:val")) if found is not None else "26A76A"
+        else:
+            text = dict(vr.RESULT_TAGS)["no_pathogenic_detected"]
+            color = "26A76A"
     else:
         text, color = dict(vr.RESULT_TAGS)[mode], vr.RESULT_COLORS[mode]
     for t in [t for t in doc.element.body.iter(qn("w:t")) if (t.text or "").strip() == _BANNER]:
