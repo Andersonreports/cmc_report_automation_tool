@@ -2047,8 +2047,7 @@ async function doPreview(force=false) {
   const pages = $('preview-pages');
   $('preview-status').textContent = 'Rendering…';
 
-  // Auto-refresh shows first 3 pages; force (Refresh button) shows all
-  const payload = { ...data, max_pages: force ? 0 : 3 };
+  const payload = { ...data, max_pages: 0 };
   try {
     const r = await postJSON('/api/preview', payload);
     if (r.error && (!r.pages || !r.pages.length)) {
@@ -2068,10 +2067,7 @@ async function doPreview(force=false) {
       });
       const now = new Date().toLocaleTimeString();
       const total = r.total_pages || r.pages.length;
-      const shown = r.pages.length;
-      $('preview-status').textContent = shown < total
-        ? `Updated ${now} — ${shown} of ${total} page(s) shown (click Refresh for all)`
-        : `Updated ${now} — ${total} page(s)`;
+      $('preview-status').textContent = `Updated ${now} — ${total} page(s)`;
     } else if (r.error) {
       $('preview-status').textContent = `Preview failed: ${r.error}`;
     }
