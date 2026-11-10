@@ -235,13 +235,15 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 45) -> dict[str, str] | Non
     client = get("Client name") or get("Client")
     out.update(_parse_name(get("Name")))
     if cfg is not None and cfg.patient_sheet == "WES":
-        # WES reports keep the sheet's name as written, less the age/gender:
-        # 'MASTER.MD WAKILIBN (AQ38850) (5Y/M)' -> 'MASTER.MD WAKILIBN (AQ38850)'.
+        # Strip age/gender brackets, square-bracket tags, titles, then title-case:
+        # 'MASTER.MD WAKILIBN (AQ38850) (5Y/M)' -> 'Md Wakilibn (AQ38850)'.
         name = re.sub(r"\(\s*\d+\s*[YMD]\s*[/|]?\s*[MF]\s*\)\s*(-\s*\d+\s*)?", " ",
                       get("Name"), flags=re.I)
+        name = re.sub(r"\[.*?\]", " ", name)
         name = " ".join(name.split())
+        name = re.sub(r"^\s*(MS|MR|MRS|MASTER|BABY|MISS)\.\s*", "", name, flags=re.I).strip()
         if name:
-            out["patient_id"] = name
+            out["patient_id"] = re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), name)
     elif cfg is not None and cfg.patient_id_label == "Patient name" and "patient_id" in out:
         # A patient name reads "Aksha Dahiya", not the sheet's "AKSHA DAHIYA".
         out["patient_id"] = re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(),
