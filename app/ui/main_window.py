@@ -2598,7 +2598,7 @@ class MainWindow(QMainWindow):
                 le.setText(value)
         self._template_defaults = new
         cfg = self._cfg()
-        self._show_variants_tab(cfg.variants)
+        self._show_variants_tab(True)
         self.variants_panel.set_lab_wording(cfg.lab_wording)
         # Clinical reviewer: the template's, unless the user picked another.
         if self.reviewer_combo.currentData() in (None, self._template_reviewer):
@@ -2883,7 +2883,7 @@ class MainWindow(QMainWindow):
         self.gene_editor.set_genes(data.genes or self._template_genes,
                                    "Gene table from the draft." if data.genes
                                    else "Showing the template's gene table.")
-        self._show_variants_tab(cfg.variants)
+        self._show_variants_tab(True)
         self.variants_panel.set_lab_wording(cfg.lab_wording)
         self.variants_panel.set_variants(data.variants)
         self.variants_panel.set_result_tag(data.result_tag)

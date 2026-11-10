@@ -1258,10 +1258,8 @@ async function onTemplateChange(key, force=false) {
   // Gene Coverage tab — always visible for all templates
   $('genes-tab-btn').style.display = '';
 
-  // Variants tab
-  const hasVariants = !!info.variants;
-  $('variants-tab-btn').style.display = hasVariants ? '' : 'none';
-  if (!hasVariants && G.activeTab === 'variants') switchTab('patient');
+  // Variants tab — always visible so variant data can be prepared for any result
+  $('variants-tab-btn').style.display = '';
 
   // Primary variant list title row (shown for pathogenic templates)
   const priRow = $('primary-title-row');
@@ -2114,7 +2112,7 @@ async function applyDraftData(raw) {
   G.variants = raw.variants || [];
   G.currentVariantIdx = -1;
   G.variantManualFields = {};
-  if (G.variants.length && G.templateInfo && G.templateInfo.variants) {
+  if (G.variants.length && G.templateInfo) {
     $('variants-tools').style.display = '';
     $('variants-body').style.display = '';
     $('variants-hint').style.display = 'none';
