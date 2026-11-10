@@ -1131,6 +1131,10 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
             if "additional" in heading_text.lower():
                 _ensure_additional_section(doc, data, heading)
     _add_result_rows(doc, res, proto, chosen)
+    if _cfg(data).skip_omim:
+        omim = _para_near(doc, tbl, "OMIM phenotype", "", required=False, whole_doc=whole_doc)
+        if omim is not None:
+            omim.getparent().remove(omim)
     # -- Variant Interpretation: the template's 8-row block, once per variant
     rows = tbl.findall(qn("w:tr"))
     block = [copy.deepcopy(r) for r in rows[:8]]

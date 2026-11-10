@@ -77,6 +77,9 @@ class TemplateConfig:
     # Also offer the result lines and list titles of the lab's newer WES / WES & Mito
     # reports (variants.LAB_RESULT_TAGS / LAB_PRIMARY_TITLES) in the Variants tab.
     lab_wording: bool = False
+    # Skip the "OMIM phenotype" narrative under the Variant Interpretation table
+    # (only "#Clinical and Literature Evidences" is kept).
+    skip_omim: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,13 +212,13 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
                      file_suffix="whole_exome_report|-", reviewer="ROBERT")),
     },
     "wes_poc_af": {
-        "none": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
+        "none": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True, skip_omim=True),
                  dict(interpretation="yes",
                       file_suffix="whole_exome_report|_", reviewer="ROBERT")),
-        "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
+        "pathogenic": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True, skip_omim=True),
                        dict(interpretation="yes",
                             file_suffix="whole_exome_report|_", reviewer="ROBERT")),
-        "vus": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
+        "vus": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True, skip_omim=True),
                 dict(interpretation="yes",
                      file_suffix="whole_exome_report|_", reviewer="ROBERT")),
     },
