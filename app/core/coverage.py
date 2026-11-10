@@ -73,43 +73,54 @@ def parse_coverage_csv(csv_bytes: bytes | str) -> dict[str, str]:
 def parse_mito_excel(data: bytes) -> list[tuple[str, str]]:
     """Parse a mitochondrial coverage Excel (header in row 2).
 
-    Returns [(gene, coverage), ...] for every gene row found.
-    Looks for columns named gene/gene_name and a percentage/coverage column.
+    The "Name" column holds entries like ``MT-TF/MT-TF/ex1``; the gene name
+    is the first segment before ``/``.  Coverage comes from the ``% 1x``
+    column.  Returns ``[(gene, coverage), ...]`` sorted alphabetically.
     """
     wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
     wb.close()
-    if len(rows) < 2:
-        raise ValueError("Mitochondrial Excel has fewer than 2 rows")
+    if len(rows) < 3:
+        raise ValueError("Mitochondrial Excel has fewer than 3 rows")
     header = [str(h or "").strip().lower() for h in rows[1]]
-    gene_col: int | None = None
+    name_col: int | None = None
     cov_col: int | None = None
     for i, h in enumerate(header):
-        if h in ("gene_name", "gene name", "gene"):
-            gene_col = i
-        elif "% 1x" in h or h == "% 1x" or h.startswith("%") or "coverage" in h:
+        if h == "name":
+            name_col = i
+        elif h in ("gene_name", "gene name", "gene"):
+            name_col = name_col if name_col is not None else i
+        elif "% 1x" in h:
             cov_col = i
-    if gene_col is None:
+    if name_col is None:
         for i, h in enumerate(header):
-            if "gene" in h and "id" not in h:
-                gene_col = i
+            if "name" in h or ("gene" in h and "id" not in h):
+                name_col = i
                 break
-    if gene_col is None or cov_col is None:
+    if cov_col is None:
+        for i, h in enumerate(header):
+            if h.startswith("%") or "coverage" in h:
+                cov_col = i
+                break
+    if name_col is None or cov_col is None:
         raise ValueError(
-            "Could not find Gene and coverage columns in the mitochondrial Excel. "
+            "Could not find Name and coverage columns in the mitochondrial Excel. "
             f"Header (row 2): {', '.join(str(h) for h in rows[1])}"
         )
     result: list[tuple[str, str]] = []
     seen: set[str] = set()
     for row in rows[2:]:
-        if len(row) <= max(gene_col, cov_col):
+        if len(row) <= max(name_col, cov_col):
             continue
-        gene = str(row[gene_col] or "").strip()
-        cov = str(row[cov_col] or "").strip()
+        raw = str(row[name_col] or "").strip()
+        gene = raw.split("/")[0].strip()
+        cov_val = row[cov_col]
+        cov = str(round(float(cov_val), 1)) if isinstance(cov_val, (int, float)) else str(cov_val or "").strip()
         if gene and gene.upper() not in seen:
             result.append((gene, cov))
             seen.add(gene.upper())
+    result.sort(key=lambda g: g[0].upper())
     return result
 
 
