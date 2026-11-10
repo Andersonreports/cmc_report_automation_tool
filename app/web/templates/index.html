@@ -1210,6 +1210,15 @@ function initCoverageSection() {
     }
   });
 
+  const panelBox = $('coverage-gene-panel');
+  panelBox.addEventListener('paste', () => {
+    setTimeout(() => {
+      const genes = [...new Set(panelBox.value.split(/[,\n\r]+/).map(g => g.trim().replace(/\.+$/, '')).filter(Boolean))];
+      genes.sort((a, b) => a.toUpperCase().localeCompare(b.toUpperCase()));
+      panelBox.value = genes.join(', ');
+    }, 0);
+  });
+
   $('coverage-generate-btn').addEventListener('click', generateFromCoverage);
 
   const mitoInput = $('mito-file-input');

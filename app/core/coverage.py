@@ -9,7 +9,7 @@ import openpyxl
 
 
 def parse_gene_panel(text: str) -> list[str]:
-    """Parse a comma/newline separated gene list, deduplicate, preserve order."""
+    """Parse a comma/newline separated gene list, deduplicate, sort A-Z."""
     genes: list[str] = []
     seen: set[str] = set()
     for token in re.split(r"[,\n\r]+", text):
@@ -17,6 +17,7 @@ def parse_gene_panel(text: str) -> list[str]:
         if gene and gene.upper() not in seen:
             genes.append(gene)
             seen.add(gene.upper())
+    genes.sort(key=str.upper)
     return genes
 
 
