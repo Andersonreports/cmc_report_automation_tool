@@ -1582,15 +1582,26 @@ def _tidy_classification_table(doc, pad: int = 180):
         el.set(qn("w:type"), "dxa")
         mar.append(el)
     tbl_pr.append(mar)
-    for row in table.rows[1:]:
-        # The template's fixed row heights pad some rows more than others;
-        # let the text plus the cell margins set every row's height.
-        trpr = row._tr.trPr
-        height = trpr.find(qn("w:trHeight")) if trpr is not None else None
+    n_rows = len(table.rows)
+    for i, row in enumerate(table.rows[1:], 1):
+        # Remove fixed row heights so the cell content sets the height.
+        trpr = row._tr.get_or_add_trPr()
+        height = trpr.find(qn("w:trHeight"))
         if height is not None:
             trpr.remove(height)
         for cell in row.cells:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    # Keep the whole table together: cantSplit on every row prevents
+    # mid-cell breaks; keepNext on all but the last row keeps consecutive
+    # rows on the same page so the table never splits across pages.
+    for i, row in enumerate(table.rows):
+        trpr = row._tr.get_or_add_trPr()
+        if trpr.find(qn("w:cantSplit")) is None:
+            trpr.append(OxmlElement("w:cantSplit"))
+        if i < n_rows - 1:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    Paragraph(p._p, None).paragraph_format.keep_with_next = True
     # Interpretation column: heading centred, the descriptions justified.
     for i, row in enumerate(table.rows):
         for p in row.cells[1].paragraphs:
