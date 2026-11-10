@@ -536,31 +536,18 @@ class GeneTableEditor(QWidget):
         self._cov_status.setWordWrap(True)
         gen_row.addWidget(self._cov_status, 1)
         cov_lay.addLayout(gen_row)
-        lay.addWidget(cov_group)
-
-        # -- Mitochondrial coverage section --
-        mito_group = QGroupBox("Add Mitochondrial Data (optional)")
-        mito_group.setCheckable(True)
-        mito_group.setChecked(False)
-        mito_lay = QVBoxLayout(mito_group)
-        mito_lay.addWidget(QLabel("Mitochondrial Excel (header in row 2)"))
+        mito_lbl = QLabel("+ Add Mitochondrial Data (optional) — Excel with header in row 2")
+        mito_lbl.setObjectName("hint")
+        cov_lay.addWidget(mito_lbl)
         mito_row = QHBoxLayout()
-        self._mito_path = QLineEdit(placeholderText="Mitochondrial Excel file…", readOnly=True)
+        self._mito_path = QLineEdit(placeholderText="Mitochondrial Excel file (optional)…", readOnly=True)
         mito_browse = QPushButton("Browse")
         mito_browse.setFixedWidth(70)
         mito_browse.clicked.connect(self._browse_mito)
         mito_row.addWidget(self._mito_path, 1)
         mito_row.addWidget(mito_browse)
-        mito_lay.addLayout(mito_row)
-        mito_btn_row = QHBoxLayout()
-        mito_btn = QPushButton("Add to gene table")
-        mito_btn.clicked.connect(self._add_mito_genes)
-        mito_btn_row.addWidget(mito_btn)
-        self._mito_status = QLabel()
-        self._mito_status.setWordWrap(True)
-        mito_btn_row.addWidget(self._mito_status, 1)
-        mito_lay.addLayout(mito_btn_row)
-        lay.addWidget(mito_group)
+        cov_lay.addLayout(mito_row)
+        lay.addWidget(cov_group)
 
         # -- Gene count row --
         row = QHBoxLayout()
@@ -684,7 +671,21 @@ class GeneTableEditor(QWidget):
             self._cov_status.setText("No matching genes found in the CSV.")
             self._cov_status.setStyleSheet("color:#c00000;")
             return
+        mito_count = 0
+        mito_path = self._mito_path.text().strip()
+        if mito_path:
+            try:
+                with open(mito_path, "rb") as f:
+                    mito_genes = coverage.parse_mito_excel(f.read())
+                genes.extend(mito_genes)
+                mito_count = len(mito_genes)
+            except Exception as e:
+                self._cov_status.setText(f"Mito Excel error: {e}")
+                self._cov_status.setStyleSheet("color:#c00000;")
+                return
         msg = f"{len(genes)} genes loaded."
+        if mito_count:
+            msg += f" (includes {mito_count} mitochondrial)"
         color = "#1a7f37"
         if not_found:
             shown = ", ".join(not_found[:5]) + (" …" if len(not_found) > 5 else "")
@@ -697,28 +698,6 @@ class GeneTableEditor(QWidget):
             self, "Select mitochondrial Excel", "", "Excel files (*.xlsx *.xls)")
         if path:
             self._mito_path.setText(path)
-
-    def _add_mito_genes(self):
-        path = self._mito_path.text().strip()
-        if not path:
-            self._mito_status.setText("Select a mitochondrial Excel file first.")
-            self._mito_status.setStyleSheet("color:#c00000;")
-            return
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            genes = coverage.parse_mito_excel(data)
-        except Exception as e:
-            self._mito_status.setText(str(e))
-            self._mito_status.setStyleSheet("color:#c00000;")
-            return
-        if not genes:
-            self._mito_status.setText("No genes found in the Excel.")
-            self._mito_status.setStyleSheet("color:#c00000;")
-            return
-        existing = self.genes()
-        existing.extend(genes)
-        self.set_genes(existing, f"{len(genes)} mitochondrial genes added.", "#1a7f37")
 
 
 class StepTabBar(QTabBar):

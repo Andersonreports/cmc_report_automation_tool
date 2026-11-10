@@ -514,29 +514,16 @@ label.req::after{content:" *";color:var(--warn)}
               <textarea id="coverage-gene-panel" class="cov-genes" rows="3"
                 placeholder="Paste gene panel (comma-separated): BRCA1, BRCA2, TP53, …"></textarea>
             </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <button class="btn primary" id="coverage-generate-btn">Generate gene table</button>
-              <span id="coverage-status" style="font-size:12px"></span>
-            </div>
-          </div>
-        </div>
-
-        <div class="cov-card" id="mito-section">
-          <button class="cov-toggle" onclick="this.closest('.cov-card').classList.toggle('open')">
-            <span class="arrow">&#9654;</span>
-            + Add Mitochondrial Data (optional)
-          </button>
-          <div class="cov-body">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Mitochondrial Excel (header in row 2)</div>
+            <div style="font-size:12px;color:var(--muted);margin:4px 0 2px">+ Add Mitochondrial Data (optional) — Excel with header in row 2</div>
             <div class="cov-row">
               <div class="cov-drop" id="mito-dropzone">
                 <input type="file" id="mito-file-input" accept=".xlsx,.xls" hidden>
-                <span id="mito-file-label">Choose mitochondrial Excel file</span>
+                <span id="mito-file-label">Choose mitochondrial Excel file (optional)</span>
               </div>
             </div>
             <div style="display:flex;align-items:center;gap:10px">
-              <button class="btn primary" id="mito-add-btn">Add to gene table</button>
-              <span id="mito-status" style="font-size:12px"></span>
+              <button class="btn primary" id="coverage-generate-btn">Generate gene table</button>
+              <span id="coverage-status" style="font-size:12px"></span>
             </div>
           </div>
         </div>
@@ -1230,7 +1217,7 @@ function initCoverageSection() {
   const mitoLabel = $('mito-file-label');
   mitoInput.addEventListener('change', () => {
     if (mitoInput.files.length) { mitoLabel.textContent = mitoInput.files[0].name; mitoLabel.classList.add('fname'); }
-    else { mitoLabel.textContent = 'Choose mitochondrial Excel file'; mitoLabel.classList.remove('fname'); }
+    else { mitoLabel.textContent = 'Choose mitochondrial Excel file (optional)'; mitoLabel.classList.remove('fname'); }
   });
   mitoDz.addEventListener('click', () => mitoInput.click());
   mitoDz.addEventListener('dragover', e => { e.preventDefault(); mitoDz.classList.add('dragover'); });
@@ -1240,11 +1227,11 @@ function initCoverageSection() {
     const f = [...e.dataTransfer.files].find(f => /\.xlsx?$/i.test(f.name));
     if (f) { mitoInput.files = e.dataTransfer.files; mitoLabel.textContent = f.name; mitoLabel.classList.add('fname'); }
   });
-  $('mito-add-btn').addEventListener('click', addMitoGenes);
 }
 
 async function generateFromCoverage() {
   const fileInput = $('coverage-file-input');
+  const mitoInput = $('mito-file-input');
   const panel = $('coverage-gene-panel').value.trim();
   const status = $('coverage-status');
   if (!fileInput.files.length) { status.textContent = 'Please select a coverage CSV file.'; status.className = 'status-bad'; return; }
@@ -1254,6 +1241,7 @@ async function generateFromCoverage() {
   const fd = new FormData();
   fd.append('coverage_csv', fileInput.files[0]);
   fd.append('gene_panel', panel);
+  if (mitoInput.files.length) fd.append('mito_excel', mitoInput.files[0]);
 
   try {
     const resp = await fetch('/api/coverage-genes', { method: 'POST', body: fd });
@@ -1263,33 +1251,12 @@ async function generateFromCoverage() {
     renderGeneTable(r.genes);
     let msg = `${r.genes.length} gene${r.genes.length===1?'':'s'} loaded.`;
     let cls = 'ok';
+    if (r.mito_count) msg += ` (includes ${r.mito_count} mitochondrial)`;
     if (r.not_found && r.not_found.length) {
       msg += ` ${r.not_found.length} not found in CSV: ${r.not_found.slice(0,5).join(', ')}${r.not_found.length>5?' …':''}`;
       cls = 'warn';
     }
     status.textContent = msg; status.className = 'status-' + cls;
-    schedulePreview();
-  } catch(e) {
-    status.textContent = 'Request failed: ' + e.message; status.className = 'status-bad';
-  }
-}
-
-async function addMitoGenes() {
-  const fileInput = $('mito-file-input');
-  const status = $('mito-status');
-  if (!fileInput.files.length) { status.textContent = 'Please select a mitochondrial Excel file.'; status.className = 'status-bad'; return; }
-  status.textContent = 'Processing…'; status.className = '';
-  const fd = new FormData();
-  fd.append('mito_excel', fileInput.files[0]);
-  try {
-    const resp = await fetch('/api/mito-coverage', { method: 'POST', body: fd });
-    const r = await resp.json();
-    if (r.error) { status.textContent = r.error; status.className = 'status-bad'; return; }
-    if (!r.genes || !r.genes.length) { status.textContent = 'No genes found in the Excel.'; status.className = 'status-bad'; return; }
-    r.genes.forEach(([g, c]) => addGeneRow(g, c));
-    updateGeneCount();
-    status.textContent = `${r.genes.length} mitochondrial gene${r.genes.length===1?'':'s'} added.`;
-    status.className = 'status-ok';
     schedulePreview();
   } catch(e) {
     status.textContent = 'Request failed: ' + e.message; status.className = 'status-bad';
