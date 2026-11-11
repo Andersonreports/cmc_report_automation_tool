@@ -2049,23 +2049,30 @@ def _cfg(data: ReportData):
 # The patient table's boxes (row by row, left / right) with and without the
 # Hospital/Clinic box, as the lab's reports lay them out.
 _PATIENT_LAYOUTS = {
-    True: [("Patient name", "PIN"), ("Age", "Gender"), ("Hospital/Clinic", "Sample Number"),
-           ("Referring Clinician", "Sample Collection Date"), ("Specimen", "Sample Received Date"),
-           ("", "Report Date")],
-    False: [("Patient name", "PIN"), ("Age", "Gender"), ("Referring Clinician", "Sample Number"),
-            ("Specimen", "Sample Collection Date"), ("Report Date", "Sample Received Date")],
+    (True, True): [("Patient name", "PIN"), ("Age", "Gender"), ("Hospital/Clinic", "Sample Number"),
+                   ("Referring Clinician", "Sample Collection Date"), ("Specimen", "Sample Received Date"),
+                   ("", "Report Date")],
+    (False, True): [("Patient name", "PIN"), ("Age", "Gender"), ("Referring Clinician", "Sample Number"),
+                    ("Specimen", "Sample Collection Date"), ("Report Date", "Sample Received Date")],
+    (True, False): [("Patient name", "PIN"), ("Age", "Sample Number"),
+                    ("Hospital/Clinic", "Sample Collection Date"),
+                    ("Referring Clinician", "Sample Received Date"),
+                    ("Specimen", "Report Date")],
+    (False, False): [("Patient name", "PIN"), ("Age", "Sample Number"),
+                     ("Referring Clinician", "Sample Collection Date"),
+                     ("Specimen", "Sample Received Date"), ("", "Report Date")],
 }
 
 PARENTS_RECOMMENDATION = ("Sequencing the variant(s) in the parents and the other affected and "
                           "unaffected members of the family is recommended to confirm the significance.")
 
 
-def _patient_layout(doc, hospital: bool) -> None:
+def _patient_layout(doc, hospital: bool, gender: bool = True) -> None:
     """Relabel the patient table's boxes for the chosen layout (with or without the
-    Hospital/Clinic box), adding or removing its last row; _fill_patient then fills
-    them by label."""
+    Hospital/Clinic and Gender boxes), adding or removing rows; _fill_patient then
+    fills them by label."""
     tbl = _find_table(doc, "Patient", "patient details table")._tbl
-    layout = _PATIENT_LAYOUTS[hospital]
+    layout = _PATIENT_LAYOUTS[(hospital, gender)]
     rows = tbl.findall(qn("w:tr"))
     while len(rows) < len(layout):
         rows[-1].addnext(copy.deepcopy(rows[-1]))
@@ -2185,7 +2192,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     doc = Document(path)
     options = option_values(data.template_key, data.options)
     if options:
-        _patient_layout(doc, options.get("hospital", "yes") == "yes")
+        _patient_layout(doc, options.get("hospital", "yes") == "yes",
+                        gender=_cfg(data).gender_row)
     _fill_patient(doc, data)
     _insert_pcpndt_note(doc, data)
     _fill_history(doc, data)
