@@ -1791,7 +1791,7 @@ def _tidy_classification_table(doc, pad: int = 180):
                 pf.line_spacing = 1.3
 
 
-def _title_size(doc, points: int = 20):
+def _title_size(doc, points: int = 16):
     """The report title ('Whole Exome Sequencing ...') in one size."""
     half = str(points * 2)
     for p in doc.element.body.iterchildren(qn("w:p")):
