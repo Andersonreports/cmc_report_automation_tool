@@ -459,18 +459,16 @@ label.req::after{content:" *";color:var(--warn)}
               <label class="req" for="f-received_date">Received date</label>
               <input type="text" id="f-received_date" placeholder="dd/mm/yyyy">
             </div>
+            <div class="form-group">
+              <label class="req" for="f-report_date">Report date</label>
+              <input type="text" id="f-report_date" placeholder="dd/mm/yyyy">
+            </div>
           </div>
         </div>
       </div><!-- /patient tab -->
 
       <!-- REPORT TAB -->
       <div id="tab-report" class="tab-panel">
-        <div class="form-grid">
-          <div class="form-group">
-            <label class="req" for="f-report_date">Report date</label>
-            <input type="text" id="f-report_date" placeholder="dd/mm/yyyy">
-          </div>
-        </div>
         <div class="form-group">
           <label class="req" for="f-clinical_history">Clinical history</label>
           <textarea id="f-clinical_history" placeholder="Proband, &lt;Patient ID&gt;, is suspected to be affected with &lt;indication&gt; and has been evaluated for pathogenic variations." style="min-height:120px"></textarea>
@@ -861,8 +859,8 @@ const STEP_META = {
 const STEP_REQ = {
   patient: [['f-patient_id','Patient ID'],['f-age','Age'],['f-gender','Gender'],['oc-referring_clinician','Referring clinician'],
             ['oc-hospital','Hospital / clinic'],['f-sample_number','Sample number'],['oc-specimen','Specimen'],
-            ['f-collection_date','Collection date'],['f-received_date','Received date']],
-  report:  [['f-report_date','Report date'],['f-clinical_history','Clinical history'],['f-total_reads','Total read generated'],['f-q30','Data ≥ Q30']],
+            ['f-collection_date','Collection date'],['f-received_date','Received date'],['f-report_date','Report date']],
+  report:  [['f-clinical_history','Clinical history'],['f-total_reads','Total read generated'],['f-q30','Data ≥ Q30']],
 };
 
 function reqValue(id) { return id.startsWith('oc-') ? getOtherChoice(id) : $(id).value.trim(); }

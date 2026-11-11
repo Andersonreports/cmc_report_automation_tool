@@ -482,10 +482,9 @@ OTHER_PLACEHOLDERS = {
     "specimen": "Type the specimen",
 }
 DATE_FIELDS = {"collection_date", "received_date", "report_date"}
-# The Patient & sample step shows these in two groups; the report date is
-# entered under Report details.
+# The Patient & sample step shows these in two groups.
 PATIENT_GROUP = ("patient_id", "age", "gender", "referring_clinician", "hospital")
-SAMPLE_GROUP = ("sample_number", "specimen", "collection_date", "received_date")
+SAMPLE_GROUP = ("sample_number", "specimen", "collection_date", "received_date", "report_date")
 
 
 def class_colors(label: str) -> tuple[str, str, str] | None:
@@ -2311,10 +2310,6 @@ class MainWindow(QMainWindow):
         self.fields["received_date"].textChanged.connect(self._received_changed)
         play.addStretch(1)
 
-        dgrp = QGroupBox("Report date")
-        form_of(dgrp).addRow(labels["report_date"], self.fields["report_date"])
-        rlay.addWidget(dgrp)
-
         hgrp = QGroupBox("Clinical history")
         hl = QVBoxLayout(hgrp)
         self.history_edit = QPlainTextEdit()
@@ -2578,7 +2573,7 @@ class MainWindow(QMainWindow):
             if not cfg.gender_row:
                 keys = tuple(k for k in keys if k != "gender")
         elif step == 1:
-            keys = ("report_date",)
+            keys = ()
         else:
             return []
         out = []
