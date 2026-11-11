@@ -1119,10 +1119,6 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
             text = vr.clean_narrative(v.get(key, ""))
             if not text and key == "evidence":
                 text = vr.suggested_evidence(v)
-            if not text and key == "evidence":
-                cl = v.get("clinvar_link", "").strip()
-                pm = v.get("pubmed_link", "").strip()
-                text = f"ClinVar: {cl or '-'}    PubMed: {pm or '-'}"
             if text:
                 para = copy.deepcopy(proto)
                 _set_para_tail(para, text)
@@ -1368,10 +1364,6 @@ def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> Non
             text = vr.clean_narrative(v.get(key, ""))
             if not text and key == "evidence":
                 text = vr.suggested_evidence(v)
-            if not text and key == "evidence":
-                cl = v.get("clinvar_link", "").strip()
-                pm = v.get("pubmed_link", "").strip()
-                text = f"ClinVar: {cl or '-'}    PubMed: {pm or '-'}"
             if text:
                 para = copy.deepcopy(proto)
                 _set_para_tail(para, text)
@@ -1767,10 +1759,13 @@ def _keep_headings_with_next(doc):
 
 
 def _section_heading_size(doc, points: int = 11):
-    """Set every section heading to a uniform font size and zero indentation."""
+    """Set every section heading to a uniform font size and zero indentation.
+    'Whole Exome Sequencing' and 'Whole Mitochondrial ...' sub-titles get 12 pt."""
     half = str(points * 2)
+    half_sub = str(12 * 2)
     wanted = {h.lower() for h in SECTION_HEADINGS}
     extra_starts = ("list of", "whole exome sequencing", "whole mitochondrial")
+    sub_title_starts = ("whole exome sequencing", "whole mitochondrial")
     for p in doc.element.body.iterchildren(qn("w:p")):
         ppr = p.find(qn("w:pPr"))
         pstyle = ppr.find(qn("w:pStyle")) if ppr is not None else None
@@ -1779,6 +1774,7 @@ def _section_heading_size(doc, points: int = 11):
         text = _text(p).strip().rstrip(":").lower()
         if text not in wanted and not text.startswith(extra_starts):
             continue
+        sz = half_sub if text.startswith(sub_title_starts) else half
         para = Paragraph(p, None)
         pf = para.paragraph_format
         pf.left_indent = 0
@@ -1794,7 +1790,7 @@ def _section_heading_size(doc, points: int = 11):
                 if el is None:
                     el = OxmlElement(tag)
                     rpr.append(el)
-                el.set(qn("w:val"), half)
+                el.set(qn("w:val"), sz)
 
 
 def _tidy_classification_table(doc, pad: int = 180):
@@ -2378,6 +2374,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _keep_headings_with_next(doc)
     if not cfg.own_styles:
         _section_heading_size(doc)
+    _result_tag_size(doc, 10)
     _new_pages(doc, cfg.new_page_before + tuple(new_pages))
     _fix_page_count(doc)
     _drop_analysis_word(doc)
