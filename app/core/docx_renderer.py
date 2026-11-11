@@ -995,6 +995,10 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
             text = vr.clean_narrative(v.get(key, ""))
             if not text and key == "evidence":
                 text = vr.suggested_evidence(v)
+            if not text and key == "evidence":
+                cl = v.get("clinvar_link", "").strip()
+                pm = v.get("pubmed_link", "").strip()
+                text = f"ClinVar: {cl or '-'}    PubMed: {pm or '-'}"
             if text:
                 para = copy.deepcopy(p)
                 _set_para_tail(para, text)
@@ -1043,6 +1047,10 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
             text = vr.clean_narrative(v.get(key, ""))
             if not text and key == "evidence":
                 text = vr.suggested_evidence(v)
+            if not text and key == "evidence":
+                cl = v.get("clinvar_link", "").strip()
+                pm = v.get("pubmed_link", "").strip()
+                text = f"ClinVar: {cl or '-'}    PubMed: {pm or '-'}"
             if text:
                 para = copy.deepcopy(proto)
                 _set_para_tail(para, text)
@@ -1284,6 +1292,10 @@ def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> Non
             text = vr.clean_narrative(v.get(key, ""))
             if not text and key == "evidence":
                 text = vr.suggested_evidence(v)
+            if not text and key == "evidence":
+                cl = v.get("clinvar_link", "").strip()
+                pm = v.get("pubmed_link", "").strip()
+                text = f"ClinVar: {cl or '-'}    PubMed: {pm or '-'}"
             if text:
                 para = copy.deepcopy(proto)
                 _set_para_tail(para, text)
