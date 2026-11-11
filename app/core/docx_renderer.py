@@ -637,17 +637,14 @@ def _variant_spacer():
 
 
 def _variant_caption_para(n: int):
-    """A standalone paragraph 'Variant N' in bold dark-blue, with pageBreakBefore
-    so the variant block always starts on a fresh page (LibreOffice doesn't honour
-    keepNext inside table cells, so a page-break paragraph is the only reliable way
-    to prevent the caption from being orphaned at the foot of the previous page)."""
+    """A standalone paragraph 'Variant N' in bold dark-blue with keepNext so it
+    stays with its interpretation table on the same page."""
     p = OxmlElement("w:p")
     ppr = OxmlElement("w:pPr")
     spacing = OxmlElement("w:spacing")
-    spacing.set(qn("w:before"), "120")
+    spacing.set(qn("w:before"), "200")
     spacing.set(qn("w:after"), "40")
     ppr.append(spacing)
-    ppr.append(OxmlElement("w:pageBreakBefore"))
     ppr.append(OxmlElement("w:keepNext"))
     ppr.append(OxmlElement("w:keepLines"))
     p.append(ppr)
@@ -1031,9 +1028,7 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
     for n, v in enumerate(ordered, 1):
         cap = copy.deepcopy(caption)
         _set_text(cap, f"Variant {n}")
-        pf = Paragraph(cap, None).paragraph_format
-        pf.keep_with_next = True
-        pf.page_break_before = True
+        Paragraph(cap, None).paragraph_format.keep_with_next = True
         parts = [cap, tbl]
         for p in after:             # the template's lines under the table, blank ones included
             key = "evidence" if p is evidence else "omim_phenotype" if p is omim else ""
@@ -1426,7 +1421,7 @@ def _align_result_notes(doc) -> None:
                 w = tc.find(qn("w:tcPr") + "/" + qn("w:tcW"))
                 if w is not None and w.get(qn("w:type")) == "dxa":
                     w.set(qn("w:w"), str(round(int(w.get(qn("w:w"))) * k)))
-        for tag in ("w:tblInd", "w:jc", "w:tblW"):
+        for tag in ("w:tblInd", "w:jc", "w:tblW", "w:tblpPr"):
             for el in pr.findall(qn(tag)):
                 pr.remove(el)
         tblw = OxmlElement("w:tblW")
@@ -1456,7 +1451,7 @@ def _fit_variant_layout(doc) -> None:
             if w is not None and w.get(qn("w:type")) == "dxa":
                 w.set(qn("w:w"), str(round(int(w.get(qn("w:w"))) * k)))
         pr = tbl.tblPr
-        for tag in ("w:tblInd", "w:jc", "w:tblW"):
+        for tag in ("w:tblInd", "w:jc", "w:tblW", "w:tblpPr"):
             for el in pr.findall(qn(tag)):
                 pr.remove(el)
         tblw = OxmlElement("w:tblW")
@@ -1645,6 +1640,11 @@ def _fill_qc(doc, data: ReportData, restyle: bool = True):
     tbl_pr = table._tbl.tblPr
     for pos in tbl_pr.findall(qn("w:tblpPr")):
         tbl_pr.remove(pos)
+    for el in tbl_pr.findall(qn("w:jc")):
+        tbl_pr.remove(el)
+    jc = OxmlElement("w:jc")
+    jc.set(qn("w:val"), "center")
+    tbl_pr.append(jc)
     if not restyle:                 # the template's own cell layout stays
         return
     # Indent 0.2 cm left and right, 3 pt before and after, in every cell.
