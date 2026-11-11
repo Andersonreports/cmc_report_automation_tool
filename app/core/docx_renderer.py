@@ -1719,6 +1719,29 @@ def _keep_headings_with_next(doc):
             ppr.insert(0, kn)
 
 
+def _section_heading_size(doc, points: int = 11):
+    """Set every section heading to a uniform font size."""
+    half = str(points * 2)
+    wanted = {h.lower() for h in SECTION_HEADINGS}
+    # Also catch sub-headings like "Whole Exome Sequencing", "List of ..."
+    extra_starts = ("list of", "whole exome sequencing", "whole mitochondrial")
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        text = _text(p).strip().rstrip(":").lower()
+        if text not in wanted and not text.startswith(extra_starts):
+            continue
+        for r in p.iterchildren(qn("w:r")):
+            rpr = r.find(qn("w:rPr"))
+            if rpr is None:
+                rpr = OxmlElement("w:rPr")
+                r.insert(0, rpr)
+            for tag in ("w:sz", "w:szCs"):
+                el = rpr.find(qn(tag))
+                if el is None:
+                    el = OxmlElement(tag)
+                    rpr.append(el)
+                el.set(qn("w:val"), half)
+
+
 def _tidy_classification_table(doc, pad: int = 180):
     """Classification column: one paragraph per label, centred vertically.
     The template has an empty paragraph above 'Variant of Uncertain
@@ -2294,6 +2317,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         _justify_section(doc, "Disclaimer")
     _space_after_tables(doc)
     _keep_headings_with_next(doc)
+    if not cfg.own_styles:
+        _section_heading_size(doc)
     _new_pages(doc, cfg.new_page_before + tuple(new_pages))
     _fix_page_count(doc)
     _drop_analysis_word(doc)
