@@ -1408,6 +1408,11 @@ def _align_result_notes(doc) -> None:
             first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
+        elif p.text.strip().startswith("Abbreviation:"):
+            p.paragraph_format.left_indent = 0
+            p.paragraph_format.space_before = Pt(6)
+            p.paragraph_format.space_after = Pt(6)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for tbl in [t._tbl for t in doc.tables if t.rows and _is_gene_table(t)]:
         pr = tbl.tblPr
         grid = tbl.find(qn("w:tblGrid"))
@@ -1473,9 +1478,11 @@ def _fit_variant_layout(doc) -> None:
             first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
-        elif text.startswith("Abbreviation:"):      # centered, it starts inside the margin
+        elif text.startswith("Abbreviation:"):
             p.paragraph_format.left_indent = 0
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(6)
+            p.paragraph_format.space_after = Pt(6)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
 def _para_near(doc, tbl, prefix: str, what: str, required: bool = True, whole_doc: bool = True):
@@ -1649,7 +1656,7 @@ def _fill_qc(doc, data: ReportData, restyle: bool = True):
     while heading is not None and heading.tag == qn("w:p") and not _text(heading).strip():
         heading = heading.getprevious()
     if heading is not None and heading.tag == qn("w:p"):
-        Paragraph(heading, None).paragraph_format.space_after = Pt(6)
+        Paragraph(heading, None).paragraph_format.space_after = Pt(8)
     if not restyle:                 # the template's own cell layout stays
         return
     # Indent 0.2 cm left and right, 3 pt before and after, in every cell.
@@ -2114,8 +2121,8 @@ def _space_after_tables(doc):
             continue
         para = gap if gap is not None else nxt
         pf = Paragraph(para, None).paragraph_format
-        if pf.space_before is None or pf.space_before < Pt(8):
-            pf.space_before = Pt(8)
+        if pf.space_before is None or pf.space_before < Pt(6):
+            pf.space_before = Pt(6)
 
 
 def _tighten_signature_gap(doc):
