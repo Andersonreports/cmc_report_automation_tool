@@ -64,6 +64,8 @@ class TemplateConfig:
     fixed_result: bool = False
     # The patient table has a Hospital/Clinic box; without it the UI hides the field.
     hospital_row: bool = True
+    # The patient table has a Gender box; without it the UI hides the field.
+    gender_row: bool = True
     # Variant Interpretation as one captioned block per variant ("Variant 1": its own
     # table, abbreviation line, evidence and OMIM paragraphs), after the variant
     # list and the Secondary findings list, instead of one shared table per list.
@@ -137,6 +139,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         patient_sheet="WES",
         options="wes_poc_af",
         lab_wording=True,
+        gender_row=False,
     ),
     # The Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
     # VUS / additional variants) as one template, the same way.

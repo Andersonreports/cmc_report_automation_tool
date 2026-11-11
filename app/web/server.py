@@ -125,7 +125,7 @@ def _template_info_dict(key: str, chosen: dict) -> dict:
     return {
         "key": cfg.key, "name": cfg.name, "pathogenic": cfg.pathogenic,
         "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
-        "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row,
+        "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row, "gender_row": cfg.gender_row,
         "lab_wording": cfg.lab_wording,
         "hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
         "specimen": cfg.specimen, "reviewer": cfg.reviewer,

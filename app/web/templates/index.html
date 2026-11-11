@@ -877,7 +877,7 @@ function visibleSteps() {
 
 function stepReq(tab) {
   // A template without a Hospital/Clinic box doesn't ask for it.
-  return (STEP_REQ[tab] || []).filter(([id]) => !(id === 'oc-hospital' && G.noHospital));
+  return (STEP_REQ[tab] || []).filter(([id]) => !(id === 'oc-hospital' && G.noHospital) && !(id === 'f-gender' && G.noGender));
 }
 
 function stepState(tab) {
@@ -1365,6 +1365,10 @@ async function onTemplateChange(key, force=false) {
   // No Hospital/Clinic box in this template's patient table: hide the field
   G.noHospital = info.hospital_row === false;
   $('oc-hospital').closest('.form-group').style.display = G.noHospital ? 'none' : '';
+
+  // No Gender box in this template's patient table: hide the field
+  G.noGender = info.gender_row === false;
+  $('f-gender').closest('.form-group').style.display = G.noGender ? 'none' : '';
 
   // Secondary findings table or not: the list's tags and the Report table choice follow
   if (G.variants.length) {

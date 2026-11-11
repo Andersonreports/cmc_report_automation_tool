@@ -2572,8 +2572,11 @@ class MainWindow(QMainWindow):
         """A step's required boxes and their text: (the box to outline, text)."""
         if step == 0:
             keys = PATIENT_GROUP + SAMPLE_GROUP
-            if not self._cfg().hospital_row:
-                keys = tuple(k for k in keys if k != "hospital")     # not in this report
+            cfg = self._cfg()
+            if not cfg.hospital_row:
+                keys = tuple(k for k in keys if k != "hospital")
+            if not cfg.gender_row:
+                keys = tuple(k for k in keys if k != "gender")
         elif step == 1:
             keys = ("report_date",)
         else:
@@ -2690,6 +2693,8 @@ class MainWindow(QMainWindow):
             panel.set_result_tag("")
         # No Hospital/Clinic box in this template's patient table: hide the field.
         self._patient_form.setRowVisible(self.fields["hospital"], cfg.hospital_row)
+        # No Gender box in this template's patient table: hide the field.
+        self._patient_form.setRowVisible(self.fields["gender"], cfg.gender_row)
         self.tabs.setTabVisible(self._variants_tab, on)
         if not on and self.tabs.currentIndex() == self._variants_tab:
             self.tabs.setCurrentIndex(0)
