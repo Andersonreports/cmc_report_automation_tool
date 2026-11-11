@@ -1765,10 +1765,21 @@ def _tidy_classification_table(doc, pad: int = 180):
             for cell in row.cells:
                 for p in cell.paragraphs:
                     Paragraph(p._p, None).paragraph_format.keep_with_next = True
-    # Interpretation column: heading centred, the descriptions justified.
+    # Interpretation column: heading centred, the descriptions justified with
+    # 0.2 cm indent, 3 pt spacing and 1.3× line spacing (as the lab's layout).
     for i, row in enumerate(table.rows):
         for p in row.cells[1].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if i == 0 else WD_ALIGN_PARAGRAPH.JUSTIFY
+            if i == 0:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            else:
+                pf = p.paragraph_format
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                pf.left_indent = Cm(0.2)
+                pf.right_indent = Cm(0.2)
+                pf.space_before = Pt(3)
+                pf.space_after = Pt(3)
+                pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+                pf.line_spacing = 1.3
 
 
 def _title_size(doc, points: int = 20):
