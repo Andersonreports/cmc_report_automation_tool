@@ -1092,26 +1092,27 @@ function showPasteBox() {
   overlay.id = 'paste-box-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   const box = document.createElement('div');
-  box.style.cssText = 'background:var(--surface);border-radius:10px;padding:20px;width:520px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.25)';
-  box.innerHTML = `<div style="font-weight:600;margin-bottom:8px">Add gene table</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Copy the gene + coverage cells from Excel/Word, then press Ctrl+V in the box below.</div>
-    <textarea id="paste-box-input" rows="8" style="width:100%;box-sizing:border-box;font-size:12px;font-family:monospace;padding:8px;border:1.5px solid var(--line);border-radius:6px;resize:vertical" placeholder="Paste here (Ctrl+V)…"></textarea>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+  box.tabIndex = 0;
+  box.style.cssText = 'background:var(--surface);border-radius:10px;padding:24px;width:400px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.25);outline:none;text-align:center';
+  box.innerHTML = `<div style="font-weight:600;font-size:15px;margin-bottom:10px">Paste gene table</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Copy the gene + coverage cells from Excel/Word, then press <b>Ctrl+V</b> now.</div>
+    <div style="font-size:12px;color:var(--muted)">Waiting for paste…</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn" id="paste-box-cancel">Cancel</button>
-      <button class="btn btn-accent" id="paste-box-ok">Add to report</button>
     </div>`;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  const ta = $('paste-box-input');
-  ta.focus();
-  const close = () => overlay.remove();
-  $('paste-box-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-  $('paste-box-ok').addEventListener('click', async () => {
-    const text = ta.value;
+  box.focus();
+  const close = () => { document.removeEventListener('paste', onPaste, true); overlay.remove(); };
+  const onPaste = async (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    e.preventDefault();
     close();
     if (text.trim()) await applyGenePaste(text);
-  });
+  };
+  document.addEventListener('paste', onPaste, true);
+  $('paste-box-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 }
 
 // Calendar button beside a dd/mm/yyyy text field. The text field stays the
