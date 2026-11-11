@@ -1630,6 +1630,25 @@ def _fill_qc(doc, data: ReportData, restyle: bool = True):
 # Layout-only fixes
 # ---------------------------------------------------------------------------
 
+def _collapse_blank_runs(doc):
+    """Collapse runs of consecutive blank paragraphs (no text, no images) to at
+    most one, so template padding paragraphs don't create large white gaps when
+    the dynamic content changes length."""
+    body = doc.element.body
+    blank_run: list = []
+    for el in list(body):
+        if el.tag == qn("w:p") and not _text(el).strip() \
+                and next(el.iter(qn("w:drawing"), qn("w:pict"), qn("a:blip")), None) is None \
+                and next(el.iter(qn("w:sectPr")), None) is None:
+            blank_run.append(el)
+        else:
+            for extra in blank_run[1:]:
+                body.remove(extra)
+            blank_run = []
+    for extra in blank_run[1:]:
+        body.remove(extra)
+
+
 def _appendix_page_break(doc):
     body = doc.element.body
     try:
@@ -2236,6 +2255,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         _superscript_hash(doc)
     _fill_signatures(doc, data)
     _tighten_signature_gap(doc)
+    _collapse_blank_runs(doc)
     _appendix_page_break(doc)
     if not cfg.keep_layout:
         _tidy_classification_table(doc)
