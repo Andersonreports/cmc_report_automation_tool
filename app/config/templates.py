@@ -228,11 +228,11 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
     "wes_mito": {
         "none": (dict(docx_file="whole_exome_mito.docx", new_page_before=("Disclaimer",)),
                  dict(interpretation="no",
-                      file_suffix="Whole_Exome_Whole_mitochondrial_Report|_", reviewer="SARATH")),
+                      file_suffix="WES_&_Mito_Report|_", reviewer="SARATH")),
         "pathogenic": (dict(docx_file="whole_exome_mito_patho.docx", variants=True,
                             pathogenic=True, keep_layout=True, secondary_findings=True),
                        dict(interpretation="yes",
-                            file_suffix="WES_Mito_report|_", reviewer="SARATH")),
+                            file_suffix="WES_&_Mito_Report|_", reviewer="SARATH")),
         "vus": (dict(docx_file="whole_exome_mito_patho.docx", variants=True,
                      pathogenic=True, keep_layout=True, secondary_findings=True),
                 dict(interpretation="yes",
@@ -241,7 +241,7 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
                             pathogenic=True, keep_layout=True, secondary_findings=True,
                             fixed_result=True, variant_captions=True, own_styles=True),
                        dict(interpretation="yes",
-                            file_suffix="WES_Mito_report|_", reviewer="SARATH")),
+                            file_suffix="WES_&_Mito_Report|_", reviewer="SARATH")),
     },
 }
 
