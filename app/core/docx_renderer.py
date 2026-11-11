@@ -592,16 +592,29 @@ def _no_split(tr) -> None:
 
 
 def _variant_spacer():
-    """A blank paragraph between variant interpretation tables."""
+    """A visible gap between variant interpretation tables: a paragraph with a
+    non-breaking space in a 1-pt font (prevents renderers from collapsing it)
+    and generous before/after spacing."""
     p = OxmlElement("w:p")
     ppr = OxmlElement("w:pPr")
     spacing = OxmlElement("w:spacing")
-    spacing.set(qn("w:before"), "160")
-    spacing.set(qn("w:after"), "160")
-    spacing.set(qn("w:line"), "60")
-    spacing.set(qn("w:lineRule"), "exact")
+    spacing.set(qn("w:before"), "200")
+    spacing.set(qn("w:after"), "200")
+    spacing.set(qn("w:line"), "240")
+    spacing.set(qn("w:lineRule"), "auto")
     ppr.append(spacing)
     p.append(ppr)
+    r = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), "2")
+    rpr.append(sz)
+    r.append(rpr)
+    t = OxmlElement("w:t")
+    t.text = " "
+    t.set(qn("xml:space"), "preserve")
+    r.append(t)
+    p.append(r)
     return p
 
 
