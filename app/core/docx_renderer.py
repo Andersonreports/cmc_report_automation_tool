@@ -1645,6 +1645,11 @@ def _fill_qc(doc, data: ReportData, restyle: bool = True):
     jc = OxmlElement("w:jc")
     jc.set(qn("w:val"), "center")
     tbl_pr.append(jc)
+    heading = table._tbl.getprevious()
+    while heading is not None and heading.tag == qn("w:p") and not _text(heading).strip():
+        heading = heading.getprevious()
+    if heading is not None and heading.tag == qn("w:p"):
+        Paragraph(heading, None).paragraph_format.space_after = Pt(6)
     if not restyle:                 # the template's own cell layout stays
         return
     # Indent 0.2 cm left and right, 3 pt before and after, in every cell.
