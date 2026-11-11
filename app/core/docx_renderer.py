@@ -151,6 +151,15 @@ def _fill_patient(doc, data: ReportData):
                 pf.space_before = pf.space_after = 0
                 pf.line_spacing_rule = WD_LINE_SPACING.SINGLE
                 p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    # Widen the left column (60 / 40 split) so long hospital names fit one line.
+    grid = table._tbl.find(qn("w:tblGrid"))
+    if grid is not None:
+        cols = grid.findall(qn("w:gridCol"))
+        if len(cols) == 2:
+            total = sum(int(c.get(qn("w:w"), "0")) for c in cols)
+            if total > 0:
+                cols[0].set(qn("w:w"), str(int(total * 0.6)))
+                cols[1].set(qn("w:w"), str(int(total * 0.4)))
 
 
 def _fill_history(doc, data: ReportData):
