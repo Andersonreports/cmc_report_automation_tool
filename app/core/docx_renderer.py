@@ -1876,7 +1876,7 @@ def _title_size(doc, points: int = 16):
     for p in doc.element.body.iterchildren(qn("w:p")):
         ppr = p.find(qn("w:pPr"))
         style = ppr.find(qn("w:pStyle")) if ppr is not None else None
-        if style is None or style.get(qn("w:val")) != "Title":
+        if style is None or style.get(qn("w:val")) not in ("Title", "Heading1"):
             continue
         for r in p.iterchildren(qn("w:r")):
             rpr = r.find(qn("w:rPr"))
