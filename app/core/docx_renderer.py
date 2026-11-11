@@ -1072,6 +1072,7 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
     if evidence_el is None:
         evidence_el = copy.deepcopy(omim_para)
         _set_lead(evidence_el, "Clinical and Literature Evidences: ")
+    abbrev_el = _para_near(doc, tbl, "Abbreviation", "", required=False, whole_doc=whole_doc)
     empty_tbl = copy.deepcopy(tbl)   # snapshot of empty table structure for reuse
     anchor = tbl                     # tracks insertion point: each element goes after anchor
     # Give the "Variant Interpretation" heading keepNext so it follows
@@ -1101,6 +1102,16 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
             current_tbl.append(tr)
         anchor = current_tbl
         last_inserted = None
+        # Abbreviation line goes right after the table (before evidence/OMIM)
+        if abbrev_el is not None:
+            ab = copy.deepcopy(abbrev_el)
+            pf = Paragraph(ab, None).paragraph_format
+            pf.left_indent = 0
+            pf.space_before = Pt(6)
+            pf.space_after = Pt(6)
+            Paragraph(ab, None).alignment = WD_ALIGN_PARAGRAPH.CENTER
+            anchor.addnext(ab)
+            anchor = ab
         protos = [(evidence_el, "evidence")]
         if omim_para is not None:
             protos.append((omim_para, "omim_phenotype"))
@@ -1126,7 +1137,7 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
                 last_inserted = para
         if last_inserted is not None:
             Paragraph(last_inserted, None).paragraph_format.space_after = Pt(8)
-    for p in (evidence_el, omim_para):
+    for p in (evidence_el, omim_para, abbrev_el):
         if p is not None and p.getparent() is not None:
             p.getparent().remove(p)
 
