@@ -618,6 +618,32 @@ def _variant_spacer():
     return p
 
 
+def _variant_caption(n: int):
+    """A bold 'Variant N' heading paragraph to label each interpretation table."""
+    p = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:before"), "120")
+    spacing.set(qn("w:after"), "40")
+    ppr.append(spacing)
+    kwn = OxmlElement("w:keepNext")
+    ppr.append(kwn)
+    p.append(ppr)
+    r = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    b = OxmlElement("w:b")
+    rpr.append(b)
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), "22")
+    rpr.append(sz)
+    r.append(rpr)
+    t = OxmlElement("w:t")
+    t.text = f"Variant {n}"
+    r.append(t)
+    p.append(r)
+    return p
+
+
 def _cell_no_wrap(tc) -> None:
     """Prevent text in a table cell from wrapping (w:noWrap)."""
     tcpr = tc.find(qn("w:tcPr"))
@@ -1029,11 +1055,16 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
     anchor = tbl                     # tracks insertion point: each element goes after anchor
     for n, v in enumerate(chosen):
         if n == 0:
+            cap = _variant_caption(n + 1)
+            tbl.addprevious(cap)
             current_tbl = tbl
         else:
             spacer = _variant_spacer()
             anchor.addnext(spacer)
             anchor = spacer
+            cap = _variant_caption(n + 1)
+            anchor.addnext(cap)
+            anchor = cap
             current_tbl = copy.deepcopy(empty_tbl)
             anchor.addnext(current_tbl)
         for tr in _interpretation_rows(doc, block, v):
