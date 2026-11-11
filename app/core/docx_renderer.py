@@ -1804,7 +1804,7 @@ def _title_size(doc, points: int = 20):
         break
 
 
-def _result_tag_size(doc, points: int = 10):
+def _result_tag_size(doc, points: int = 11):
     """The boxed result line ('No pathogenic or likely pathogenic variant(s)
     causative of ...' / 'Pathogenic variant related to ...') in one size; the templates mix 9, 9.5 and 10 pt."""
     half = str(points * 2)
