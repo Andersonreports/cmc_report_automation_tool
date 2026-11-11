@@ -1060,6 +1060,10 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
                 _set_para_tail(para, text)
                 if key == "omim_phenotype":
                     _link_omim_in_para(para, doc.part)
+                pf = Paragraph(para, None).paragraph_format
+                pf.left_indent = 0
+                pf.right_indent = 0
+                pf.first_line_indent = 0
                 parts.append(para)
         for part in parts:
             anchor.addnext(part)
@@ -1116,6 +1120,10 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
                 _set_para_tail(para, text)
                 if key == "omim_phenotype":
                     _link_omim_in_para(para, doc.part)
+                pf = Paragraph(para, None).paragraph_format
+                pf.left_indent = 0
+                pf.right_indent = 0
+                pf.first_line_indent = 0
                 anchor.addnext(para)
                 anchor = para
                 last_inserted = para
@@ -1361,6 +1369,10 @@ def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> Non
                 _set_para_tail(para, text)
                 if key == "omim_phenotype":
                     _link_omim_in_para(para, doc.part)
+                pf = Paragraph(para, None).paragraph_format
+                pf.left_indent = 0
+                pf.right_indent = 0
+                pf.first_line_indent = 0
                 anchor.addnext(para)
                 anchor = para
     if anchor is not start:         # as the template's last paragraph, the last one leaves a gap
@@ -1390,8 +1402,12 @@ def _align_result_notes(doc) -> None:
     page_w = round((sec.page_width - sec.left_margin - sec.right_margin) / 635)
     for p in doc.paragraphs:
         if p.text.strip().startswith(("*Genetic test results", "No other variant",
-                                      "List of ", "Variant Interpretation")):
+                                      "List of ", "Variant Interpretation",
+                                      "Clinical and Literature Evidences",
+                                      "OMIM phenotype")):
             p.paragraph_format.left_indent = 0
+            p.paragraph_format.right_indent = 0
+            p.paragraph_format.first_line_indent = 0
             first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
@@ -1452,8 +1468,11 @@ def _fit_variant_layout(doc) -> None:
     for p in doc.paragraphs:
         text = p.text.strip()
         if text.startswith(("*Genetic test results", "No other variant", "List of ",
-                            "Variant Interpretation", "OMIM phenotype", "#Clinical and Literature")):
+                            "Variant Interpretation", "OMIM phenotype",
+                            "#Clinical and Literature", "Clinical and Literature Evidences")):
             p.paragraph_format.left_indent = 0
+            p.paragraph_format.right_indent = 0
+            p.paragraph_format.first_line_indent = 0
             first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
