@@ -636,35 +636,18 @@ def _variant_spacer():
     return p
 
 
-def _variant_caption_row(n: int, col_count: int = 6):
-    """A table row with a merged cell spanning all columns, holding a bold blue
-    'Variant N' label.  Being inside the table keeps it on the same page."""
-    tr = OxmlElement("w:tr")
-    trpr = OxmlElement("w:trPr")
-    trpr.append(OxmlElement("w:cantSplit"))
-    tr.append(trpr)
-    tc = OxmlElement("w:tc")
-    tcpr = OxmlElement("w:tcPr")
-    merge = OxmlElement("w:gridSpan")
-    merge.set(qn("w:val"), str(col_count))
-    tcpr.append(merge)
-    # No borders on this caption row
-    borders = OxmlElement("w:tcBorders")
-    for side in ("top", "left", "bottom", "right"):
-        b = OxmlElement(f"w:{side}")
-        b.set(qn("w:val"), "none")
-        b.set(qn("w:sz"), "0")
-        b.set(qn("w:space"), "0")
-        b.set(qn("w:color"), "auto")
-        borders.append(b)
-    tcpr.append(borders)
-    tc.append(tcpr)
+def _variant_caption_para(n: int):
+    """A standalone paragraph 'Variant N' in bold dark-blue, with pageBreakBefore
+    so the variant block always starts on a fresh page (LibreOffice doesn't honour
+    keepNext inside table cells, so a page-break paragraph is the only reliable way
+    to prevent the caption from being orphaned at the foot of the previous page)."""
     p = OxmlElement("w:p")
     ppr = OxmlElement("w:pPr")
     spacing = OxmlElement("w:spacing")
     spacing.set(qn("w:before"), "120")
     spacing.set(qn("w:after"), "40")
     ppr.append(spacing)
+    ppr.append(OxmlElement("w:pageBreakBefore"))
     ppr.append(OxmlElement("w:keepNext"))
     ppr.append(OxmlElement("w:keepLines"))
     p.append(ppr)
@@ -683,9 +666,7 @@ def _variant_caption_row(n: int, col_count: int = 6):
     t.text = f"Variant {n}"
     r.append(t)
     p.append(r)
-    tc.append(p)
-    tr.append(tc)
-    return tr
+    return p
 
 
 def _cell_no_wrap(tc) -> None:
@@ -1050,22 +1031,9 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
     for n, v in enumerate(ordered, 1):
         cap = copy.deepcopy(caption)
         _set_text(cap, f"Variant {n}")
-        Paragraph(cap, None).paragraph_format.keep_with_next = True
-        tbl = copy.deepcopy(interp)
-        for tr in tbl.findall(qn("w:tr")):
-            tbl.remove(tr)
-        for tr in _interpretation_rows(doc, block_rows, v):
-            tbl.append(tr)
-        all_rows = tbl.findall(qn("w:tr"))
-        for tr in all_rows[:-1]:
-            for tc in tr.findall(qn("w:tc")):
-                for p in tc.findall(qn("w:p")):
-                    ppr = p.find(qn("w:pPr"))
-                    if ppr is None:
-                        ppr = OxmlElement("w:pPr")
-                        p.insert(0, ppr)
-                    if ppr.find(qn("w:keepNext")) is None:
-                        ppr.append(OxmlElement("w:keepNext"))
+        pf = Paragraph(cap, None).paragraph_format
+        pf.keep_with_next = True
+        pf.page_break_before = True
         parts = [cap, tbl]
         for p in after:             # the template's lines under the table, blank ones included
             key = "evidence" if p is evidence else "omim_phenotype" if p is omim else ""
@@ -1111,31 +1079,31 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         _set_lead(evidence_el, "Clinical and Literature Evidences: ")
     empty_tbl = copy.deepcopy(tbl)   # snapshot of empty table structure for reuse
     anchor = tbl                     # tracks insertion point: each element goes after anchor
-    col_count = len(tbl.findall(qn("w:tr"))[0].findall(qn("w:tc"))) if tbl.findall(qn("w:tr")) else 6
+    # Give the "Variant Interpretation" heading keepNext so it follows
+    # Variant 1's pageBreakBefore to the new page instead of being orphaned.
+    el = tbl.getprevious()
+    while el is not None:
+        if el.tag == qn("w:p") and _text(el).strip().lower().startswith("variant interpretation"):
+            ppr = el.find(qn("w:pPr"))
+            if ppr is None:
+                ppr = OxmlElement("w:pPr")
+                el.insert(0, ppr)
+            if ppr.find(qn("w:keepNext")) is None:
+                ppr.append(OxmlElement("w:keepNext"))
+            break
+        el = el.getprevious()
     for n, v in enumerate(chosen):
+        cap = _variant_caption_para(n + 1)
         if n == 0:
+            tbl.addprevious(cap)
             current_tbl = tbl
         else:
-            spacer = _variant_spacer()
-            anchor.addnext(spacer)
-            anchor = spacer
+            anchor.addnext(cap)
             current_tbl = copy.deepcopy(empty_tbl)
-            anchor.addnext(current_tbl)
-        cap_row = _variant_caption_row(n + 1, col_count)
+            cap.addnext(current_tbl)
         rows = _interpretation_rows(doc, block, v)
-        current_tbl.insert(0, cap_row)
         for tr in rows:
             current_tbl.append(tr)
-        all_rows = current_tbl.findall(qn("w:tr"))
-        for tr in all_rows[:-1]:
-            for tc in tr.findall(qn("w:tc")):
-                for p in tc.findall(qn("w:p")):
-                    ppr = p.find(qn("w:pPr"))
-                    if ppr is None:
-                        ppr = OxmlElement("w:pPr")
-                        p.insert(0, ppr)
-                    if ppr.find(qn("w:keepNext")) is None:
-                        ppr.append(OxmlElement("w:keepNext"))
         anchor = current_tbl
         last_inserted = None
         protos = [(evidence_el, "evidence")]
