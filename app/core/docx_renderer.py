@@ -593,6 +593,14 @@ def _spacer_row(tbl):
     return tr
 
 
+def _is_gene_table(t) -> bool:
+    """True when a python-docx Table is a variant table (first cell of row 0 or 1 is 'Gene')."""
+    for row in t.rows[:2]:
+        if row.cells[0].text.strip() == "Gene":
+            return True
+    return False
+
+
 def _no_split(tr) -> None:
     """Keep a table row on one page."""
     trpr = tr.get_or_add_trPr()
@@ -827,7 +835,7 @@ def _variant_sets(doc) -> list[tuple]:
     A results table has 2 rows (header + sample); an interpretation table has 8 per variant."""
     res, interp = [], []
     for t in doc.tables:
-        if t.rows and t.rows[0].cells[0].text.strip() == "Gene":
+        if t.rows and _is_gene_table(t):
             (interp if len(t.rows) >= 8 else res).append(t._tbl)
     return list(zip(res, interp))
 
@@ -971,7 +979,7 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
     The template holds one sample row per list and one sample block."""
     from . import variants as vr
     cfg = _cfg(data)
-    gene_tables = [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]
+    gene_tables = [t._tbl for t in doc.tables if t.rows and _is_gene_table(t)]
     lists = [t for t in gene_tables if len(t.findall(qn("w:tr"))) < 8]
     interp = next(t for t in gene_tables if len(t.findall(qn("w:tr"))) >= 8)
     groups = ([[v for v in chosen if not vr.is_secondary(v)], [v for v in chosen if vr.is_secondary(v)]]
@@ -1426,7 +1434,7 @@ def _align_result_notes(doc) -> None:
             first = next((t for t in p._p.iter(qn("w:t")) if t.text), None)
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
-    for tbl in [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]:
+    for tbl in [t._tbl for t in doc.tables if t.rows and _is_gene_table(t)]:
         pr = tbl.tblPr
         grid = tbl.find(qn("w:tblGrid"))
         if grid is not None:
@@ -1457,7 +1465,7 @@ def _fit_variant_layout(doc) -> None:
     them - headings, notes, evidence / OMIM paragraphs - starting at the same left edge."""
     sec = doc.sections[0]
     width = round((sec.page_width - sec.left_margin - sec.right_margin) / 635)     # twips
-    for tbl in [t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"]:
+    for tbl in [t._tbl for t in doc.tables if t.rows and _is_gene_table(t)]:
         grid = tbl.find(qn("w:tblGrid"))
         cols = grid.findall(qn("w:gridCol"))
         total = sum(int(c.get(qn("w:w"))) for c in cols)
@@ -2229,7 +2237,7 @@ def _compound_het_note(doc) -> None:
     """The likely compound heterozygous note, bold, under the first variant list (before
     its '*Genetic test results' note), with Cis and Trans in italics."""
     from . import variants as vr
-    res = next((t._tbl for t in doc.tables if t.rows and t.rows[0].cells[0].text.strip() == "Gene"),
+    res = next((t._tbl for t in doc.tables if t.rows and _is_gene_table(t)),
                None)
     if res is None:
         return
