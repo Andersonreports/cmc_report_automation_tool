@@ -1805,17 +1805,13 @@ def _tidy_classification_table(doc, pad: int = 180):
             trpr.remove(height)
         for cell in row.cells:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    # Keep the whole table together: cantSplit on every row prevents
-    # mid-cell breaks; keepNext on all but the last row keeps consecutive
-    # rows on the same page so the table never splits across pages.
-    for i, row in enumerate(table.rows):
+    # cantSplit on every row prevents mid-cell breaks; the table is allowed
+    # to split across pages so it doesn't push a huge blank gap when it can't
+    # fit after the QC section.
+    for row in table.rows:
         trpr = row._tr.get_or_add_trPr()
         if trpr.find(qn("w:cantSplit")) is None:
             trpr.append(OxmlElement("w:cantSplit"))
-        if i < n_rows - 1:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    Paragraph(p._p, None).paragraph_format.keep_with_next = True
     # Interpretation column: heading centred, the descriptions justified with
     # 0.2 cm indent, 3 pt spacing and 1.3× line spacing (as the lab's layout).
     for i, row in enumerate(table.rows):
