@@ -631,6 +631,9 @@ def _variant_caption_row(n: int, col_count: int = 6):
     """A table row with a merged cell spanning all columns, holding a bold blue
     'Variant N' label.  Being inside the table keeps it on the same page."""
     tr = OxmlElement("w:tr")
+    trpr = OxmlElement("w:trPr")
+    trpr.append(OxmlElement("w:cantSplit"))
+    tr.append(trpr)
     tc = OxmlElement("w:tc")
     tcpr = OxmlElement("w:tcPr")
     merge = OxmlElement("w:gridSpan")
@@ -653,6 +656,8 @@ def _variant_caption_row(n: int, col_count: int = 6):
     spacing.set(qn("w:before"), "120")
     spacing.set(qn("w:after"), "40")
     ppr.append(spacing)
+    ppr.append(OxmlElement("w:keepNext"))
+    ppr.append(OxmlElement("w:keepLines"))
     p.append(ppr)
     r = OxmlElement("w:r")
     rpr = OxmlElement("w:rPr")
@@ -1100,8 +1105,17 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         cap_row = _variant_caption_row(n + 1, col_count)
         rows = _interpretation_rows(doc, block, v)
         current_tbl.insert(0, cap_row)
-        for tr in rows:
+        for i, tr in enumerate(rows):
             current_tbl.append(tr)
+            if i == 0:
+                for tc in tr.findall(qn("w:tc")):
+                    for p in tc.findall(qn("w:p")):
+                        ppr = p.find(qn("w:pPr"))
+                        if ppr is None:
+                            ppr = OxmlElement("w:pPr")
+                            p.insert(0, ppr)
+                        if ppr.find(qn("w:keepNext")) is None:
+                            ppr.append(OxmlElement("w:keepNext"))
         anchor = current_tbl
         last_inserted = None
         protos = [(evidence_el, "evidence")]
