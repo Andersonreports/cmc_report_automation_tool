@@ -1674,6 +1674,9 @@ def _fill_qc(doc, data: ReportData, restyle: bool = True):
     table = _find_table(doc, "Total Read", "'Sequence data attributes' table")
     for row, value in ((0, data.total_reads), (1, data.q30)):
         _set_text(table.rows[row].cells[1].paragraphs[0]._p, value.strip())
+    tbl_pr = table._tbl.tblPr
+    for pos in tbl_pr.findall(qn("w:tblpPr")):
+        tbl_pr.remove(pos)
     if not restyle:                 # the template's own cell layout stays
         return
     # Indent 0.2 cm left and right, 3 pt before and after, in every cell.
