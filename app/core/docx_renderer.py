@@ -636,13 +636,13 @@ def _variant_spacer():
     return p
 
 
-def _variant_caption_para(n: int):
+def _variant_caption_para(n: int, space_before: int = 80):
     """A standalone paragraph 'Variant N' in bold dark-blue with keepNext so it
     stays with its interpretation table on the same page."""
     p = OxmlElement("w:p")
     ppr = OxmlElement("w:pPr")
     spacing = OxmlElement("w:spacing")
-    spacing.set(qn("w:before"), "200")
+    spacing.set(qn("w:before"), str(space_before))
     spacing.set(qn("w:after"), "40")
     ppr.append(spacing)
     ppr.append(OxmlElement("w:keepNext"))
@@ -1089,7 +1089,7 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
             break
         el = el.getprevious()
     for n, v in enumerate(chosen):
-        cap = _variant_caption_para(n + 1)
+        cap = _variant_caption_para(n + 1, 0 if n == 0 else 200)
         if n == 0:
             tbl.addprevious(cap)
             current_tbl = tbl
@@ -1106,9 +1106,12 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         if abbrev_el is not None:
             ab = copy.deepcopy(abbrev_el)
             pf = Paragraph(ab, None).paragraph_format
+            pf.left_indent = 0
+            pf.right_indent = 0
+            pf.first_line_indent = 0
             pf.space_before = Pt(6)
             pf.space_after = Pt(6)
-            Paragraph(ab, None).alignment = WD_ALIGN_PARAGRAPH.CENTER
+            Paragraph(ab, None).alignment = WD_ALIGN_PARAGRAPH.LEFT
             anchor.addnext(ab)
             anchor = ab
         protos = [(evidence_el, "evidence")]
@@ -1411,9 +1414,12 @@ def _align_result_notes(doc) -> None:
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
         elif p.text.strip().startswith("Abbreviation:"):
+            p.paragraph_format.left_indent = 0
+            p.paragraph_format.right_indent = 0
+            p.paragraph_format.first_line_indent = 0
             p.paragraph_format.space_before = Pt(6)
             p.paragraph_format.space_after = Pt(6)
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     for tbl in [t._tbl for t in doc.tables if t.rows and _is_gene_table(t)]:
         pr = tbl.tblPr
         grid = tbl.find(qn("w:tblGrid"))
@@ -1423,6 +1429,10 @@ def _align_result_notes(doc) -> None:
             k = page_w / total
             for c in cols:
                 c.set(qn("w:w"), str(round(int(c.get(qn("w:w"))) * k)))
+            remainder = page_w - sum(int(c.get(qn("w:w"))) for c in cols)
+            if remainder and cols:
+                last = int(cols[-1].get(qn("w:w")))
+                cols[-1].set(qn("w:w"), str(last + remainder))
             for tc in tbl.iter(qn("w:tc")):
                 w = tc.find(qn("w:tcPr") + "/" + qn("w:tcW"))
                 if w is not None and w.get(qn("w:type")) == "dxa":
@@ -1480,9 +1490,12 @@ def _fit_variant_layout(doc) -> None:
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
         elif text.startswith("Abbreviation:"):
+            p.paragraph_format.left_indent = 0
+            p.paragraph_format.right_indent = 0
+            p.paragraph_format.first_line_indent = 0
             p.paragraph_format.space_before = Pt(6)
             p.paragraph_format.space_after = Pt(6)
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
 def _para_near(doc, tbl, prefix: str, what: str, required: bool = True, whole_doc: bool = True):

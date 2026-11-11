@@ -43,8 +43,19 @@ SILICO = (("SIFT", "sift"), ("LRT", "lrt"), ("PolyPhen2", "polyphen"),
 CONSERVATION = (("PhyloP", "phylop"), ("GERP++", "gerp"))
 
 
+_SILICO_ABBREV = {
+    "deleterious": "D", "damaging": "Da", "disrupted": "Ds",
+    "conserved": "C", "tolerated": "T", "uncertain": "U",
+    "supporting": "Supp", "moderate": "Mod", "benign": "B",
+    "probably damaging": "Da", "possibly damaging": "Da",
+}
+
 def silico_case(text: str) -> str:
-    """In silico values have only the first letter capital: 'DA' -> 'Da', 'supp' -> 'Supp'."""
+    """Abbreviate in-silico predictions: 'Damaging' -> 'Da', 'Deleterious' -> 'D'.
+    Values that aren't in the abbreviation map keep first-letter-capital casing."""
+    abbr = _SILICO_ABBREV.get(text.strip().lower())
+    if abbr:
+        return abbr
     return text[:1].upper() + text[1:].lower()
 FIELDS = tuple(HEADERS.values()) + ("section", "selected")
 
