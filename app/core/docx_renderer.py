@@ -612,6 +612,7 @@ def _variant_spacer():
     spacing.set(qn("w:line"), "240")
     spacing.set(qn("w:lineRule"), "auto")
     ppr.append(spacing)
+    ppr.append(OxmlElement("w:keepNext"))
     p.append(ppr)
     r = OxmlElement("w:r")
     rpr = OxmlElement("w:rPr")
@@ -1753,15 +1754,19 @@ def _keep_headings_with_next(doc):
 
 
 def _section_heading_size(doc, points: int = 11):
-    """Set every section heading to a uniform font size."""
+    """Set every section heading to a uniform font size and zero indentation."""
     half = str(points * 2)
     wanted = {h.lower() for h in SECTION_HEADINGS}
-    # Also catch sub-headings like "Whole Exome Sequencing", "List of ..."
     extra_starts = ("list of", "whole exome sequencing", "whole mitochondrial")
     for p in doc.element.body.iterchildren(qn("w:p")):
         text = _text(p).strip().rstrip(":").lower()
         if text not in wanted and not text.startswith(extra_starts):
             continue
+        para = Paragraph(p, None)
+        pf = para.paragraph_format
+        pf.left_indent = 0
+        pf.right_indent = 0
+        pf.first_line_indent = 0
         for r in p.iterchildren(qn("w:r")):
             rpr = r.find(qn("w:rPr"))
             if rpr is None:
