@@ -551,6 +551,9 @@ class GeneTableEditor(QWidget):
 
         # -- Gene count row --
         row = QHBoxLayout()
+        paste_btn = QPushButton("Paste table")
+        paste_btn.clicked.connect(self.paste)
+        row.addWidget(paste_btn)
         row.addStretch(1)
         self.count = QLabel()
         row.addWidget(self.count)

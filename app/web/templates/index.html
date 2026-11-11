@@ -529,6 +529,7 @@ label.req::after{content:" *";color:var(--warn)}
         </div>
 
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="paste-gene-table-btn">Paste table</button>
           <button class="btn" id="add-gene-row-btn">+ Add row</button>
           <span id="gene-count">0 genes</span>
         </div>
@@ -2526,6 +2527,7 @@ async function initApp() {
 
     // Gene table
     document.addEventListener('paste', onGenePasteKey);
+    $('paste-gene-table-btn').addEventListener('click', pasteGenes);
     $('add-gene-row-btn').addEventListener('click', () => { addGeneRow(); schedulePreview(); });
     initCoverageSection();
 
