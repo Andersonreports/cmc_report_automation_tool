@@ -1106,7 +1106,6 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         if abbrev_el is not None:
             ab = copy.deepcopy(abbrev_el)
             pf = Paragraph(ab, None).paragraph_format
-            pf.left_indent = 0
             pf.space_before = Pt(6)
             pf.space_after = Pt(6)
             Paragraph(ab, None).alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1412,7 +1411,6 @@ def _align_result_notes(doc) -> None:
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
         elif p.text.strip().startswith("Abbreviation:"):
-            p.paragraph_format.left_indent = 0
             p.paragraph_format.space_before = Pt(6)
             p.paragraph_format.space_after = Pt(6)
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1482,7 +1480,6 @@ def _fit_variant_layout(doc) -> None:
             if first is not None:           # a stray leading space in the template's text
                 first.text = first.text.lstrip()
         elif text.startswith("Abbreviation:"):
-            p.paragraph_format.left_indent = 0
             p.paragraph_format.space_before = Pt(6)
             p.paragraph_format.space_after = Pt(6)
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1828,7 +1825,6 @@ def _tidy_classification_table(doc, pad: int = 180):
         el.set(qn("w:type"), "dxa")
         mar.append(el)
     tbl_pr.append(mar)
-    n_rows = len(table.rows)
     for i, row in enumerate(table.rows[1:], 1):
         # Remove fixed row heights so the cell content sets the height.
         trpr = row._tr.get_or_add_trPr()
@@ -1837,22 +1833,10 @@ def _tidy_classification_table(doc, pad: int = 180):
             trpr.remove(height)
         for cell in row.cells:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    for idx, row in enumerate(table.rows):
+    for row in table.rows:
         trpr = row._tr.get_or_add_trPr()
         if trpr.find(qn("w:cantSplit")) is None:
             trpr.append(OxmlElement("w:cantSplit"))
-        # keepNext on every paragraph in each row except the last row keeps
-        # the whole table on one page (the renderer won't break between rows
-        # when the current row's content must stay with the next row).
-        if idx < n_rows - 1:
-            for tc in row._tr.iter(qn("w:tc")):
-                for p in tc.iterchildren(qn("w:p")):
-                    ppr = p.find(qn("w:pPr"))
-                    if ppr is None:
-                        ppr = OxmlElement("w:pPr")
-                        p.insert(0, ppr)
-                    if ppr.find(qn("w:keepNext")) is None:
-                        ppr.append(OxmlElement("w:keepNext"))
     # Interpretation column: heading centred, the descriptions justified with
     # 0.2 cm indent, 3 pt spacing and 1.3× line spacing (as the lab's layout).
     for i, row in enumerate(table.rows):
