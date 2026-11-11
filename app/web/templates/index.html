@@ -1151,6 +1151,8 @@ function initDatePicker(id) {
 // computer on the network, unlike reading the clipboard from a button.
 function onGenePasteKey(e) {
   if (G.activeTab !== 'genes' || $('tab-genes').style.display === 'none') return;
+  // Let the paste-box dialog handle its own paste event
+  if ($('paste-box-overlay')) return;
   // Let the coverage gene-panel textarea handle its own pastes
   if (e.target.closest && e.target.closest('#coverage-section')) return;
   const text = (e.clipboardData && e.clipboardData.getData('text/plain')) || '';
