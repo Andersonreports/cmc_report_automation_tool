@@ -618,16 +618,32 @@ def _variant_spacer():
     return p
 
 
-def _variant_caption(n: int):
-    """A bold 'Variant N' heading paragraph to label each interpretation table."""
+def _variant_caption_row(n: int, col_count: int = 6):
+    """A table row with a merged cell spanning all columns, holding a bold blue
+    'Variant N' label.  Being inside the table keeps it on the same page."""
+    tr = OxmlElement("w:tr")
+    tc = OxmlElement("w:tc")
+    tcpr = OxmlElement("w:tcPr")
+    merge = OxmlElement("w:gridSpan")
+    merge.set(qn("w:val"), str(col_count))
+    tcpr.append(merge)
+    # No borders on this caption row
+    borders = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        b = OxmlElement(f"w:{side}")
+        b.set(qn("w:val"), "none")
+        b.set(qn("w:sz"), "0")
+        b.set(qn("w:space"), "0")
+        b.set(qn("w:color"), "auto")
+        borders.append(b)
+    tcpr.append(borders)
+    tc.append(tcpr)
     p = OxmlElement("w:p")
     ppr = OxmlElement("w:pPr")
     spacing = OxmlElement("w:spacing")
     spacing.set(qn("w:before"), "120")
     spacing.set(qn("w:after"), "40")
     ppr.append(spacing)
-    kwn = OxmlElement("w:keepNext")
-    ppr.append(kwn)
     p.append(ppr)
     r = OxmlElement("w:r")
     rpr = OxmlElement("w:rPr")
@@ -644,7 +660,9 @@ def _variant_caption(n: int):
     t.text = f"Variant {n}"
     r.append(t)
     p.append(r)
-    return p
+    tc.append(p)
+    tr.append(tc)
+    return tr
 
 
 def _cell_no_wrap(tc) -> None:
@@ -1056,21 +1074,20 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         _set_lead(evidence_el, "Clinical and Literature Evidences: ")
     empty_tbl = copy.deepcopy(tbl)   # snapshot of empty table structure for reuse
     anchor = tbl                     # tracks insertion point: each element goes after anchor
+    col_count = len(tbl.findall(qn("w:tr"))[0].findall(qn("w:tc"))) if tbl.findall(qn("w:tr")) else 6
     for n, v in enumerate(chosen):
         if n == 0:
-            cap = _variant_caption(n + 1)
-            tbl.addprevious(cap)
             current_tbl = tbl
         else:
             spacer = _variant_spacer()
             anchor.addnext(spacer)
             anchor = spacer
-            cap = _variant_caption(n + 1)
-            anchor.addnext(cap)
-            anchor = cap
             current_tbl = copy.deepcopy(empty_tbl)
             anchor.addnext(current_tbl)
-        for tr in _interpretation_rows(doc, block, v):
+        cap_row = _variant_caption_row(n + 1, col_count)
+        rows = _interpretation_rows(doc, block, v)
+        current_tbl.insert(0, cap_row)
+        for tr in rows:
             current_tbl.append(tr)
         anchor = current_tbl
         last_inserted = None
