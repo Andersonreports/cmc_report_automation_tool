@@ -2345,10 +2345,11 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _tighten_signature_gap(doc)
     _collapse_blank_runs(doc)
     _appendix_page_break(doc)
+    title_pt = 16 if "mito" in cfg.docx_file.lower() else 20
     if not cfg.keep_layout:
         _tidy_classification_table(doc)
         _result_tag_size(doc)
-        _title_size(doc)
+        _title_size(doc, title_pt)
         _justify_section(doc, "Disclaimer")
         _match_reference_layout(doc)
     else:
@@ -2358,7 +2359,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         _tidy_classification_table(doc, pad=70)
         _result_tag_size(doc)
         if not cfg.own_styles:
-            _title_size(doc)
+            _title_size(doc, title_pt)
         _justify_section(doc, "Disclaimer")
     _space_after_tables(doc)
     _keep_headings_with_next(doc)
