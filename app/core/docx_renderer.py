@@ -1772,6 +1772,10 @@ def _section_heading_size(doc, points: int = 11):
     wanted = {h.lower() for h in SECTION_HEADINGS}
     extra_starts = ("list of", "whole exome sequencing", "whole mitochondrial")
     for p in doc.element.body.iterchildren(qn("w:p")):
+        ppr = p.find(qn("w:pPr"))
+        pstyle = ppr.find(qn("w:pStyle")) if ppr is not None else None
+        if pstyle is not None and pstyle.get(qn("w:val")) in ("Title", "Heading1"):
+            continue
         text = _text(p).strip().rstrip(":").lower()
         if text not in wanted and not text.startswith(extra_starts):
             continue
