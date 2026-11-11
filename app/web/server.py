@@ -202,10 +202,22 @@ def _save_to_folder(folder: str, *paths: str) -> str:
     try:
         for p in paths:
             if p and os.path.exists(p):
-                shutil.copy2(p, os.path.join(folder, os.path.basename(p)))
+                dest = os.path.join(folder, os.path.basename(p))
+                shutil.copy2(p, dest)
+                _strip_motw(dest)
     except OSError:
         return ""
     return folder
+
+
+def _strip_motw(path: str) -> None:
+    """Remove Windows Mark-of-the-Web so Word opens the file editable."""
+    try:
+        ads = path + ":Zone.Identifier"
+        if os.path.exists(ads):
+            os.remove(ads)
+    except OSError:
+        pass
 
 
 def _send(path: str, mimetype: str, name: str, saved: str = ""):

@@ -2155,7 +2155,7 @@ async function deliverExport(r, fallbackName, folder) {
   const saved = r.headers.get('X-Saved-To');
   if (saved) toast(`Saved ${fname} to ${saved}`, 5000);
   else if (folder) toast(`Downloaded ${fname} — could not save to "${folder}" (folder not found?)`, 6000);
-  else toast(`Downloaded ${fname} to your Downloads folder`, 4000);
+  else toast(`Downloaded ${fname} — if Word opens read-only, click "Enable Editing" in the yellow bar`, 6000);
 }
 
 // ============================================================
