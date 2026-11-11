@@ -2348,7 +2348,6 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     title_pt = 16 if "mito" in cfg.docx_file.lower() else 20
     if not cfg.keep_layout:
         _tidy_classification_table(doc)
-        _result_tag_size(doc)
         _title_size(doc, title_pt)
         _justify_section(doc, "Disclaimer")
         _match_reference_layout(doc)
@@ -2357,7 +2356,6 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         # and alignment as every other template. The pages are packed tight, so
         # the classification rows get less padding than elsewhere.
         _tidy_classification_table(doc, pad=70)
-        _result_tag_size(doc)
         if not cfg.own_styles:
             _title_size(doc, title_pt)
         _justify_section(doc, "Disclaimer")
