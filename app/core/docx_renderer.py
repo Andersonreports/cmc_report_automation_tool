@@ -591,6 +591,20 @@ def _no_split(tr) -> None:
         trpr.insert(0, OxmlElement("w:cantSplit"))
 
 
+def _variant_spacer():
+    """A blank paragraph between variant interpretation tables."""
+    p = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:before"), "160")
+    spacing.set(qn("w:after"), "160")
+    spacing.set(qn("w:line"), "60")
+    spacing.set(qn("w:lineRule"), "exact")
+    ppr.append(spacing)
+    p.append(ppr)
+    return p
+
+
 def _cell_no_wrap(tc) -> None:
     """Prevent text in a table cell from wrapping (w:noWrap)."""
     tcpr = tc.find(qn("w:tcPr"))
@@ -966,7 +980,9 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
                 parts.append(copy.deepcopy(p))
                 continue
             text = vr.clean_narrative(v.get(key, ""))
-            if text:                # an empty evidence / OMIM paragraph is left out
+            if not text and key == "evidence":
+                text = vr.suggested_evidence(v)
+            if text:
                 para = copy.deepcopy(p)
                 _set_para_tail(para, text)
                 if key == "omim_phenotype":
@@ -998,6 +1014,9 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         if n == 0:
             current_tbl = tbl
         else:
+            spacer = _variant_spacer()
+            anchor.addnext(spacer)
+            anchor = spacer
             current_tbl = copy.deepcopy(empty_tbl)
             anchor.addnext(current_tbl)
         for tr in _interpretation_rows(doc, block, v):
@@ -1009,6 +1028,8 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
             protos.append((omim_para, "omim_phenotype"))
         for proto, key in protos:
             text = vr.clean_narrative(v.get(key, ""))
+            if not text and key == "evidence":
+                text = vr.suggested_evidence(v)
             if text:
                 para = copy.deepcopy(proto)
                 _set_para_tail(para, text)
@@ -1248,6 +1269,8 @@ def _fill_narrative(doc, tbl, chosen: list[dict], whole_doc: bool = True) -> Non
     for v in chosen:                # both paragraphs are typed by the user
         for proto, key in protos:
             text = vr.clean_narrative(v.get(key, ""))
+            if not text and key == "evidence":
+                text = vr.suggested_evidence(v)
             if text:
                 para = copy.deepcopy(proto)
                 _set_para_tail(para, text)
