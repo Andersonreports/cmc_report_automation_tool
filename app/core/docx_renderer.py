@@ -1056,6 +1056,16 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
             tbl.remove(tr)
         for tr in _interpretation_rows(doc, block_rows, v):
             tbl.append(tr)
+        all_rows = tbl.findall(qn("w:tr"))
+        for tr in all_rows[:-1]:
+            for tc in tr.findall(qn("w:tc")):
+                for p in tc.findall(qn("w:p")):
+                    ppr = p.find(qn("w:pPr"))
+                    if ppr is None:
+                        ppr = OxmlElement("w:pPr")
+                        p.insert(0, ppr)
+                    if ppr.find(qn("w:keepNext")) is None:
+                        ppr.append(OxmlElement("w:keepNext"))
         parts = [cap, tbl]
         for p in after:             # the template's lines under the table, blank ones included
             key = "evidence" if p is evidence else "omim_phenotype" if p is omim else ""
@@ -1114,17 +1124,18 @@ def _fill_variants_interleaved(doc, tbl, block, chosen: list[dict], whole_doc: b
         cap_row = _variant_caption_row(n + 1, col_count)
         rows = _interpretation_rows(doc, block, v)
         current_tbl.insert(0, cap_row)
-        for i, tr in enumerate(rows):
+        for tr in rows:
             current_tbl.append(tr)
-            if i == 0:
-                for tc in tr.findall(qn("w:tc")):
-                    for p in tc.findall(qn("w:p")):
-                        ppr = p.find(qn("w:pPr"))
-                        if ppr is None:
-                            ppr = OxmlElement("w:pPr")
-                            p.insert(0, ppr)
-                        if ppr.find(qn("w:keepNext")) is None:
-                            ppr.append(OxmlElement("w:keepNext"))
+        all_rows = current_tbl.findall(qn("w:tr"))
+        for tr in all_rows[:-1]:
+            for tc in tr.findall(qn("w:tc")):
+                for p in tc.findall(qn("w:p")):
+                    ppr = p.find(qn("w:pPr"))
+                    if ppr is None:
+                        ppr = OxmlElement("w:pPr")
+                        p.insert(0, ppr)
+                    if ppr.find(qn("w:keepNext")) is None:
+                        ppr.append(OxmlElement("w:keepNext"))
         anchor = current_tbl
         last_inserted = None
         protos = [(evidence_el, "evidence")]
