@@ -3065,7 +3065,9 @@ class MainWindow(QMainWindow):
                 self.pages.addWidget(lbl)
             for i in range(count):
                 page = doc[i]
-                img = page.render(scale=width * dpr / page.get_width()).to_pil().convert("RGB")
+                # 2x, crisp, averaged down: thin table lines next to shaded cells survive
+                img = page.render(scale=2 * width * dpr / page.get_width(),
+                                  no_smoothpath=True).to_pil().convert("RGB").reduce(2)
                 qimg = QImage(img.tobytes(), img.width, img.height, img.width * 3,
                               QImage.Format_RGB888).copy()
                 px = QPixmap.fromImage(qimg)

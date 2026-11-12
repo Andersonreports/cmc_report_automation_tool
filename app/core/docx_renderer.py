@@ -1172,13 +1172,24 @@ def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
             return
     # Not present — create heading + intro paragraph before the list heading.
     # Copy the formatting from the nearest section heading (e.g. "Results").
-    try:
-        results_h = _find_para(doc, "Results", "'Results' heading")
-    except TemplateError:
-        results_h = None
+    # 'CNV Findings' first: some templates' 'Results' paragraph also holds the result
+    # box, so its text doesn't start with "Results" and it can't be copied cleanly.
+    results_h = None
+    for model in ("CNV Findings", "Results"):
+        try:
+            results_h = _find_para(doc, model, f"'{model}' heading")
+            break
+        except TemplateError:
+            continue
     # Heading paragraph: "Additional Variant(s)"
     if results_h is not None:
         heading_p = copy.deepcopy(results_h)
+        # _set_text keeps the first run's formatting: drop empty leading runs (the
+        # template's "Results" starts with one that has no heading colour).
+        for r in _runs(heading_p):
+            if _text(r).strip() or r is _runs(heading_p)[-1]:
+                break
+            r.getparent().remove(r)
         _set_text(heading_p, "Additional Variant(s)")
     else:
         heading_p = OxmlElement("w:p")
@@ -1197,7 +1208,7 @@ def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
         rpr.append(sz)
         rpr.append(szcs)
         color = OxmlElement("w:color")
-        color.set(qn("w:val"), "0563C1")
+        color.set(qn("w:val"), "1A467D")         # the section headings' navy
         rpr.append(color)
         r.append(rpr)
         t = OxmlElement("w:t")
@@ -1525,6 +1536,10 @@ def _space_result_notes(doc) -> None:
     for p in doc.paragraphs:
         t = p.text.strip()
         pf = p.paragraph_format
+        if t.startswith("Abbreviation:"):       # 8 pt in every template, as the lab's reports
+            for r in p._p.iter(qn("w:r")):
+                Run(r, None).font.size = Pt(8)
+            continue
         if t.startswith("*Genetic test results"):
             pf.space_before = Pt(6)
             pf.space_after = Pt(0)

@@ -180,7 +180,10 @@ def api_preview():
             for i in range(limit):
                 page = doc[i]
                 scale = 780 / page.get_width()
-                img = page.render(scale=scale).to_pil().convert("RGB")
+                # Table lines are thinner than a pixel at this size and the cells' fill,
+                # painted after them, can cover them (missing top / left lines beside shaded
+                # rows). Rendered at 2x, crisp, then averaged down, every line survives.
+                img = page.render(scale=scale * 2, no_smoothpath=True).to_pil().convert("RGB").reduce(2)
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=80)
                 pages_b64.append(base64.b64encode(buf.getvalue()).decode())
