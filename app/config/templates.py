@@ -116,6 +116,9 @@ TEMPLATES: dict[str, TemplateConfig] = {
         docx_file="clinical_exome.docx",
         patient_id_label="Patient name",
         file_suffix="Clinical_Exome_Report",
+        options="clinical_exome",
+        specimen="Peripheral Blood",
+        patient_sheet="WES",   # clinical exome samples are listed in the same sheet as WES
     ),
     # The WES reports (no pathogenic / pathogenic / VUS) as one template;
     # the Result option picks the layout and the other options its details.
@@ -185,6 +188,12 @@ OPTIONS: dict[str, dict[str, tuple[str, list[tuple[str, str]]]]] = {
          ("vus", "VUS")],
         None,
         None),
+    "clinical_exome": _options(
+        [("none", "No pathogenic variant"),
+         ("pathogenic", "Pathogenic / Likely pathogenic"),
+         ("vus", "VUS")],
+        None,
+        None),
     "wes_poc_af": _options(
         [("none", "No pathogenic variant"),
          ("pathogenic", "Pathogenic / Likely pathogenic"),
@@ -213,6 +222,17 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
         "vus": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True),
                 dict(interpretation="yes",
                      file_suffix="whole_exome_report|-", reviewer="ROBERT")),
+    },
+    "clinical_exome": {
+        "none": (dict(docx_file="clinical_exome_pathogenic.docx", variants=True, pathogenic=True),
+                 dict(interpretation="yes",
+                      file_suffix="Clinical_Exome_Report|-", reviewer="ROBERT")),
+        "pathogenic": (dict(docx_file="clinical_exome_pathogenic.docx", variants=True, pathogenic=True),
+                       dict(interpretation="yes",
+                            file_suffix="Clinical_Exome_Report|-", reviewer="ROBERT")),
+        "vus": (dict(docx_file="clinical_exome_pathogenic.docx", variants=True, pathogenic=True),
+                dict(interpretation="yes",
+                     file_suffix="Clinical_Exome_Report|-", reviewer="ROBERT")),
     },
     "wes_poc_af": {
         "none": (dict(docx_file="wes_pathogenic.docx", variants=True, pathogenic=True, skip_omim=True),

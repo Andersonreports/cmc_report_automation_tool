@@ -924,7 +924,18 @@ def _keep_list_together(res) -> None:
             keep.append(el)
         el = el.getnext()
     rows = res.findall(qn("w:tr"))
-    keep += [p for tr in (rows[:1] + rows[-1:]) for p in tr.iter(qn("w:p"))]
+    # A short list stays whole on one page (every row chained to the next). A long one
+    # (rows can't all fit a page, e.g. several diseases per row) must be free to break
+    # between rows - a chain longer than a page leaves a huge gap and strands the heading.
+    n_paras = sum(len(list(tr.iter(qn("w:p")))) for tr in rows)
+    for tr in rows:
+        for p in tr.iter(qn("w:p")):
+            ppr = p.find(qn("w:pPr"))
+            if ppr is not None:
+                for kn in ppr.findall(qn("w:keepNext")):
+                    ppr.remove(kn)
+    chained = rows if n_paras <= 40 else rows[:1] + rows[-1:]
+    keep += [p for tr in chained for p in tr.iter(qn("w:p"))]
     for p in keep:
         Paragraph(p, None).paragraph_format.keep_with_next = True
     # Ensure the header row does NOT repeat on subsequent pages
@@ -1029,6 +1040,11 @@ def _fill_captioned_variants(doc, data: ReportData, chosen: list[dict]) -> None:
         cap = copy.deepcopy(caption)
         _set_text(cap, f"Variant {n}")
         Paragraph(cap, None).paragraph_format.keep_with_next = True
+        tbl = copy.deepcopy(interp)
+        for tr in tbl.findall(qn("w:tr")):
+            tbl.remove(tr)
+        for tr in _interpretation_rows(doc, block_rows, v):
+            tbl.append(tr)
         parts = [cap, tbl]
         for p in after:             # the template's lines under the table, blank ones included
             key = "evidence" if p is evidence else "omim_phenotype" if p is omim else ""
@@ -1394,6 +1410,140 @@ def _superscript_hash(doc) -> None:
             continue
         t.text = t.text[1:]
         t.set(qn("xml:space"), "preserve")
+
+
+def _drop_empty_bullets(doc) -> None:
+    """A numbered / bulleted paragraph with no text (a stray '•' at the end of the
+    Disclaimer list, say) is removed."""
+    for p in list(doc.element.body.iterchildren(qn("w:p"))):
+        ppr = p.find(qn("w:pPr"))
+        if ppr is None or ppr.find(qn("w:numPr")) is None or _text(p).strip():
+            continue
+        if list(p.iter(qn("w:drawing"), qn("w:br"), qn("w:sectPr"), qn("w:pict"))):
+            continue
+        p.getparent().remove(p)
+
+
+def _black_list_borders(doc) -> None:
+    """Every variant table (the 'List of ... variant(s)' lists and the Variant
+    Interpretation tables): each line solid black at 0.75 pt, as the lab's reports and
+    the other tables here. The templates mix navy cell borders and 0.5 pt lines, which
+    fade out next to the peach header fill and show as gaps in the PDF / preview."""
+    edges = ("top", "left", "bottom", "right", "insideH", "insideV")
+    for t in doc.tables:
+        tbl = t._tbl
+        if not _is_gene_table(t):
+            continue
+        tbl_pr = tbl.tblPr
+        tb = tbl_pr.find(qn("w:tblBorders"))
+        if tb is None:
+            tb = OxmlElement("w:tblBorders")
+            _insert_before(tbl_pr, tb, ("w:shd", "w:tblLayout", "w:tblCellMar", "w:tblLook"))
+        for edge in edges:               # CT_TblBorders order: top, left, bottom, right, insideH, insideV
+            el = tb.find(qn(f"w:{edge}"))
+            if el is None:
+                el = OxmlElement(f"w:{edge}")
+                tb.append(el)
+            el.set(qn("w:val"), "single")
+        for edge in edges:
+            el = tb.find(qn(f"w:{edge}"))
+            tb.remove(el)
+            tb.append(el)
+        for el in tbl.iter(*(qn(f"w:{e}") for e in edges)):
+            if el.getparent().tag not in (qn("w:tblBorders"), qn("w:tcBorders")):
+                continue                 # w:top / w:left inside cell margins etc.
+            if el.get(qn("w:val")) not in (None, "nil", "none"):
+                el.set(qn("w:color"), "000000")
+                el.set(qn("w:sz"), "6")
+                el.set(qn("w:space"), "0")
+        first = tbl.findall(qn("w:tr"))[0]
+        for tc in first.findall(qn("w:tc")):
+            tcpr = tc.find(qn("w:tcPr"))
+            if tcpr is None:
+                tcpr = OxmlElement("w:tcPr")
+                tc.insert(0, tcpr)
+            borders = tcpr.find(qn("w:tcBorders"))
+            if borders is None:
+                borders = OxmlElement("w:tcBorders")
+                _insert_before(tcpr, borders, ("w:shd", "w:noWrap", "w:tcMar", "w:textDirection",
+                                               "w:tcFitText", "w:vAlign", "w:hideMark"))
+            top = borders.find(qn("w:top"))
+            if top is None:
+                top = OxmlElement("w:top")
+                borders.insert(0, top)       # CT_TcBorders: top comes first
+            top.set(qn("w:val"), "single")
+            top.set(qn("w:sz"), "6")
+            top.set(qn("w:space"), "0")
+            top.set(qn("w:color"), "000000")
+        # Some templates (WES & Mito pathogenic / VUS) have no top / bottom cell padding,
+        # so a cell's last line sits on its border: give them the 3 pt the others have.
+        mar = tbl_pr.find(qn("w:tblCellMar"))
+        if mar is None:
+            mar = OxmlElement("w:tblCellMar")
+            _insert_before(tbl_pr, mar, ("w:tblLook",))
+        for side in ("top", "bottom"):
+            el = mar.find(qn(f"w:{side}"))
+            if el is None:
+                el = OxmlElement(f"w:{side}")
+                el.set(qn("w:type"), "dxa")
+                mar.append(el)
+            if int(el.get(qn("w:w")) or 0) < 60:
+                el.set(qn("w:w"), "60")
+                el.set(qn("w:type"), "dxa")
+        order = ("top", "start", "left", "bottom", "end", "right")   # CT_TblCellMar order
+        for el in sorted(list(mar), key=lambda e: order.index(e.tag.split("}")[1])
+                         if e.tag.split("}")[1] in order else 99):
+            mar.remove(el)
+            mar.append(el)
+
+
+def _insert_before(parent, el, later_tags: tuple[str, ...]) -> None:
+    """Insert `el` into `parent` before the first child whose tag is in `later_tags`
+    (the elements the schema puts after it), else at the end."""
+    later = {qn(t) for t in later_tags}
+    nxt = next((c for c in parent if c.tag in later), None)
+    (nxt.addprevious(el) if nxt is not None else parent.append(el))
+
+
+def _keep_classification_intro(doc) -> None:
+    """'Genetic test results are reported ... as described below:' stays with the
+    classification table under it (the table itself never splits)."""
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        if not _text(p).strip().startswith("Genetic test results are reported"):
+            continue
+        el = p
+        while el is not None and el.tag == qn("w:p") and (el is p or not _text(el).strip()):
+            Paragraph(el, None).paragraph_format.keep_with_next = True
+            Paragraph(el, None).paragraph_format.keep_together = True
+            el = el.getnext()
+        break
+
+
+def _space_result_notes(doc) -> None:
+    """The two note lines under a result ('*Genetic test results...' / 'No other variant...')
+    use the lab's spacing: 1.47x line spacing (a small gap between them), 6 pt before, 2 pt after (the line spacing adds the rest)."""
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        pf = p.paragraph_format
+        if t.startswith("*Genetic test results"):
+            pf.space_before = Pt(6)
+            pf.space_after = Pt(0)
+            pf.line_spacing = 1.4667
+            pf.keep_with_next = True        # never split from the "No other variant" line
+            pf.keep_together = True
+        elif t.startswith("No other variant"):
+            pf.space_before = Pt(0)
+            pf.space_after = Pt(2)
+            pf.line_spacing = 1.4667
+            nxt = p._p.getnext()        # the template's blank line before "CNV Findings"
+            while (nxt is not None and nxt.tag == qn("w:p") and not _text(nxt).strip()
+                   and not list(nxt.iter(qn("w:drawing"), qn("w:br"), qn("w:sectPr")))):
+                gone, nxt = nxt, nxt.getnext()
+                if (nxt is not None and nxt.tag == qn("w:p")
+                        and _text(nxt).strip().lower().startswith("cnv findings")):
+                    gone.getparent().remove(gone)
+                else:
+                    break
 
 
 def _align_result_notes(doc) -> None:
@@ -1846,10 +1996,28 @@ def _tidy_classification_table(doc, pad: int = 180):
             trpr.remove(height)
         for cell in row.cells:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    for row in table.rows:
+    n_rows = len(table.rows)
+    for idx, row in enumerate(table.rows):
         trpr = row._tr.get_or_add_trPr()
         if trpr.find(qn("w:cantSplit")) is None:
             trpr.append(OxmlElement("w:cantSplit"))
+        # keepNext on every paragraph in each row except the last keeps the
+        # whole table together on one page (it moves to the next page whole).
+        if idx < n_rows - 1:
+            for tc in row._tr.iter(qn("w:tc")):
+                for p in tc.iterchildren(qn("w:p")):
+                    ppr = p.find(qn("w:pPr"))
+                    if ppr is None:
+                        ppr = OxmlElement("w:pPr")
+                        p.insert(0, ppr)
+                    if ppr.find(qn("w:keepNext")) is None:
+                        # CT_PPr order: pStyle, keepNext, ...
+                        kn = OxmlElement("w:keepNext")
+                        ps = ppr.find(qn("w:pStyle"))
+                        if ps is not None:
+                            ps.addnext(kn)
+                        else:
+                            ppr.insert(0, kn)
     # Interpretation column: heading centred, the descriptions justified with
     # 0.2 cm indent, 3 pt spacing and 1.3× line spacing (as the lab's layout).
     for i, row in enumerate(table.rows):
@@ -2349,6 +2517,11 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         else:
             _align_result_notes(doc)
         _superscript_hash(doc)
+    _space_result_notes(doc)
+    _keep_classification_intro(doc)
+    if cfg.variants:
+        _black_list_borders(doc)
+    _drop_empty_bullets(doc)
     _fill_signatures(doc, data)
     _tighten_signature_gap(doc)
     _collapse_blank_runs(doc)
