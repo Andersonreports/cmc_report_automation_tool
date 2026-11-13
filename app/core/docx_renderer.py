@@ -856,6 +856,9 @@ def _fill_variants(doc, data: ReportData):
     if not chosen:
         _strip_variant_section(doc)
         return
+    if _cfg(data).inheritance_line:
+        from . import variants as vr
+        chosen = [dict(v, omim_phenotype=vr.with_inheritance_line(v)) for v in chosen]
     if _cfg(data).variant_captions:
         _fill_captioned_variants(doc, data, chosen)
         return
@@ -1216,15 +1219,33 @@ def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
         t.set(qn("xml:space"), "preserve")
         r.append(t)
         heading_p.append(r)
-    # Intro text paragraph
+    # Intro text paragraph, as in the lab's Additional Variant(s) report: bold 9 pt,
+    # 105 % wide, 1.3 line spacing, a small gap above.
     txt = data.additional_variants_text.strip() or vr.ADDITIONAL_VARIANTS_DEFAULT_TEXT
     intro_p = OxmlElement("w:p")
+    ippr = OxmlElement("w:pPr")
+    ispacing = OxmlElement("w:spacing")
+    ispacing.set(qn("w:before"), "95")
+    ispacing.set(qn("w:line"), "312")
+    ispacing.set(qn("w:lineRule"), "auto")
+    ippr.append(ispacing)
+    iind = OxmlElement("w:ind")
+    iind.set(qn("w:left"), "44")
+    ippr.append(iind)
+    intro_p.append(ippr)
     ir = OxmlElement("w:r")
     irpr = OxmlElement("w:rPr")
     ifonts = OxmlElement("w:rFonts")
     for attr in ("w:ascii", "w:hAnsi", "w:cs"):
         ifonts.set(qn(attr), "Arial")
     irpr.append(ifonts)
+    irpr.append(OxmlElement("w:b"))
+    icolor = OxmlElement("w:color")
+    icolor.set(qn("w:val"), "242629")
+    irpr.append(icolor)
+    iw = OxmlElement("w:w")
+    iw.set(qn("w:val"), "105")
+    irpr.append(iw)
     isz = OxmlElement("w:sz")
     isz.set(qn("w:val"), "18")
     iszcs = OxmlElement("w:szCs")
@@ -1539,6 +1560,16 @@ def _space_result_notes(doc) -> None:
         if t.startswith("Abbreviation:"):       # 8 pt in every template, as the lab's reports
             for r in p._p.iter(qn("w:r")):
                 Run(r, None).font.size = Pt(8)
+            continue
+        if t.startswith(("#Clinical and Literature", "Clinical and Literature Evidences",
+                         "OMIM phenotype")):
+            pf.line_spacing = 1.33              # the lab's evidence / OMIM paragraphs
+            continue
+        if t.lower().startswith("cnv findings"):
+            prev = p._p.getprevious()           # straight after the notes: a gap like the lab's
+            if prev is not None and prev.tag == qn("w:p") and \
+                    _text(prev).strip().startswith("No other variant"):
+                pf.space_before = Pt(10)
             continue
         if t.startswith("*Genetic test results"):
             pf.space_before = Pt(6)
@@ -1915,15 +1946,16 @@ def _keep_headings_with_next(doc):
     """A section heading never sits alone at the bottom of a page: it moves to
     the next page together with the start of its section."""
     wanted = {h.lower() for h in SECTION_HEADINGS}
-    for p in doc.element.body.iterchildren(qn("w:p")):
-        if _text(p).strip().rstrip(":").lower() not in wanted:
-            continue
+
+    def keep_next(p):
         ppr = p.find(qn("w:pPr"))
         if ppr is None:
             ppr = OxmlElement("w:pPr")
             p.insert(0, ppr)
-        if ppr.find(qn("w:keepNext")) is not None:
-            continue
+        kn = ppr.find(qn("w:keepNext"))
+        if kn is not None:
+            kn.attrib.pop(qn("w:val"), None)        # a template's keepNext w:val="0"
+            return
         kn = OxmlElement("w:keepNext")
         # CT_PPr order: pStyle, keepNext, ...
         style = ppr.find(qn("w:pStyle"))
@@ -1931,6 +1963,19 @@ def _keep_headings_with_next(doc):
             style.addnext(kn)
         else:
             ppr.insert(0, kn)
+
+    for p in list(doc.element.body.iterchildren(qn("w:p"))):
+        if _text(p).strip().rstrip(":").lower() not in wanted:
+            continue
+        keep_next(p)
+        # The template's blank spacer lines under a heading: keep them with the text
+        # too, else the heading stays with a blank line and its text goes to the next page.
+        nxt = p.getnext()
+        while (nxt is not None and nxt.tag == qn("w:p") and not _text(nxt).strip()
+               and not list(nxt.iter(qn("w:drawing"), qn("w:br"), qn("w:sectPr"),
+                                     qn("w:pageBreakBefore")))):
+            keep_next(nxt)
+            nxt = nxt.getnext()
 
 
 def _section_heading_size(doc, points: int = 11):
@@ -2166,6 +2211,10 @@ def _match_reference_layout(doc):
         pf = para.paragraph_format
         if section == "disclaimer":
             pf.left_indent, pf.first_line_indent, pf.line_spacing = 255270, -226695, 1.3
+            # the template's items have 0-5 pt before them at random: one even gap
+            prev = el.getprevious()
+            if prev is not None and _text(prev).strip().rstrip(":").lower() != "disclaimer":
+                pf.space_before = Pt(1)
         elif section == "recommendations" and el.pPr is not None and el.pPr.numPr is not None:
             pf.left_indent, pf.first_line_indent, pf.line_spacing = 228600, -228600, 1.3
         elif section == "results" and text.startswith(("*genetic test", "no other variant")):

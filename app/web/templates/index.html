@@ -68,7 +68,9 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 
 /* ── MAIN ── */
 #main{display:flex;flex:1;overflow:hidden;gap:0}
-#left-panel{display:flex;flex-direction:column;width:50%;min-width:340px;border-right:1px solid var(--line);overflow:hidden;background:var(--surface)}
+/* Half the window, but never wider than a comfortable form (big screens give the
+   extra room to the preview) nor narrower than the form needs. */
+#left-panel{display:flex;flex-direction:column;width:clamp(340px,50%,940px);min-width:340px;border-right:1px solid var(--line);overflow:hidden;background:var(--surface)}
 #manual-panel{display:flex;flex-direction:column;height:100%;overflow:hidden}
 #manual-panel:has(#tab-genes.active){overflow-y:auto}
 #right-panel{display:flex;flex-direction:column;flex:1;overflow:hidden;background:#d8e2ea}
@@ -279,8 +281,11 @@ label.req::after{content:" *";color:var(--warn)}
 #preview-bar{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border-bottom:1px solid var(--line);flex-shrink:0;box-shadow:var(--shadow-sm)}
 #preview-status{font-size:12px;color:var(--muted);flex:1}
 #preview-scroll{overflow-y:auto;flex:1;padding:16px;display:flex;flex-direction:column;align-items:center;gap:14px}
-.preview-page{background:#fff;border:1px solid #c8d4de;max-width:100%;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.15)}
-.preview-page img{display:block;max-width:100%;height:auto}
+/* Each page is as wide as the panel allows (up to --page-max), and its image is drawn
+   server-side at exactly that width x devicePixelRatio, so it is shown 1:1 on any screen. */
+#preview-scroll{--page-max:1100px}
+.preview-page{background:#fff;border:1px solid #c8d4de;width:100%;max-width:var(--page-max);border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.15);flex-shrink:0}
+.preview-page img{display:block;width:100%;height:auto}
 #preview-error{color:var(--bad);font-size:12px;padding:8px;text-align:center}
 
 /* ── BULK PANEL ── */
@@ -724,6 +729,8 @@ const G = {
   previewTimer: null,
   previewBusy: false,
   previewPending: false,
+  previewToken: null,   // the server's copy of the last preview PDF (redrawn on resize)
+  previewWidth: null,   // pixel width the current page images were drawn at
 };
 
 // ============================================================
@@ -2054,7 +2061,7 @@ function togglePreview() {
   const hidden = rp.style.display === 'none';
   if (hidden) {
     rp.style.display = '';
-    lp.style.width = '50%';
+    lp.style.width = '';          // back to the stylesheet's width
     lp.style.flex = '';
     showBtn.style.display = 'none';
   } else {
@@ -2063,6 +2070,53 @@ function togglePreview() {
     lp.style.flex = '1';
     showBtn.style.display = '';
   }
+}
+
+// ── Preview sized to the screen ─────────────────────────────────────────────
+// Pages are requested at the width they are shown at, in physical pixels
+// (CSS width x devicePixelRatio), so the browser never stretches or squeezes them:
+// sharp text and unbroken table lines on large, small and high-DPI (scaled) screens.
+function previewCssWidth() {
+  const sc = $('preview-scroll');
+  const cs = getComputedStyle(sc);
+  const inner = sc.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+  const max = parseFloat(cs.getPropertyValue('--page-max')) || 1100;
+  return Math.max(200, Math.min(inner, max));
+}
+function previewPixelWidth() {
+  return Math.round(previewCssWidth() * (window.devicePixelRatio || 1));
+}
+function showPreviewPages(list) {
+  const pages = $('preview-pages');
+  const sc = $('preview-scroll');
+  const pos = sc.scrollHeight ? sc.scrollTop / sc.scrollHeight : 0;   // keep the reading place
+  pages.innerHTML = '';
+  list.forEach(b64 => {
+    const div = document.createElement('div');
+    div.className = 'preview-page';
+    const img = document.createElement('img');
+    img.src = `data:image/png;base64,${b64}`;
+    img.alt = 'Report page';
+    div.appendChild(img);
+    pages.appendChild(div);
+  });
+  requestAnimationFrame(() => { sc.scrollTop = pos * sc.scrollHeight; });
+}
+// Window / panel resized or moved to a screen with another scaling: redraw the
+// last preview's pages at the new size (no Word run; the server keeps the PDF).
+let _resizeTimer = null;
+function onPreviewResize() {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(async () => {
+    if (!G.previewToken || G.previewBusy || $('right-panel').style.display === 'none') return;
+    const width = previewPixelWidth();
+    if (G.previewWidth && Math.abs(width - G.previewWidth) / G.previewWidth < 0.08) return;
+    try {
+      const r = await postJSON('/api/preview-pages', { token: G.previewToken, width });
+      if (r.pages && r.pages.length) { showPreviewPages(r.pages); G.previewWidth = width; }
+      else if (r.error === 'expired') { G.previewToken = null; schedulePreview(true); }
+    } catch (e) { /* keep the current images */ }
+  }, 350);
 }
 
 function schedulePreview(force=false) {
@@ -2088,7 +2142,8 @@ async function doPreview(force=false) {
   const pages = $('preview-pages');
   $('preview-status').textContent = 'Rendering…';
 
-  const payload = { ...data, max_pages: 0 };
+  const width = previewPixelWidth();
+  const payload = { ...data, max_pages: 0, width };
   try {
     const r = await postJSON('/api/preview', payload);
     if (r.error && (!r.pages || !r.pages.length)) {
@@ -2096,16 +2151,9 @@ async function doPreview(force=false) {
       return;
     }
     if (r.pages && r.pages.length) {
-      pages.innerHTML = '';
-      r.pages.forEach(b64 => {
-        const div = document.createElement('div');
-        div.className = 'preview-page';
-        const img = document.createElement('img');
-        img.src = `data:image/jpeg;base64,${b64}`;
-        img.style.cssText = 'display:block;max-width:100%';
-        div.appendChild(img);
-        pages.appendChild(div);
-      });
+      showPreviewPages(r.pages);
+      G.previewToken = r.token || null;
+      G.previewWidth = width;
       const now = new Date().toLocaleTimeString();
       const total = r.total_pages || r.pages.length;
       $('preview-status').textContent = `Updated ${now} — ${total} page(s)`;
@@ -2594,6 +2642,10 @@ async function initApp() {
     // Refresh preview
     $('refresh-preview-btn').addEventListener('click', () => doPreview(true));
     $('toggle-preview-btn').addEventListener('click', togglePreview);
+    // Redraw the preview at the new size when the panel or window changes size
+    // (or the window moves to a screen with different scaling).
+    if (window.ResizeObserver) new ResizeObserver(onPreviewResize).observe($('preview-scroll'));
+    window.addEventListener('resize', onPreviewResize);
 
     // Seed template cache with the info bundled in /api/init (saves one round trip)
     if (init.default_template_info) {

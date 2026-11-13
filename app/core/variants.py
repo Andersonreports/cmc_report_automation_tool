@@ -300,6 +300,21 @@ def omim_phenotype_prefix(v: dict) -> str:
     return text
 
 
+def with_inheritance_line(v: dict) -> str:
+    """The OMIM phenotype text ending with 'This disease follows autosomal dominant
+    pattern of inheritance [2].' (from the Inheritance box), unless it already has it."""
+    text = (v.get("omim_phenotype") or "").rstrip()
+    codes = [c.strip() for c in re.split(r"[,/]", v.get("inheritance", "")) if c.strip()]
+    if not text or not codes or "pattern of inheritance" in text.lower():
+        return text
+    names = [_INHERITANCE.get(c.upper(), c).lower().replace("x-linked", "X-linked")
+             .replace("y-linked", "Y-linked") for c in codes]
+    pattern = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
+    if not text.endswith((".", "!", "?")):
+        text += "."
+    return f"{text} This disease follows {pattern} pattern of inheritance [2]."
+
+
 def suggested_inheritance(v: dict) -> str:
     """Inheritance codes of the OMIM number(s) in the OMIM ID box, e.g. 'AD, AR'."""
     return ", ".join(dict.fromkeys(c for c in _chosen_omim(v, "omim_inh") if c))

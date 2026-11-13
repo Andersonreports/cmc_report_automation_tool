@@ -170,30 +170,98 @@ def api_preview():
                 return jsonify({"error": str(e2), "pages": []})
         if not pdf_path_result or not os.path.exists(pdf_path_result):
             return jsonify({"error": "PDF was not produced.", "pages": []})
-        import pypdfium2 as pdfium
-        max_pages = int((request.json or {}).get("max_pages", 0)) or None
-        doc = pdfium.PdfDocument(pdf_path_result)
-        pages_b64 = []
-        try:
-            total = len(doc)
-            limit = min(total, max_pages) if max_pages else total
-            for i in range(limit):
-                page = doc[i]
-                scale = 780 / page.get_width()
-                # Table lines are thinner than a pixel at this size and the cells' fill,
-                # painted after them, can cover them (missing top / left lines beside shaded
-                # rows). Rendered at 2x, crisp, then averaged down, every line survives.
-                img = page.render(scale=scale * 2, no_smoothpath=True).to_pil().convert("RGB").reduce(2)
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=80)
-                pages_b64.append(base64.b64encode(buf.getvalue()).decode())
-        finally:
-            doc.close()
-        return jsonify({"pages": pages_b64, "total_pages": total})
+        body = request.json or {}
+        token = _cache_preview_pdf(pdf_path_result)
+        pages_b64, total = _rasterize(_preview_cache_path(token), _preview_width(body),
+                                      int(body.get("max_pages", 0)) or None)
+        return jsonify({"pages": pages_b64, "total_pages": total, "token": token})
     except Exception:
         return jsonify({"error": traceback.format_exc().strip().splitlines()[-1], "pages": []})
     finally:
         _deferred_rmtree(tmp, 30)
+
+
+# -- Preview images sized for the viewer's screen ----------------------------------
+# The browser sends the preview panel's width in physical pixels (CSS width x
+# devicePixelRatio). Pages are drawn at exactly that size, so the browser shows
+# them 1:1: no stretching on large or high-DPI screens (blurry text, table lines
+# fading out) and no squeezing on small ones. The last previews' PDFs are kept so
+# a window resize only redraws the pages, without running Word again.
+
+_PREVIEW_CACHE = os.path.join(tempfile.gettempdir(), "cmc_preview_cache")
+_PREVIEW_KEEP = 40                     # newest PDFs kept (one per recent preview)
+_PREVIEW_DEFAULT_W = 780               # an old page that sends no width
+_PREVIEW_MIN_W, _PREVIEW_MAX_W = 400, 2600
+
+
+def _preview_width(body: dict) -> int:
+    try:
+        w = int(body.get("width") or _PREVIEW_DEFAULT_W)
+    except (TypeError, ValueError):
+        w = _PREVIEW_DEFAULT_W
+    return max(_PREVIEW_MIN_W, min(_PREVIEW_MAX_W, w))
+
+
+def _preview_cache_path(token: str) -> str:
+    return os.path.join(_PREVIEW_CACHE, f"{token}.pdf")
+
+
+def _cache_preview_pdf(pdf: str) -> str:
+    import uuid
+    os.makedirs(_PREVIEW_CACHE, exist_ok=True)
+    token = uuid.uuid4().hex
+    shutil.copyfile(pdf, _preview_cache_path(token))
+    try:                                # drop the oldest beyond _PREVIEW_KEEP
+        files = sorted((os.path.join(_PREVIEW_CACHE, f) for f in os.listdir(_PREVIEW_CACHE)),
+                       key=os.path.getmtime)
+        for f in files[:-_PREVIEW_KEEP]:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return token
+
+
+def _rasterize(pdf: str, width: int, max_pages: int | None = None) -> tuple[list[str], int]:
+    """Each page as a base64 PNG `width` pixels wide. Table lines are thinner than a
+    pixel at preview sizes and the cells' fill, painted after them, can cover them
+    (missing top / left lines beside shaded rows): drawn at 2x without anti-aliasing,
+    then averaged down, every line survives. PNG keeps thin lines and small text sharp
+    (JPEG smears them)."""
+    import pypdfium2 as pdfium
+    doc = pdfium.PdfDocument(pdf)
+    out = []
+    try:
+        total = len(doc)
+        for i in range(min(total, max_pages) if max_pages else total):
+            page = doc[i]
+            scale = width / page.get_width()
+            img = page.render(scale=scale * 2, no_smoothpath=True).to_pil().convert("RGB").reduce(2)
+            buf = io.BytesIO()
+            img.convert("P", palette=1, colors=256).save(buf, format="PNG", optimize=True)
+            out.append(base64.b64encode(buf.getvalue()).decode())
+    finally:
+        doc.close()
+    return out, total
+
+
+@app.route("/api/preview-pages", methods=["POST"])
+def api_preview_pages():
+    """The last preview's pages again at a new width (the window was resized)."""
+    body = request.json or {}
+    token = str(body.get("token", ""))
+    if not token.isalnum():
+        return jsonify({"error": "bad token", "pages": []}), 400
+    path = _preview_cache_path(token)
+    if not os.path.exists(path):           # cleaned up: the page asks for a full preview
+        return jsonify({"error": "expired", "pages": []})
+    try:
+        pages, total = _rasterize(path, _preview_width(body))
+        return jsonify({"pages": pages, "total_pages": total, "token": token})
+    except Exception:
+        return jsonify({"error": traceback.format_exc().strip().splitlines()[-1], "pages": []})
 
 
 def _save_to_folder(folder: str, *paths: str) -> str:

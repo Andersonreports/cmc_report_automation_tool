@@ -82,6 +82,9 @@ class TemplateConfig:
     # Skip the "OMIM phenotype" narrative under the Variant Interpretation table
     # (only "#Clinical and Literature Evidences" is kept).
     skip_omim: bool = False
+    # End the OMIM phenotype paragraph with "This disease follows <inheritance>
+    # pattern of inheritance [2]." from the variant's Inheritance box.
+    inheritance_line: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         options="clinical_exome",
         specimen="Peripheral Blood",
         patient_sheet="WES",   # clinical exome samples are listed in the same sheet as WES
+        inheritance_line=True,
     ),
     # The WES reports (no pathogenic / pathogenic / VUS) as one template;
     # the Result option picks the layout and the other options its details.
