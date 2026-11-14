@@ -1390,7 +1390,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_table.blockSignals(True)
         view = self.f_table.view()
         view.setRowHidden(1, not self.additional_separate)
-        view.setRowHidden(2, not self.secondary_separate)
+        view.setRowHidden(2, False)
         self.f_table.setCurrentIndex(self.f_table.findData(self._table_of(v)))
         self.f_table.blockSignals(False)
         options = variants_core.classification_options(v) or [""]
@@ -1595,8 +1595,8 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             ticked = [v for v in self._variants if v.get("selected")]
             targets = ticked or ([self._variants[self._current]]
                                  if 0 <= self._current < len(self._variants) else [])
-            if self.secondary_separate:     # Secondary findings keep their own classification
-                targets = [v for v in targets if not variants_core.is_secondary(v)]
+            # Secondary findings keep their own classification
+            targets = [v for v in targets if self._table_of(v) != "secondary"]
             for v in targets:
                 v["classification"] = label
             if 0 <= self._current < len(self._variants) and                     self._variants[self._current] in targets:
@@ -1640,7 +1640,8 @@ class VariantsPanel(ExcelDropPanel, QWidget):
 
     def _table_of(self, v: dict) -> str:
         """The report table the variant goes in: '', 'additional' or 'secondary'."""
-        if self.secondary_separate and variants_core.is_secondary(v):
+        if (variants_core.is_secondary(v) if self.secondary_separate
+                else v.get("in_secondary") is True):
             return "secondary"
         if self.additional_separate and variants_core.is_additional(v):
             return "additional"
@@ -1687,8 +1688,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             v = self._variants[self._current]
             table = self.f_table.currentData() or ""
             v["in_additional"] = table == "additional"
-            if self.secondary_separate or "in_secondary" in v:
-                v["in_secondary"] = table == "secondary"
+            v["in_secondary"] = table == "secondary"
             self.refresh_labels()
             self._toggle_additional_row()
             self.changed.emit()
@@ -2730,7 +2730,7 @@ class MainWindow(QMainWindow):
     def _show_variants_tab(self, on: bool):
         cfg = self._cfg()
         self.variants_panel.secondary_separate = cfg.secondary_findings
-        self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
+        self.variants_panel.secondary_row.setVisible(True)   # every template offers it
         self.variants_panel.primary_row.setVisible(cfg.pathogenic)
         panel = self.variants_panel
         panel.additional_separate = True    # every template offers the Additional variants table

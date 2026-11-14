@@ -869,8 +869,21 @@ def _fill_variants(doc, data: ReportData):
     if not sets:
         raise TemplateError("Template is missing: variant results table")
     from . import variants as vr
+    # A template without its own Secondary findings set gets one made like the
+    # primary part, for the variants the user moved there (not the Excel's block).
+    secondary, sec_extra = [], None
+    if len(sets) == 1:
+        secondary = [v for v in chosen if v.get("in_secondary") is True]
+        chosen = [v for v in chosen if v.get("in_secondary") is not True]
     additional = [v for v in chosen if vr.is_additional(v)]
     chosen = [v for v in chosen if not vr.is_additional(v)]
+    if secondary and not chosen and not additional:     # only Secondary findings
+        chosen, secondary = secondary, []
+        data = dataclasses.replace(
+            data, primary_title=data.secondary_title.strip() or vr.SECONDARY_TITLES[0],
+            result_tag=data.result_tag or "no_pathogenic_detected")
+    elif secondary:
+        sec_extra = _section_copy(*sets[0])
     extra = None                    # the separate Additional variants part, made from the primary's
     if additional and any(not _is_secondary(v) for v in chosen):
         extra = _section_copy(*sets[0])
@@ -935,6 +948,8 @@ def _fill_variants(doc, data: ReportData):
                     _ensure_additional_section(doc, data, heading)
     if extra is not None:
         _fill_additional_part(doc, data, extra, additional)
+    if sec_extra is not None:
+        _fill_secondary_part(doc, data, sec_extra, secondary)
 
 
 def _section_copy(res, tbl) -> tuple[list, object]:
@@ -973,6 +988,22 @@ def _fill_additional_part(doc, data: ReportData, extra, additional: list[dict]) 
     res, tbl = tables[0], tables[1]
     _fill_variant_set(doc, data, res, tbl, additional, banner=False, whole_doc=False)
     _set_text(els[0], data.additional_title.strip() or vr.ADDITIONAL_TITLES[0])
+    _keep_list_together(res)
+
+
+def _fill_secondary_part(doc, data: ReportData, extra, secondary: list[dict]) -> None:
+    """A Secondary findings part for a template without one: its 'List of Secondary
+    findings ...' table and Variant Interpretation, under the variant parts."""
+    from . import variants as vr
+    els, stop = extra
+    for el in els:
+        stop.addprevious(el)
+    tables = [el for el in els if el.tag == qn("w:tbl")]
+    if len(tables) < 2:
+        raise TemplateError("Template is missing: variant interpretation table")
+    res, tbl = tables[0], tables[1]
+    _fill_variant_set(doc, data, res, tbl, secondary, banner=False, whole_doc=False)
+    _set_text(els[0], data.secondary_title.strip() or vr.SECONDARY_TITLES[0])
     _keep_list_together(res)
 
 

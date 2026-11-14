@@ -588,7 +588,10 @@ label.req::after{content:" *";color:var(--warn)}
               <textarea id="f-additional_variants_text" rows="3"
                 style="width:100%;box-sizing:border-box;font-size:12px;font-family:inherit;resize:vertical;padding:8px;border:1.5px solid var(--line);border-radius:6px;color:var(--ink)"></textarea>
             </div>
-            <select id="f-secondary_title" style="display:none"></select>
+            <div id="secondary-title-row" style="display:flex;flex-direction:column;gap:4px">
+              <label>Secondary findings table title:</label>
+              <select id="f-secondary_title" style="padding:6px 10px;font-size:12px;min-width:340px"></select>
+            </div>
           </div>
 
           <div class="variants-body" id="variants-body" style="display:none">
@@ -840,7 +843,10 @@ const ADDL_DEFAULT_TEXT = "The additional variants identified which are signific
 // The separate Additional variants table: offered on every template (the variant's
 // Report table choice and the table title).
 function hasAdditionalTable() { return !!G.templateInfo; }
-function isAdditional(v) { return !!v.in_additional && !isSecondary(v); }
+function isAdditional(v) { return !!v.in_additional && !inSecondaryTable(v); }
+// Goes in the Secondary findings table: a template with its own one also takes the
+// Excel's "Secondary Findings" block; on the others only the user's pick counts.
+function inSecondaryTable(v) { return hasSecondaryTable() ? isSecondary(v) : v.in_secondary === true; }
 function toggleAdditionalText() {
   const title = getOtherChoice('oc-primary_title').toLowerCase();
   const separate = hasAdditionalTable() && G.variants.some(v => v.selected && isAdditional(v));
@@ -1567,7 +1573,7 @@ function renderVariantList() {
     lbl.className = 'variant-item-label';
     lbl.textContent = label || `Variant ${i+1}`;
     item.appendChild(cb); item.appendChild(lbl);
-    if (hasSecondaryTable() && isSecondary(v)) {
+    if (inSecondaryTable(v)) {
       const tag = document.createElement('span');
       tag.className = 'variant-item-tag';
       tag.textContent = 'Secondary';
@@ -1689,14 +1695,14 @@ function buildVariantDetailHTML(v, defs, idx) {
   html += field('region', 'Region:', v.region || (defs && defs.region) || '', false,
                 "As the report shows it, e.g. Exon 14; filled from the Excel's exon(s)");
   // Which table of the report it goes in (templates with a Secondary findings table)
-  if (hasSecondaryTable() || hasAdditionalTable()) {
-    const cur = (hasSecondaryTable() && isSecondary(v)) ? 'secondary'
+  if (G.templateInfo) {
+    const cur = inSecondaryTable(v) ? 'secondary'
               : (hasAdditionalTable() && isAdditional(v)) ? 'additional' : '';
     html += `<div class="detail-row"><label>Report table</label>
       <select class="vd-field" data-key="report_table" title="The table this variant is listed in">
         <option value="" ${cur === '' ? 'selected' : ''}>Variant list</option>
         ${hasAdditionalTable() ? `<option value="additional" ${cur === 'additional' ? 'selected' : ''}>Additional variants</option>` : ''}
-        ${hasSecondaryTable() ? `<option value="secondary" ${cur === 'secondary' ? 'selected' : ''}>Secondary findings</option>` : ''}
+        <option value="secondary" ${cur === 'secondary' ? 'selected' : ''}>Secondary findings</option>
       </select></div>`;
   }
 
@@ -1839,7 +1845,7 @@ function bindVariantDetail(idx, defs) {
       const val = el.value;
       if (key === 'report_table') {
         v.in_additional = val === 'additional';
-        if (hasSecondaryTable() || 'in_secondary' in v) v.in_secondary = val === 'secondary';
+        v.in_secondary = val === 'secondary';
         renderVariantList(); toggleAdditionalText(); schedulePreview();
         return;
       }
