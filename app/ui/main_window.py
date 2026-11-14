@@ -1017,7 +1017,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._variants: list[dict] = []
         self._current = -1                    # variant index shown in the detail form
         self.secondary_separate = False       # the template has its own Secondary findings set
-        self.additional_separate = False      # a separate Additional variants table can be added
+        self.additional_separate = True       # every template offers the Additional variants table
         self.fixed_result = False             # the template's result line never changes: no Result picker
         self._mane_worker: ManeWorker | None = None
         lay = QVBoxLayout(self)
@@ -2733,7 +2733,7 @@ class MainWindow(QMainWindow):
         self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
         self.variants_panel.primary_row.setVisible(cfg.pathogenic)
         panel = self.variants_panel
-        panel.additional_separate = cfg.pathogenic and cfg.variants and not cfg.variant_captions
+        panel.additional_separate = True    # every template offers the Additional variants table
         panel.additional_title_row.setVisible(panel.additional_separate)
         panel._toggle_additional_row()
         panel.refresh_labels()              # "Secondary" marks and the Report table choice

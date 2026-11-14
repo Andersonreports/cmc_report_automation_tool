@@ -824,10 +824,11 @@ def _is_secondary(v: dict) -> bool:
     return vr.is_secondary(v)
 
 
-def _strip_variant_section(doc) -> None:
+def _strip_variant_section(doc, result_tag: str = "") -> None:
     """Remove the entire variant section (list heading, results table, interpretation,
     notes) from a pathogenic template that was used for its banner layout only.
-    Everything from the first 'List of ...' heading up to 'CNV Findings' is removed."""
+    Everything from the first 'List of ...' heading up to 'CNV Findings' is removed.
+    The result line is the user's Result pick (result_tag), else the no-variant one."""
     body = doc.element.body
     start = None
     for p in body.iterchildren(qn("w:p")):
@@ -843,7 +844,8 @@ def _strip_variant_section(doc) -> None:
         nxt = el.getnext()
         el.getparent().remove(el)
         el = nxt
-    _set_banner(doc, "none")
+    from . import variants as vr
+    _set_banner(doc, result_tag if result_tag in dict(vr.RESULT_TAGS) else "none")
 
 
 def _fill_variants(doc, data: ReportData):
@@ -855,7 +857,7 @@ def _fill_variants(doc, data: ReportData):
     if not _cfg(data).variants:
         return
     if not chosen:
-        _strip_variant_section(doc)
+        _strip_variant_section(doc, "" if _cfg(data).fixed_result else data.result_tag)
         return
     if _cfg(data).inheritance_line:
         from . import variants as vr

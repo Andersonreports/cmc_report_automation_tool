@@ -837,12 +837,9 @@ function setOtherChoice(containerId, value) {
 }
 
 const ADDL_DEFAULT_TEXT = "The additional variants identified which are significant but may not be related to patient's phenotype. Phenotype - genotype correlation is recommended.";
-// The separate Additional variants table: templates with a plain variant list
-// (not the captioned Additional variant(s) report, which is one already).
-function hasAdditionalTable() {
-  const info = G.templateInfo;
-  return !!(info && info.pathogenic && info.variants && !info.variant_captions);
-}
+// The separate Additional variants table: offered on every template (the variant's
+// Report table choice and the table title).
+function hasAdditionalTable() { return !!G.templateInfo; }
 function isAdditional(v) { return !!v.in_additional && !isSecondary(v); }
 function toggleAdditionalText() {
   const title = getOtherChoice('oc-primary_title').toLowerCase();
