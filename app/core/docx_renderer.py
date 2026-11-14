@@ -2506,8 +2506,12 @@ def _drop_analysis_word(doc):
 
 
 def _cfg(data: ReportData):
-    """The report's template, with an options template's layout resolved."""
-    return effective(data.template_key, data.options)
+    """The report's template, with an options template's layout resolved (and a
+    no-variant template's variant layout when a variant is ticked)."""
+    cfg = effective(data.template_key, data.options)
+    if cfg.with_variants and any(v.get("selected") for v in data.variants):
+        cfg = dataclasses.replace(cfg, **dict(cfg.with_variants))
+    return cfg
 
 
 # The patient table's boxes (row by row, left / right) with and without the

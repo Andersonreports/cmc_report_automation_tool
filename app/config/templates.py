@@ -49,6 +49,9 @@ class TemplateConfig:
     # The template has the variant tables, which can be filled from an uploaded
     # listed-variants Excel (the UI's Variants tab).
     variants: bool = False
+    # A no-variant template that switches to a layout with variant tables once a
+    # variant is ticked: TemplateConfig fields to change, as (name, value) pairs.
+    with_variants: tuple = ()
     # A report with a pathogenic result: the picker lists it under "Pathogenic",
     # every other template under "No pathogenic".
     pathogenic: bool = False
@@ -110,6 +113,10 @@ TEMPLATES: dict[str, TemplateConfig] = {
         referring_clinician="Dr. Aaron Chapla",
         patient_id_client="CHRISTIAN MEDICAL COLLEGE - MOLECULAR ENDOCRINOLOGY",
         patient_id_prefix="MEL",
+        # Ticked variants: the CMC pathogenic layout (variant list + Variant Interpretation).
+        with_variants=(("docx_file", "whole_exome_patho.docx"), ("variants", True),
+                       ("pathogenic", True),
+                       ("new_page_before", ("Variant Interpretation",))),
     ),
     # Clinical Exome Sequencing with no pathogenic variant: the Endocrinology layout,
     # "clinical exome" in the title and Methodology, as the lab's G Shivananda report.

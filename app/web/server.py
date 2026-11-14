@@ -124,7 +124,7 @@ def _template_info_dict(key: str, chosen: dict) -> dict:
     except Exception:
         url = ""
     return {
-        "key": cfg.key, "name": cfg.name, "pathogenic": cfg.pathogenic,
+        "key": cfg.key, "name": cfg.name, "pathogenic": cfg.pathogenic or bool(cfg.with_variants),
         "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
         "variant_captions": cfg.variant_captions,
         "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row, "gender_row": cfg.gender_row,

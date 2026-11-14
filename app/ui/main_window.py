@@ -2731,7 +2731,7 @@ class MainWindow(QMainWindow):
         cfg = self._cfg()
         self.variants_panel.secondary_separate = cfg.secondary_findings
         self.variants_panel.secondary_row.setVisible(True)   # every template offers it
-        self.variants_panel.primary_row.setVisible(cfg.pathogenic)
+        self.variants_panel.primary_row.setVisible(cfg.pathogenic or bool(cfg.with_variants))
         panel = self.variants_panel
         panel.additional_separate = True    # every template offers the Additional variants table
         panel.additional_title_row.setVisible(panel.additional_separate)
