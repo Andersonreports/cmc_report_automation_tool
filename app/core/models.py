@@ -51,6 +51,7 @@ class ReportData:
     result_tag: str = ""                  # variants.RESULT_TAGS key; blank = from the classifications
     secondary_title: str = ""             # Secondary findings table's title; blank = template's
     primary_title: str = ""              # Primary variant list heading; blank = auto from mode
+    additional_title: str = ""           # separate Additional variants table's title; blank = first ADDITIONAL_TITLES
     additional_variants_text: str = ""   # intro text for the "Additional Variant(s)" section; blank = default
     options: dict = field(default_factory=dict)   # an options template's choices (config OPTIONS)
 

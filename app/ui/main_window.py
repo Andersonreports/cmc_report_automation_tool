@@ -1017,6 +1017,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._variants: list[dict] = []
         self._current = -1                    # variant index shown in the detail form
         self.secondary_separate = False       # the template has its own Secondary findings set
+        self.additional_separate = False      # a separate Additional variants table can be added
         self.fixed_result = False             # the template's result line never changes: no Result picker
         self._mane_worker: ManeWorker | None = None
         lay = QVBoxLayout(self)
@@ -1069,6 +1070,23 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         pr.addWidget(self.f_primary_title, 1)
         self.primary_row.setVisible(False)
         lay.addWidget(self.primary_row)
+        self.additional_title_row = QWidget()   # the separate Additional variants table's title
+        atl = QHBoxLayout(self.additional_title_row)
+        atl.setContentsMargins(0, 0, 0, 0)
+        atl.addWidget(QLabel("Additional variants table title:"))
+        self.f_additional_title = StableCombo()
+        self.f_additional_title.setEditable(True)       # pick one, or type another wording
+        self.f_additional_title.addItems(variants_core.ADDITIONAL_TITLES)
+        self.f_additional_title.setToolTip(
+            "Title of the separate Additional variants table under the variant list "
+            "(with its own Variant Interpretation). Set a variant's Report table to "
+            "'Additional variants' to put it there.")
+        self.f_additional_title.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.f_additional_title.setMinimumContentsLength(12)
+        self.f_additional_title.currentTextChanged.connect(lambda *_: self.changed.emit())
+        atl.addWidget(self.f_additional_title, 1)
+        self.additional_title_row.setVisible(False)
+        lay.addWidget(self.additional_title_row)
         self.additional_row = QWidget()
         al = QVBoxLayout(self.additional_row)
         al.setContentsMargins(0, 0, 0, 0)
@@ -1148,8 +1166,9 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_table = StableCombo()        # which table of the report the variant goes in
         self.f_table.setToolTip("The table this variant is listed in; "
                                 "from the Excel's block unless changed here")
-        self.f_table.addItem("Variant list", False)
-        self.f_table.addItem("Secondary findings", True)
+        self.f_table.addItem("Variant list", "")
+        self.f_table.addItem("Additional variants", "additional")
+        self.f_table.addItem("Secondary findings", "secondary")
         self.f_table.currentIndexChanged.connect(self._tabled)
         self.f_class = StableCombo()
         self.f_class.setToolTip("Classification shown in the report: Franklin / ACMG / ClinVar")
@@ -1366,9 +1385,13 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.f_strand.blockSignals(True)
         self.f_strand.setCurrentIndex(max(0, self.f_strand.findData(v.get("strand", "").strip())))
         self.f_strand.blockSignals(False)
-        self.detail_form.setRowVisible(self.f_table, self.secondary_separate)
+        self.detail_form.setRowVisible(self.f_table,
+                                       self.secondary_separate or self.additional_separate)
         self.f_table.blockSignals(True)
-        self.f_table.setCurrentIndex(1 if variants_core.is_secondary(v) else 0)
+        view = self.f_table.view()
+        view.setRowHidden(1, not self.additional_separate)
+        view.setRowHidden(2, not self.secondary_separate)
+        self.f_table.setCurrentIndex(self.f_table.findData(self._table_of(v)))
         self.f_table.blockSignals(False)
         options = variants_core.classification_options(v) or [""]
         if v.get("classification") and v["classification"] not in options:
@@ -1615,9 +1638,29 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self._toggle_additional_row()
         self.changed.emit()
 
+    def _table_of(self, v: dict) -> str:
+        """The report table the variant goes in: '', 'additional' or 'secondary'."""
+        if self.secondary_separate and variants_core.is_secondary(v):
+            return "secondary"
+        if self.additional_separate and variants_core.is_additional(v):
+            return "additional"
+        return ""
+
+    def additional_title(self) -> str:
+        """The separate Additional variants table's title; '' when it is the first choice."""
+        text = self.f_additional_title.currentText().strip()
+        return "" if text == variants_core.ADDITIONAL_TITLES[0] else text
+
+    def set_additional_title(self, text: str):
+        self.f_additional_title.blockSignals(True)
+        self.f_additional_title.setCurrentText(text or variants_core.ADDITIONAL_TITLES[0])
+        self.f_additional_title.blockSignals(False)
+
     def _toggle_additional_row(self):
         title = self.f_primary_title.currentText().lower()
-        show = "additional" in title and title != self.AUTO_TITLE.lower()
+        separate = self.additional_separate and any(
+            v.get("selected") and variants_core.is_additional(v) for v in self._variants)
+        show = ("additional" in title and title != self.AUTO_TITLE.lower()) or separate
         self.additional_row.setVisible(show)
         if show and not self.f_additional_text.toPlainText().strip():
             self.f_additional_text.setPlainText(variants_core.ADDITIONAL_VARIANTS_DEFAULT_TEXT)
@@ -1638,14 +1681,21 @@ class VariantsPanel(ExcelDropPanel, QWidget):
             self.changed.emit()
 
     def _tabled(self, *_):
-        """The user moved the variant to the variant list or the Secondary findings table."""
+        """The user moved the variant to the variant list, the Additional variants
+        table or the Secondary findings table."""
         if 0 <= self._current < len(self._variants):
-            self._variants[self._current]["in_secondary"] = bool(self.f_table.currentData())
+            v = self._variants[self._current]
+            table = self.f_table.currentData() or ""
+            v["in_additional"] = table == "additional"
+            if self.secondary_separate or "in_secondary" in v:
+                v["in_secondary"] = table == "secondary"
             self.refresh_labels()
+            self._toggle_additional_row()
             self.changed.emit()
 
     def _item_text(self, v: dict) -> str:
-        tag = "   · Secondary" if self.secondary_separate and variants_core.is_secondary(v) else ""
+        table = self._table_of(v)
+        tag = "   · Secondary" if table == "secondary" else "   · Additional" if table == "additional" else ""
         return f"{v.get('gene', '')}  {v.get('variant', '')}{tag}"
 
     def refresh_labels(self):
@@ -1773,6 +1823,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.select_all.blockSignals(True)
         self.select_all.setChecked(bool(self._variants) and n == len(self._variants))
         self.select_all.blockSignals(False)
+        self._toggle_additional_row()
 
     def _select_all(self, state: bool):
         """Tick / clear every variant that is currently listed (the search hides the rest)."""
@@ -2499,6 +2550,8 @@ class MainWindow(QMainWindow):
             variants=self.variants_panel.variants(),
             result_tag=self.variants_panel.result_tag(),
             secondary_title=self.variants_panel.secondary_title(),
+            additional_title=(self.variants_panel.additional_title()
+                              if self.variants_panel.additional_separate else ""),
             primary_title=(self.variants_panel.primary_title()
                            if not self.variants_panel.primary_row.isHidden() else ""),
             additional_variants_text=(self.variants_panel.additional_variants_text()
@@ -2680,6 +2733,9 @@ class MainWindow(QMainWindow):
         self.variants_panel.secondary_row.setVisible(self.variants_panel.secondary_separate)
         self.variants_panel.primary_row.setVisible(cfg.pathogenic)
         panel = self.variants_panel
+        panel.additional_separate = cfg.pathogenic and cfg.variants and not cfg.variant_captions
+        panel.additional_title_row.setVisible(panel.additional_separate)
+        panel._toggle_additional_row()
         panel.refresh_labels()              # "Secondary" marks and the Report table choice
         panel._show_detail(panel._current)  # follow whether the template has that table
         panel.fixed_result = cfg.fixed_result
@@ -2806,6 +2862,7 @@ class MainWindow(QMainWindow):
         self.variants_panel.set_result_tag("")
         self.variants_panel.set_primary_title("")
         self.variants_panel.set_additional_variants_text("")
+        self.variants_panel.set_additional_title("")
         self.variants_panel.set_secondary_title("")
         self._steps_left.clear()
         self._update_steps()
@@ -2934,6 +2991,7 @@ class MainWindow(QMainWindow):
         self.variants_panel.set_secondary_title(data.secondary_title)
         self.variants_panel.set_primary_title(data.primary_title)
         self.variants_panel.set_additional_variants_text(data.additional_variants_text)
+        self.variants_panel.set_additional_title(data.additional_title)
         self._update_steps()
         self._preview()
 

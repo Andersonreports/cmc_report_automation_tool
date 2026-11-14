@@ -575,6 +575,14 @@ label.req::after{content:" *";color:var(--warn)}
                 <input type="text" class="other-input" placeholder="Type custom title…" style="padding:6px 10px;font-size:12px;width:100%;box-sizing:border-box">
               </div>
             </div>
+            <div id="additional-title-row" style="display:none;flex-direction:column;gap:4px">
+              <label>Additional variants table title:</label>
+              <div id="oc-additional_title" class="other-choice" style="display:flex;flex-direction:column;gap:4px">
+                <select id="f-additional_title" class="other-select" style="padding:6px 10px;font-size:12px;min-width:340px"></select>
+                <input type="text" class="other-input" placeholder="Type custom title…" style="padding:6px 10px;font-size:12px;width:100%;box-sizing:border-box">
+              </div>
+              <span class="variant-hint" style="margin:0;font-size:11px">A separate table under the variant list, with its own Variant Interpretation. Set a variant's <b>Report table</b> to <b>Additional variants</b> to put it there.</span>
+            </div>
             <div id="additional-text-row" style="display:none;flex-direction:column;gap:4px">
               <label>Additional Variant(s) intro text:</label>
               <textarea id="f-additional_variants_text" rows="3"
@@ -829,9 +837,17 @@ function setOtherChoice(containerId, value) {
 }
 
 const ADDL_DEFAULT_TEXT = "The additional variants identified which are significant but may not be related to patient's phenotype. Phenotype - genotype correlation is recommended.";
+// The separate Additional variants table: templates with a plain variant list
+// (not the captioned Additional variant(s) report, which is one already).
+function hasAdditionalTable() {
+  const info = G.templateInfo;
+  return !!(info && info.pathogenic && info.variants && !info.variant_captions);
+}
+function isAdditional(v) { return !!v.in_additional && !isSecondary(v); }
 function toggleAdditionalText() {
   const title = getOtherChoice('oc-primary_title').toLowerCase();
-  const show = title.includes('additional');
+  const separate = hasAdditionalTable() && G.variants.some(v => v.selected && isAdditional(v));
+  const show = title.includes('additional') || separate;
   $('additional-text-row').style.display = show ? 'flex' : 'none';
   if (show && !$('f-additional_variants_text').value.trim()) {
     $('f-additional_variants_text').value = ADDL_DEFAULT_TEXT;
@@ -1006,6 +1022,7 @@ function collectData() {
     variants: G.variants,
     result_tag: $('f-result_tag').value || '',
     primary_title: getOtherChoice('oc-primary_title') || '',
+    additional_title: getOtherChoice('oc-additional_title') || '',
     additional_variants_text: $('f-additional_variants_text').value.trim(),
     secondary_title: $('f-secondary_title').value || '',
     options: (G.templateInfo && G.templateInfo.options && G.templateInfo.options.length) ? G.options : {},
@@ -1359,6 +1376,8 @@ async function onTemplateChange(key, force=false) {
   // Primary variant list title row (shown for pathogenic templates)
   const priRow = $('primary-title-row');
   priRow.style.display = (info.pathogenic && info.variants) ? 'flex' : 'none';
+  $('additional-title-row').style.display = hasAdditionalTable() ? 'flex' : 'none';
+  toggleAdditionalText();
 
   // The lab's newer result lines and list titles: only for the templates that use them
   applyLabWording(!!info.lab_wording);
@@ -1544,7 +1563,7 @@ function renderVariantList() {
     cb.type = 'checkbox'; cb.checked = !!v.selected;
     cb.addEventListener('change', (e) => {
       G.variants[i].selected = e.target.checked;
-      updateSelectAllVariants(); schedulePreview();
+      updateSelectAllVariants(); toggleAdditionalText(); schedulePreview();
       if (i === G.currentVariantIdx) updateDetailTitle(i);
     });
     const lbl = document.createElement('span');
@@ -1555,6 +1574,11 @@ function renderVariantList() {
       const tag = document.createElement('span');
       tag.className = 'variant-item-tag';
       tag.textContent = 'Secondary';
+      item.appendChild(tag);
+    } else if (hasAdditionalTable() && isAdditional(v)) {
+      const tag = document.createElement('span');
+      tag.className = 'variant-item-tag';
+      tag.textContent = 'Additional';
       item.appendChild(tag);
     }
     item.draggable = true;
@@ -1668,12 +1692,14 @@ function buildVariantDetailHTML(v, defs, idx) {
   html += field('region', 'Region:', v.region || (defs && defs.region) || '', false,
                 "As the report shows it, e.g. Exon 14; filled from the Excel's exon(s)");
   // Which table of the report it goes in (templates with a Secondary findings table)
-  if (hasSecondaryTable()) {
-    const sec = isSecondary(v);
+  if (hasSecondaryTable() || hasAdditionalTable()) {
+    const cur = (hasSecondaryTable() && isSecondary(v)) ? 'secondary'
+              : (hasAdditionalTable() && isAdditional(v)) ? 'additional' : '';
     html += `<div class="detail-row"><label>Report table</label>
-      <select class="vd-field" data-key="in_secondary" title="The table this variant is listed in; from the Excel's block unless changed here">
-        <option value="" ${sec ? '' : 'selected'}>Variant list</option>
-        <option value="1" ${sec ? 'selected' : ''}>Secondary findings</option>
+      <select class="vd-field" data-key="report_table" title="The table this variant is listed in">
+        <option value="" ${cur === '' ? 'selected' : ''}>Variant list</option>
+        ${hasAdditionalTable() ? `<option value="additional" ${cur === 'additional' ? 'selected' : ''}>Additional variants</option>` : ''}
+        ${hasSecondaryTable() ? `<option value="secondary" ${cur === 'secondary' ? 'selected' : ''}>Secondary findings</option>` : ''}
       </select></div>`;
   }
 
@@ -1814,8 +1840,13 @@ function bindVariantDetail(idx, defs) {
     });
     el.addEventListener('change', async (e) => {
       const val = el.value;
+      if (key === 'report_table') {
+        v.in_additional = val === 'additional';
+        if (hasSecondaryTable() || 'in_secondary' in v) v.in_secondary = val === 'secondary';
+        renderVariantList(); toggleAdditionalText(); schedulePreview();
+        return;
+      }
       v[key] = val;
-      if (key === 'in_secondary') { v.in_secondary = val === '1'; renderVariantList(); }
       if (key === 'classification') { applySelectColor(el); schedulePreview(); }
       if (key === 'strand') schedulePreview();
       schedulePreview();
@@ -2286,6 +2317,7 @@ async function applyDraftData(raw) {
     $('f-result_tag').value = raw.result_tag || '';
     applyResultTagColor();
     setOtherChoice('oc-primary_title', raw.primary_title || '');
+    setOtherChoice('oc-additional_title', raw.additional_title || '');
     $('f-additional_variants_text').value = raw.additional_variants_text || '';
     toggleAdditionalText();
     $('f-secondary_title').value = raw.secondary_title || '';
@@ -2515,6 +2547,9 @@ async function initApp() {
     $('oc-primary_title').querySelector('.other-input').addEventListener('input', toggleAdditionalText);
     $('f-additional_variants_text').addEventListener('input', schedulePreview);
 
+    // Additional variants table titles (first = default)
+    initOtherChoice('oc-additional_title', init.additional_titles || [], 'Type custom title…');
+
     // Secondary titles
     const stSel = $('f-secondary_title');
     init.secondary_titles.forEach(s => {
@@ -2708,6 +2743,7 @@ function saveFormState() {
         'oc-referring_clinician': getOtherChoice('oc-referring_clinician'),
         'oc-specimen': getOtherChoice('oc-specimen'),
         'oc-primary_title': getOtherChoice('oc-primary_title'),
+        'oc-additional_title': getOtherChoice('oc-additional_title'),
       },
       reviewer: $('reviewer-combo').value,
       resultTag: $('f-result_tag').value,
@@ -2744,6 +2780,7 @@ async function restoreFormState() {
       G.variants = state.variants;
       G.variantManualFields = state.variantManualFields || {};
       renderVariantList();
+      toggleAdditionalText();
       const hint = $('variants-hint');
       if (hint) { hint.style.display = ''; hint.textContent = `Restored ${G.variants.length} variant${G.variants.length===1?'':'s'}.`; hint.className = 'variant-hint status-ok'; }
     }

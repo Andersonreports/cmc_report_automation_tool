@@ -19,6 +19,7 @@ Elements are located by their text, not their position.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import os
 import re
 
@@ -865,12 +866,27 @@ def _fill_variants(doc, data: ReportData):
     sets = _variant_sets(doc)
     if not sets:
         raise TemplateError("Template is missing: variant results table")
+    from . import variants as vr
+    additional = [v for v in chosen if vr.is_additional(v)]
+    chosen = [v for v in chosen if not vr.is_additional(v)]
+    extra = None                    # the separate Additional variants part, made from the primary's
+    if additional and any(not _is_secondary(v) for v in chosen):
+        extra = _section_copy(*sets[0])
+    elif additional:                # no main variant: the additional ones take the primary list
+        chosen = additional + chosen
+        if "additional" not in data.primary_title.lower():
+            data = dataclasses.replace(
+                data, primary_title=data.additional_title.strip() or vr.ADDITIONAL_TITLES[0])
+        additional = []
     if len(sets) == 2:
         groups = [[v for v in chosen if not _is_secondary(v)],
                   [v for v in chosen if _is_secondary(v)]]
     else:
         groups = [chosen]
     for n, ((res, tbl), group) in enumerate(zip(sets, groups)):
+        if n == 1 and extra is not None:        # before the Secondary findings part
+            _fill_additional_part(doc, data, extra, additional)
+            extra = None
         if n and not group:
             _drop_secondary_findings(doc, res, tbl)
         elif len(sets) == 2 and not group:      # only Secondary findings: no primary variant
@@ -909,6 +925,53 @@ def _fill_variants(doc, data: ReportData):
                 _set_text(_find_para(doc, "List of Secondary", "Secondary findings heading"),
                           data.secondary_title.strip())
             _keep_list_together(res)
+            if not n and group and "additional" in (data.primary_title or "").lower():
+                heading = res.getprevious()
+                while heading is not None and not (heading.tag == qn("w:p") and _text(heading).strip()):
+                    heading = heading.getprevious()
+                if heading is not None:
+                    _ensure_additional_section(doc, data, heading)
+    if extra is not None:
+        _fill_additional_part(doc, data, extra, additional)
+
+
+def _section_copy(res, tbl) -> tuple[list, object]:
+    """A copy of the primary variant part as the template has it - its 'List of'
+    heading, list table, notes, Variant Interpretation heading, table and paragraphs,
+    up to the next part - and that next part's first element (where the copy goes)."""
+    start = res.getprevious()
+    while start is not None and not (start.tag == qn("w:p") and
+                                     _text(start).strip().lower().startswith("list of")):
+        start = start.getprevious()
+    if start is None:
+        raise TemplateError("Template is missing: variant list heading")
+    els, el = [], start
+    while el is not None and el.tag != qn("w:sectPr") and not (
+            el is not start and el.tag == qn("w:p") and
+            _text(el).strip().lower().startswith(_SECTION_STARTS)):
+        els.append(copy.deepcopy(el))
+        el = el.getnext()
+    if el is None or el.tag == qn("w:sectPr"):
+        raise TemplateError("Template is missing: the heading after the variant list")
+    return els, el
+
+
+def _fill_additional_part(doc, data: ReportData, extra, additional: list[dict]) -> None:
+    """The separate Additional variants part, under the main variant part: the
+    'Additional Variant(s)' heading and intro text, its own 'List of additional ...'
+    table and its own Variant Interpretation, as in the lab's reports with both."""
+    from . import variants as vr
+    els, stop = extra
+    heading_p, intro_p = _additional_heading(doc, data)
+    for el in [heading_p, intro_p] + els:
+        stop.addprevious(el)
+    tables = [el for el in els if el.tag == qn("w:tbl")]
+    if len(tables) < 2:
+        raise TemplateError("Template is missing: variant interpretation table")
+    res, tbl = tables[0], tables[1]
+    _fill_variant_set(doc, data, res, tbl, additional, banner=False, whole_doc=False)
+    _set_text(els[0], data.additional_title.strip() or vr.ADDITIONAL_TITLES[0])
+    _keep_list_together(res)
 
 
 def _keep_list_together(res) -> None:
@@ -1173,7 +1236,15 @@ def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
                 if txt:
                     _set_text(intro, txt)
             return
-    # Not present — create heading + intro paragraph before the list heading.
+    heading_p, intro_p = _additional_heading(doc, data)
+    # Insert: heading, then intro, then the existing list heading follows
+    list_heading.addprevious(intro_p)
+    intro_p.addprevious(heading_p)
+
+
+def _additional_heading(doc, data: ReportData) -> tuple:
+    """New 'Additional Variant(s)' heading and intro text paragraphs (not yet placed)."""
+    from . import variants as vr
     # Copy the formatting from the nearest section heading (e.g. "Results").
     # 'CNV Findings' first: some templates' 'Results' paragraph also holds the result
     # box, so its text doesn't start with "Results" and it can't be copied cleanly.
@@ -1258,9 +1329,7 @@ def _ensure_additional_section(doc, data: ReportData, list_heading) -> None:
     it.set(qn("xml:space"), "preserve")
     ir.append(it)
     intro_p.append(ir)
-    # Insert: heading, then intro, then the existing list heading follows
-    list_heading.addprevious(intro_p)
-    intro_p.addprevious(heading_p)
+    return heading_p, intro_p
 
 
 def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banner: bool,
@@ -1290,10 +1359,8 @@ def _fill_variant_set(doc, data: ReportData, res, tbl, chosen: list[dict], banne
             if heading is None or heading.tag != qn("w:p") or not _text(heading).startswith("List of"):
                 heading = _find_para(doc, "List of significant variant(s)", "variant list heading")
             _set_text(heading, heading_text)
-            # When an "additional" title is chosen and the template lacks the
-            # "Additional Variant(s)" section, insert the heading + intro text.
-            if "additional" in heading_text.lower():
-                _ensure_additional_section(doc, data, heading)
+            # An "additional" title: _fill_variants adds the "Additional Variant(s)"
+            # heading + intro text over it.
     _add_result_rows(doc, res, proto, chosen)
     if _cfg(data).skip_omim:
         omim = _para_near(doc, tbl, "OMIM phenotype", "", required=False, whole_doc=whole_doc)

@@ -497,6 +497,16 @@ PRIMARY_TITLES = (
 # Offered only for templates with lab_wording (not the CMC ones).
 LAB_PRIMARY_TITLES = frozenset(PRIMARY_TITLES[-4:])
 
+# Titles the user can pick for the separate Additional variants table (Variants
+# tab), listed after the main variant list with its own Variant Interpretation.
+ADDITIONAL_TITLES = (
+    "List of additional significant variant(s) identified:",
+    "List of additional uncertain significant variant(s) identified:",
+    "List of additional pathogenic variant(s) identified:",
+    "List of additional likely pathogenic variant(s) identified:",
+    "List of Incidental significant variant(s) identified:",
+)
+
 ADDITIONAL_VARIANTS_DEFAULT_TEXT = (
     "The additional variants identified which are significant but may not be related to "
     "patient’s phenotype. Phenotype – genotype correlation is recommended.")
@@ -513,6 +523,11 @@ def is_secondary(v: dict) -> bool:
     if "in_secondary" in v:
         return bool(v["in_secondary"])
     return "secondary" in v.get("section", "").lower()
+
+
+def is_additional(v: dict) -> bool:
+    """A variant for the separate Additional variants table (the user's pick in the app)."""
+    return bool(v.get("in_additional")) and not is_secondary(v)
 
 
 def report_mode(chosen: list[dict], pick: str = "") -> str:

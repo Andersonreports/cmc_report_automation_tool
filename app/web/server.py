@@ -101,6 +101,7 @@ def api_init():
         "result_tags": result_tags,
         "secondary_titles": list(variants_core.SECONDARY_TITLES),
         "primary_titles": list(variants_core.PRIMARY_TITLES),
+        "additional_titles": list(variants_core.ADDITIONAL_TITLES),
         "lab_primary_titles": sorted(variants_core.LAB_PRIMARY_TITLES),
         "frequency_text": variants_core.FREQUENCY_TEXT,
         "frequency_all": variants_core.FREQUENCY_ALL,
@@ -125,6 +126,7 @@ def _template_info_dict(key: str, chosen: dict) -> dict:
     return {
         "key": cfg.key, "name": cfg.name, "pathogenic": cfg.pathogenic,
         "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
+        "variant_captions": cfg.variant_captions,
         "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row, "gender_row": cfg.gender_row,
         "lab_wording": cfg.lab_wording,
         "hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
