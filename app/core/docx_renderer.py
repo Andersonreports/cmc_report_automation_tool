@@ -2675,9 +2675,11 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     if options:
         if options["interpretation"] == "no":
             _drop_interpretation_section(doc)
-        _parents_recommendation(doc, options.get("parents", "no") == "yes")
         if options["compound_note"] == "yes" and cfg.variants:
             _compound_het_note(doc)
+    # Any variant reported -> the parents-testing line leads the Recommendations
+    # (after any pseudogene note); none -> it is removed.
+    _parents_recommendation(doc, any(v.get("selected") for v in data.variants))
     if cfg.variants:
         _pseudogene_recommendation(doc, data)
         if cfg.keep_layout:
