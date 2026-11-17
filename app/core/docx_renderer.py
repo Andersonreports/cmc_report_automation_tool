@@ -2195,6 +2195,65 @@ def _tidy_classification_table(doc, pad: int = 180):
                 pf.line_spacing = 1.3
 
 
+def _widen_sequence_ontology(doc) -> None:
+    """'Sequence Ontology' wraps onto two lines in its 3-column cell. Give it one
+    grid column from 'Variant Frequency' (5 -> 4), in the heading row and the
+    value row under it, so the heading stays on one line."""
+    def cells(tr):
+        return tr.findall(qn("w:tc"))
+
+    def span(tc):
+        s = tc.find(qn("w:tcPr")).find(qn("w:gridSpan")) if tc.find(qn("w:tcPr")) is not None else None
+        return int(s.get(qn("w:val"))) if s is not None else 1
+
+    def set_span(tc, n, unit):
+        pr = tc.get_or_add_tcPr()
+        s = pr.find(qn("w:gridSpan"))
+        if s is None:
+            s = OxmlElement("w:gridSpan")
+            w = pr.find(qn("w:tcW"))
+            (w.addnext if w is not None else (lambda e: pr.insert(0, e)))(s)
+        s.set(qn("w:val"), str(n))
+        w = pr.find(qn("w:tcW"))
+        if w is not None and unit:
+            w.set(qn("w:w"), str(unit * n))
+            w.set(qn("w:type"), "dxa")
+
+    for tbl in doc.element.body.iter(qn("w:tbl")):
+        grid = tbl.find(qn("w:tblGrid"))
+        cols = [int(g.get(qn("w:w")) or 0) for g in grid.findall(qn("w:gridCol"))] if grid is not None else []
+        unit = max(set(cols), key=cols.count) if cols else 0
+        rows = tbl.findall(qn("w:tr"))
+        for i, tr in enumerate(rows[:-1]):
+            head = cells(tr)
+            names = [_text(tc).strip().lower() for tc in head]
+            if "sequence ontology" not in names or "variant frequency" not in names:
+                continue
+            so, vf = names.index("sequence ontology"), names.index("variant frequency")
+            below = cells(rows[i + 1])
+            if vf != so + 1 or len(below) != len(head) or span(head[vf]) < 4:
+                continue
+            if [span(c) for c in below] != [span(c) for c in head]:
+                continue
+            for row in (head, below):
+                a, b = span(row[so]), span(row[vf])
+                set_span(row[so], a + 1, unit)
+                set_span(row[vf], b - 1, unit)
+
+
+def _plural_interpretation_heading(doc) -> None:
+    """'Variant Interpretation' -> 'Variant(s) Interpretation'. Done last: the
+    other steps find the section by its template wording."""
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        if _text(p).strip().rstrip(":").lower() != "variant interpretation":
+            continue
+        for t in p.iter(qn("w:t")):
+            if "Variant" in (t.text or ""):
+                t.text = t.text.replace("Variant", "Variant(s)", 1)
+                t.set(qn("xml:space"), "preserve")
+                break
+
+
 def _title_size(doc, points: int = 16):
     """The report title ('Whole Exome Sequencing ...') in one size."""
     half = str(points * 2)
@@ -2220,13 +2279,15 @@ def _title_size(doc, points: int = 16):
 def _result_tag_size(doc, points: int = 11):
     """The boxed result line ('No pathogenic or likely pathogenic variant(s)
     causative of ...' / 'Pathogenic variant related to ...') in one size; the templates mix 9, 9.5 and 10 pt."""
+    from . import variants as vr
     half = str(points * 2)
+    # Every Result pick (text before any {gene} placeholder), so all of them
+    # get the same size and the centred, fitted box.
+    starts = tuple(t.split("{gene}")[0].strip().lower() for _, t in vr.RESULT_TAGS)
     for p in doc.element.body.iter(qn("w:p")):
         text = _text(p).strip().lower()
         if not ((text.startswith("no pathogenic") and "causative" in text)
-                or text.startswith(("pathogenic variant related to",
-                                    "likely pathogenic variant related to",
-                                    "variant of uncertain significance related to"))):
+                or (text.startswith(starts) and p.getparent().tag == qn("w:txbxContent"))):
             continue
         for r in p.iterchildren(qn("w:r")):
             rpr = r.find(qn("w:rPr"))
@@ -2672,6 +2733,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _insert_pcpndt_disclaimer(doc, data)
     _fill_gene_table(doc, data, blank_unused=not keep)
     _fill_variants(doc, data)
+    _widen_sequence_ontology(doc)
     if options:
         if options["interpretation"] == "no":
             _drop_interpretation_section(doc)
@@ -2721,4 +2783,5 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     if options.get("title") == "analysis":
         _title_with_analysis(doc)
     _normalize_hyperlink_colors(doc, hex_color="0000ED")
+    _plural_interpretation_heading(doc)
     return doc
