@@ -427,15 +427,32 @@ def _insert_sentence_to_disclaimer(doc, sentence: str):
 
 
 def _fill_methodology(doc, data: ReportData):
+    """The Methodology's first sentence names the specimen: 'DNA extracted from
+    the <specimen> was used to perform ...', or 'DNA was used ...' for DNA.
+    The templates word it two ways: 'DNA was used to perform whole/clinical
+    exome using ... capture kit .The' (WES / clinical exome) and 'DNA extracted
+    from the blood was used to perform whole exome and whole mitochondrial ...'
+    (WES & Mito)."""
     specimen = data.patient.specimen.strip()
     if specimen in METHODOLOGY_SPECIMENS:
-        para = _gene_list_link(doc).getparent()
-        for kind in ("whole", "clinical"):
-            if _replace_in_para(
-                    para, f"DNA was used to perform {kind} exome using {kind} exome capture kit .The",
-                    f"DNA extracted from the {specimen} was used to perform {kind} exome "
-                    f"using {kind} exome capture kit. The"):
-                break
+        lead = f"DNA extracted from the {specimen} was used"
+    elif specimen.upper() == "DNA":
+        lead = "DNA was used"
+    else:                           # blank / unknown: the template's wording
+        lead = None
+    if lead:
+        for para in doc.element.body.iter(qn("w:p")):
+            text = _text(para)
+            if "used to perform" not in text or not text.lstrip().startswith("DNA"):
+                continue
+            for kind in ("whole", "clinical"):
+                if _replace_in_para(
+                        para, f"DNA was used to perform {kind} exome using {kind} exome capture kit .The",
+                        f"{lead} to perform {kind} exome using {kind} exome capture kit. The"):
+                    break
+            else:
+                _replace_in_para(para, "DNA extracted from the blood was used", lead)
+            break
     _adjust_secondary_sentence(doc, data)
 
 
