@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
 
 from ..config.templates import (DEFAULT_TEMPLATE, REVIEWERS, TEMPLATES, effective,
                                 get_template, option_values, template_options)
-from ..core.docx_renderer import template_gene_table
 from ..core.gene_table import parse_pasted
 from ..core import bulk, coverage, gnomad, mane, ocr, sheet_client, variants as variants_core
 from . import style
@@ -774,13 +773,14 @@ class StepTabBar(QTabBar):
                 p.fillRect(r, QColor("#eef4f5"))
             circle = QRectF(r.left() + 12, r.center().y() - self.CIRCLE / 2,
                             self.CIRCLE, self.CIRCLE)
-            ring = style.ACCENT if complete or active else "#b8c7d0"
+            bad = status == "Patient mismatch"
+            ring = "#e53e3e" if bad else style.ACCENT if complete or active else "#b8c7d0"
             p.setPen(QPen(QColor(ring), 2))
-            p.setBrush(QColor(style.ACCENT if complete else style.SURFACE))
+            p.setBrush(QColor("#e53e3e" if bad else style.ACCENT if complete else style.SURFACE))
             p.drawEllipse(circle.adjusted(1, 1, -1, -1))
             p.setFont(f_name)
-            p.setPen(QColor("white" if complete else style.ACCENT if active else style.MUTED))
-            p.drawText(circle, Qt.AlignCenter, "✓" if complete else str(i + 1))
+            p.setPen(QColor("white" if complete or bad else style.ACCENT if active else style.MUTED))
+            p.drawText(circle, Qt.AlignCenter, "!" if bad else "✓" if complete else str(i + 1))
             left = int(circle.right()) + 10
             text_w = r.right() - left - 8
             mid = r.center().y()
@@ -789,10 +789,37 @@ class StepTabBar(QTabBar):
                        QFontMetrics(f_name).elidedText(name, Qt.ElideRight, text_w))
             p.setFont(f_status)
             partial = not complete and status != "Not started"
-            p.setPen(QColor("#b45309" if partial else style.MUTED))
+            p.setPen(QColor("#e53e3e" if bad else "#b45309" if partial else style.MUTED))
             p.drawText(QRect(left, mid + 1, text_w, 18), Qt.AlignLeft | Qt.AlignTop,
                        QFontMetrics(f_status).elidedText(status, Qt.ElideRight, text_w))
         p.end()
+
+
+def clinical_mismatch(history: str, name: str, gender: str) -> str | None:
+    """Why the clinical history looks like another patient's (same checks as the
+    web app): pronouns against the Gender, the name after Proband/Baby/Mr... against
+    the patient's name. None when it looks fine."""
+    history = (history or "").lower()
+    if not history.strip():
+        return None
+    name, gender = (name or "").strip(), (gender or "").strip().lower()
+    reasons = []
+    fem = bool(re.search(r"\b(she|her|herself)\b", history))
+    male = bool(re.search(r"\b(he|him|himself)\b", history))
+    if re.fullmatch(r"m(ale)?", gender) and fem and not male:
+        reasons.append("clinical history uses female pronouns (she/her) but patient is Male")
+    if re.fullmatch(r"f(emale)?", gender) and male and not fem:
+        reasons.append("clinical history uses male pronouns (he/him) but patient is Female")
+    parts = [p.lower() for p in re.split(r"[\s,.]+", name) if len(p) > 2]
+    if parts and not any(p in history for p in parts):
+        m = re.search(r"(?:proband[,\s]+|baby\s+|master[.\s]+|mr[.\s]+|mrs[.\s]+|ms[.\s]+)"
+                      r"([a-z]+(?:\s+[a-z]+)?)", history)
+        if m:
+            hist = [h for h in m.group(1).strip().split() if len(h) > 2]
+            if not any(h in parts for h in hist):
+                reasons.append(f'clinical history appears to be for "{m.group(1).strip()}"'
+                               f' — patient is "{name}"')
+    return "; ".join(reasons) or None
 
 
 class StepTabs(QTabWidget):
@@ -2225,7 +2252,6 @@ class MainWindow(QMainWindow):
 
         self._template_defaults: dict[str, str] = {}
         self._template_reviewer = ""
-        self._template_genes: list[tuple[str, str]] = []
         self._last_received = ""
         self._loading_draft = False
         self._build_ui()
@@ -2371,6 +2397,12 @@ class MainWindow(QMainWindow):
             "and has been evaluated for pathogenic variations.")
         self.history_edit.textChanged.connect(self._edited)
         hl.addWidget(self.history_edit)
+        self.mismatch_warn = QLabel(wordWrap=True)
+        self.mismatch_warn.setStyleSheet(
+            "color:#c0392b; background:#fff5f5; border:1px solid #feb2b2;"
+            " border-radius:5px; padding:6px 10px; font-size:12px;")
+        self.mismatch_warn.hide()
+        hl.addWidget(self.mismatch_warn)
         rlay.addWidget(hgrp, 1)
 
         qgrp = QGroupBox("Sequence data attributes")
@@ -2654,8 +2686,16 @@ class MainWindow(QMainWindow):
         return n > 0, f"{n} selected" if variants else "Not started"
 
     def _update_steps(self):
+        mismatch = clinical_mismatch(self.history_edit.toPlainText(),
+                                     self.fields["patient_id"].text(),
+                                     self.fields["gender"].text())
+        self.mismatch_warn.setVisible(bool(mismatch))
+        if mismatch:
+            self.mismatch_warn.setText("⚠️ " + mismatch[0].upper() + mismatch[1:] + ".")
         for i, name in enumerate(self.STEP_NAMES):
             done, status = self._step_state(i)
+            if i == 1 and mismatch:
+                done, status = False, "Patient mismatch"
             self.tabs.tabBar().set_step(i, name, status, done)
         for step in (0, 1):
             outline = step in self._steps_left
@@ -2704,12 +2744,7 @@ class MainWindow(QMainWindow):
         self.fields["patient_id"].setPlaceholderText(
             f"e.g. {cfg.patient_id_prefix} - 00000" if cfg.patient_id_prefix
             else "e.g. 12345" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
-        # Same rule for the gene table: follow the template unless it was replaced.
-        genes = template_gene_table(key)
-        current = self.gene_editor.genes()
-        if not current or current == self._template_genes:
-            self.gene_editor.set_genes(genes, "Showing the template's gene table.")
-        self._template_genes = genes
+        # The gene table starts empty (as the web app): the user pastes or adds rows.
         self._update_steps()
         self._preview()
 
@@ -2855,9 +2890,7 @@ class MainWindow(QMainWindow):
         self.url_edit.clear()
         self._fetched_pin = self._last_received = ""
         self._set_fetch_status("", "gray")
-        genes = template_gene_table(self.template_combo.currentData())
-        self._template_genes = genes
-        self.gene_editor.set_genes(genes, "Showing the template's gene table.")
+        self.gene_editor.set_genes([], "")
         self.variants_panel.set_variants([])
         self.variants_panel.set_result_tag("")
         self.variants_panel.set_primary_title("")
@@ -2980,10 +3013,8 @@ class MainWindow(QMainWindow):
         self.reads_edit.setText(data.total_reads)
         self.q30_edit.setText(data.q30)
         self.url_edit.setText(data.gene_list_url)
-        self._template_genes = template_gene_table(cfg.key)
-        self.gene_editor.set_genes(data.genes or self._template_genes,
-                                   "Gene table from the draft." if data.genes
-                                   else "Showing the template's gene table.")
+        self.gene_editor.set_genes(data.genes or [],
+                                   "Gene table from the draft." if data.genes else "")
         self._show_variants_tab(True)
         self.variants_panel.set_lab_wording(cfg.lab_wording)
         self.variants_panel.set_variants(data.variants)
