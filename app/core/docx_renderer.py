@@ -2258,6 +2258,68 @@ def _widen_sequence_ontology(doc) -> None:
                 set_span(row[vf], b - 1, unit)
 
 
+def _align_variant_table_lines(doc) -> None:
+    """Straight vertical lines in the Variant Interpretation table: the
+    'In-silico' / 'Conservation' split sits under the right edge of 'Variant
+    Frequency', and the 'Genomic Position' / 'Clinical & Literature' split under
+    the right edge of 'Sequence Ontology' (heading and value rows), as in the
+    WES + Mito layout. Other templates' 20-column grids were one column off."""
+    def span(tc):
+        pr = tc.find(qn("w:tcPr"))
+        s = pr.find(qn("w:gridSpan")) if pr is not None else None
+        return int(s.get(qn("w:val"))) if s is not None else 1
+
+    def set_span(tc, n, widths):
+        pr = tc.get_or_add_tcPr()
+        s = pr.find(qn("w:gridSpan"))
+        if n == 1:
+            if s is not None:
+                pr.remove(s)
+        else:
+            if s is None:
+                s = OxmlElement("w:gridSpan")
+                w = pr.find(qn("w:tcW"))
+                (w.addnext if w is not None else (lambda e: pr.insert(0, e)))(s)
+            s.set(qn("w:val"), str(n))
+        w = pr.find(qn("w:tcW"))
+        if w is not None and widths:
+            w.set(qn("w:w"), str(sum(widths)))
+            w.set(qn("w:type"), "dxa")
+
+    for tbl in doc.element.body.iter(qn("w:tbl")):
+        grid = tbl.find(qn("w:tblGrid"))
+        if grid is None:
+            continue
+        cols = [int(g.get(qn("w:w")) or 0) for g in grid.findall(qn("w:gridCol"))]
+        edge_so = edge_vf = None
+        mode = None
+        for tr in tbl.findall(qn("w:tr")):
+            tcs = tr.findall(qn("w:tc"))
+            names = [_text(tc).strip().lower() for tc in tcs]
+            if "sequence ontology" in names and "variant frequency" in names:
+                spans = [span(tc) for tc in tcs]
+                so, vf = names.index("sequence ontology"), names.index("variant frequency")
+                edge_so, edge_vf = sum(spans[:so + 1]), sum(spans[:vf + 1])
+                mode = None
+                continue
+            if edge_so is None or len(tcs) != 2:
+                mode = None if len(tcs) != 2 else mode
+                continue
+            first = names[0]
+            if first.startswith("in-silico") or first.startswith("in silico"):
+                mode = "insilico"
+            elif first.startswith("genomic position"):
+                mode = "genomic"
+            elif mode is None:
+                continue
+            edge = edge_vf if mode == "insilico" else edge_so
+            total = span(tcs[0]) + span(tcs[1])
+            if total != len(cols) or not 0 < edge < total or span(tcs[0]) == edge:
+                continue
+            set_span(tcs[0], edge, cols[:edge])
+            set_span(tcs[1], total - edge, cols[edge:])
+
+
 def _plural_interpretation_heading(doc) -> None:
     """'Variant Interpretation' -> 'Variant(s) Interpretation'. Done last: the
     other steps find the section by its template wording."""
@@ -2751,6 +2813,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _fill_gene_table(doc, data, blank_unused=not keep)
     _fill_variants(doc, data)
     _widen_sequence_ontology(doc)
+    _align_variant_table_lines(doc)
     if options:
         if options["interpretation"] == "no":
             _drop_interpretation_section(doc)
