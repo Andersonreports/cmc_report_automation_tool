@@ -88,6 +88,9 @@ class TemplateConfig:
     # End the OMIM phenotype paragraph with "This disease follows <inheritance>
     # pattern of inheritance [2]." from the variant's Inheritance box.
     inheritance_line: bool = False
+    # Add an "MCC Status" section (maternal cell contamination) after CNV Findings,
+    # as on the lab's POC / Amniotic Fluid reports.
+    mcc_status: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         options="wes_poc_af",
         lab_wording=True,
         gender_row=False,
+        mcc_status=True,
     ),
     # The Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
     # VUS / additional variants) as one template, the same way.

@@ -426,6 +426,39 @@ def _insert_sentence_to_disclaimer(doc, sentence: str):
     proto.addnext(new_p)
 
 
+MCC_STATUS_TEXT = ("The sample has been screened for maternal cell contamination and it is "
+                   "found to be negative for MCC (Refer Appendix: I).")
+
+
+def _insert_mcc_status(doc) -> None:
+    """POC / Amniotic Fluid reports: an 'MCC Status' section right after CNV Findings,
+    as the lab's reference report. Its heading, spacer and text are copies of the
+    CNV Findings ones, so they look the same."""
+    if any(_text(p).strip().lower() == "mcc status" for p in doc.element.body.iter(qn("w:p"))):
+        return
+    cnv = _find_para(doc, "CNV Findings", "'CNV Findings' heading")
+    body = cnv.getnext()
+    while body is not None and not (body.tag == qn("w:p") and _text(body).strip()):
+        body = body.getnext()
+    if body is None:
+        raise TemplateError("Template is missing: the text under 'CNV Findings'")
+    spacer = cnv.getnext()
+    heading = copy.deepcopy(cnv)
+    _set_text(heading, "MCC Status")
+    text = copy.deepcopy(body)
+    _set_text(text, MCC_STATUS_TEXT)
+    new = [copy.deepcopy(spacer) if spacer is not body else None, heading]
+    if spacer is not body:
+        new.append(copy.deepcopy(spacer))
+    new.append(text)
+    anchor = body
+    for el in new:
+        if el is None:
+            continue
+        anchor.addnext(el)
+        anchor = el
+
+
 def _fill_methodology(doc, data: ReportData):
     """The Methodology's first sentence names the specimen: 'DNA extracted from
     the <specimen> was used to perform ...', or 'DNA was used ...' for DNA.
@@ -2053,7 +2086,7 @@ def _appendix_page_break(doc):
         ppr.insert(0, pb)
 
 
-SECTION_HEADINGS = ("Clinical History", "Results", "Variant Interpretation", "CNV Findings",
+SECTION_HEADINGS = ("Clinical History", "Results", "Variant Interpretation", "CNV Findings", "MCC Status",
                     "Recommendations", "Methodology", "Sequence data attributes", "Disclaimer", "References",
                     "Whole Exome Sequencing Analysis", "Whole Mitochondrial Genome Sequencing",
                     "This report has been reviewed and approved by")
@@ -2428,7 +2461,8 @@ def _justify_section(doc, heading: str):
 # Section layout taken from the reference report (MEL_17139): headings flush
 # left, bullets and the disclaimer with the same hanging indents, whichever
 # template is used. Values are EMU (python-docx lengths).
-_LEFT_HEADINGS = ("clinical history", "results", "variant interpretation", "cnv findings", "recommendations",
+_LEFT_HEADINGS = ("clinical history", "results", "variant interpretation", "cnv findings", "mcc status",
+                  "recommendations",
                   "methodology", "sequence data attributes", "disclaimer", "references",
                   "this report has been reviewed and approved by")
 
@@ -2812,6 +2846,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _insert_pcpndt_disclaimer(doc, data)
     _fill_gene_table(doc, data, blank_unused=not keep)
     _fill_variants(doc, data)
+    if cfg.mcc_status:
+        _insert_mcc_status(doc)
     _widen_sequence_ontology(doc)
     _align_variant_table_lines(doc)
     if options:
