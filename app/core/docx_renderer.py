@@ -730,17 +730,6 @@ def _fetal_variant_notes(doc, data: ReportData) -> None:
     for para in notes:
         anchor.addnext(para)
         anchor = para
-    if not vus:
-        return
-    # The same caution leads the Recommendations (before any pseudogene note).
-    head = _find_para(doc, "Recommendations", "'Recommendations' heading")
-    first = head.getnext()
-    while first is not None and first.tag == qn("w:p") and not _text(first).strip():
-        first = first.getnext()
-    if first is not None and first.tag == qn("w:p")             and not _text(first).strip().startswith("Reproductive decisions"):
-        line = copy.deepcopy(first)
-        _set_text(line, VUS_REPRODUCTIVE_NOTE)
-        first.addprevious(line)
 
 
 def _fill_methodology(doc, data: ReportData):
@@ -3119,9 +3108,41 @@ def _title_with_analysis(doc) -> None:
                 t.text = t.text.replace("Whole Exome Sequencing", "Whole Exome Sequencing Analysis", 1)
 
 
-def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
+def _tighten_classification(doc) -> None:
+    """Tight layout: no blank line between the classification intro and its table."""
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        if not _text(p).strip().startswith("Genetic test results are reported"):
+            continue
+        nxt = p.getnext()
+        while nxt is not None and nxt.tag == qn("w:p") and not _text(nxt).strip() \
+                and not list(nxt.iter(qn("w:drawing"), qn("w:br"))):
+            after = nxt.getnext()
+            nxt.getparent().remove(nxt)
+            nxt = after
+        Paragraph(p, None).paragraph_format.space_after = Pt(4)
+        break
+
+
+def page_break_texts(doc) -> list[str]:
+    """Text of the paragraphs the report starts on a new page (report_builder's
+    layout check uses it to tell a planned page break from a gap)."""
+    out = []
+    for p in doc.element.body.iter(qn("w:p")):
+        ppr = p.find(qn("w:pPr"))
+        forced = ppr is not None and ppr.find(qn("w:pageBreakBefore")) is not None
+        prev = p.getprevious()
+        if not forced and prev is not None and prev.tag == qn("w:p"):
+            forced = any(br.get(qn("w:type")) == "page" for br in prev.iter(qn("w:br")))
+        if forced and _text(p).strip():
+            out.append(_text(p).strip())
+    return out
+
+
+def render_report(data: ReportData, new_pages: tuple[str, ...] = (), tight: bool = False):
     """The filled template. new_pages: section headings to start on a new
-    page on top of the template's own (see report_builder's layout check)."""
+    page on top of the template's own (see report_builder's layout check).
+    tight: less padding in the classification table and no blank line above it,
+    used when the normal layout leaves a page half empty."""
     cfg = _cfg(data)
     path = resource_path("app", "templates", cfg.docx_file)
     if not os.path.exists(path):
@@ -3175,7 +3196,9 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _appendix_page_break(doc)
     title_pt = 16 if "mito" in cfg.docx_file.lower() else 20
     if not cfg.keep_layout:
-        _tidy_classification_table(doc)
+        _tidy_classification_table(doc, pad=70 if tight else 180)
+        if tight:
+            _tighten_classification(doc)
         _title_size(doc, title_pt)
         _justify_section(doc, "Disclaimer")
         _match_reference_layout(doc)

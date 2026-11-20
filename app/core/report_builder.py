@@ -8,6 +8,12 @@ bottom of a page and leaves only its heading or fewer than MIN_LINES lines
 there is moved whole to the next page. If enough lines fit, it flows on.
 Word can't express "at least 3 lines", so the converted PDF is measured and
 the report re-rendered with that section starting a new page.
+
+Gaps: a page that ends well short of its foot although the next page doesn't
+start with a planned page break (Disclaimer, Appendix, ...) means a block kept
+in one piece (the classification table with its intro) didn't fit there and
+moved on whole. The report is then rendered tight (less padding, no blank line
+in that block) and the tight version kept if it closes the gap.
 """
 from __future__ import annotations
 
@@ -21,7 +27,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from .docx_renderer import render_report, section_opening
+from .docx_renderer import page_break_texts, render_report, section_opening
 from .models import ReportData
 from .os_utils import find_soffice
 
@@ -39,12 +45,61 @@ _LOCK = threading.Lock()
 
 LAYOUT_CHECKED = ("Methodology",)
 MIN_LINES = 3
+# A page whose text ends above this share of the writing area, followed by a
+# page that isn't a planned page break, has a gap.
+GAP_FILL = 0.80
+_FOOTER = re.compile(r"^\s*Page\s+\d+\s+of\s+\d+\s*$", re.I)
 
 
-def render_docx(data: ReportData, out_path: str, new_pages: tuple[str, ...] = ()) -> str:
+def render_docx(data: ReportData, out_path: str, new_pages: tuple[str, ...] = (),
+                tight: bool = False) -> str:
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    render_report(data, new_pages).save(out_path)
+    render_report(data, new_pages, tight).save(out_path)
     return out_path
+
+
+def _page_layout(pdf_path: str) -> list[tuple[float, float, str]]:
+    """Per page: (top, bottom) of its text as a share of the page height from the
+    top, and its first line of text. The 'Page x of y' footer is left out."""
+    import pypdfium2 as pdfium
+    out = []
+    doc = pdfium.PdfDocument(pdf_path)
+    try:
+        for i in range(len(doc)):
+            page = doc[i]
+            height, width = page.get_height(), page.get_width()
+            tp = page.get_textpage()
+            top, bottom, first = 1.0, 0.0, ""
+            for k in range(tp.count_rects()):
+                l, b, r, t = tp.get_rect(k)
+                text = tp.get_text_bounded(l, b, r, t).strip()
+                # the sideways 'Page x of y' sits in the right margin, in pieces
+                if not text or _FOOTER.match(text) or l > 0.93 * width:
+                    continue
+                if (height - t) / height < top:
+                    top, first = (height - t) / height, text
+                bottom = max(bottom, (height - b) / height)
+            out.append((top, bottom, first))
+    finally:
+        doc.close()
+    return out
+
+
+def _gaps(pdf_path: str, planned: list[str]) -> int:
+    """How many pages end with a gap that isn't followed by a planned page break."""
+    layout = _page_layout(pdf_path)
+    planned = [_squash(t)[:25] for t in planned if _squash(t)]
+    starts = [t for t, _, _ in layout if t < 1.0]
+    floor = min(starts) if starts else 0.125        # the writing area's top
+    foot = 1.0 - floor                              # same margin at the foot
+    count = 0
+    for (top, bottom, _), (_, _, first) in zip(layout, layout[1:]):
+        nxt = _squash(first)
+        if any(nxt.startswith(p) or p.startswith(nxt[:25]) for p in planned if nxt):
+            continue
+        if bottom < floor + GAP_FILL * (foot - floor):
+            count += 1
+    return count
 
 
 def _squash(text: str) -> str:
@@ -99,10 +154,21 @@ def build_report(data: ReportData, docx_path: str, pdf_dir: str | None = None):
                 raise
             return docx_path, None
         doc = render_report(data)
+        tight = False
+        gaps = _gaps(pdf, page_break_texts(doc))
+        if gaps:
+            # A kept-together block left a page half empty: try the tight layout.
+            render_docx(data, docx_path, tight=True)
+            tight_pdf = docx_to_pdf(docx_path, probe)
+            if _gaps(tight_pdf, page_break_texts(render_report(data, tight=True))) < gaps:
+                tight, pdf, doc = True, tight_pdf, render_report(data, tight=True)
+            else:
+                render_docx(data, docx_path)
+                pdf = docx_to_pdf(docx_path, probe)
         openings = {h: section_opening(doc, h) for h in LAYOUT_CHECKED}
         moved = _stranded(pdf, {h: t for h, t in openings.items() if t})
         if moved:
-            render_docx(data, docx_path, moved)
+            render_docx(data, docx_path, moved, tight)
             pdf = docx_to_pdf(docx_path, probe)
         return docx_path, (pdf if pdf_dir else None)
     finally:
