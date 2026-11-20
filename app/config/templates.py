@@ -26,6 +26,8 @@ class TemplateConfig:
     docx_file: str                  # file name inside app/templates/
     # Label of the first patient-table cell: "Patient ID" or "Patient name".
     patient_id_label: str = "Patient ID"
+    # Label of the age box: "Age", or "Gestational Age" for fetal samples.
+    age_label: str = "Age"
     # Pre-filled when the template is chosen (still editable by the user).
     hospital: str = ""
     referring_clinician: str = ""
@@ -91,6 +93,9 @@ class TemplateConfig:
     # Add an "MCC Status" section (maternal cell contamination) after CNV Findings,
     # as on the lab's POC / Amniotic Fluid reports.
     mcc_status: bool = False
+    # Genes left out of the Appendix gene coverage table: names starting with any
+    # of these prefixes (case-insensitive), e.g. SRY on fetal reports (PCPNDT).
+    excluded_gene_prefixes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,7 +162,9 @@ TEMPLATES: dict[str, TemplateConfig] = {
         options="wes_poc_af",
         lab_wording=True,
         gender_row=False,
+        age_label="Gestational Age",
         mcc_status=True,
+        excluded_gene_prefixes=("HLA-", "SRY", "MT-"),
     ),
     # The Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
     # VUS / additional variants) as one template, the same way.

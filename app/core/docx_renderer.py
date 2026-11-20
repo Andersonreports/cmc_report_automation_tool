@@ -118,13 +118,15 @@ def _fill_patient(doc, data: ReportData):
     id_label = _cfg(data).patient_id_label
     attrs = {label: attr for _, _, label, attr in PATIENT_CELLS}
     attrs["Patient name"] = "patient_id"
+    attrs["Gestational Age"] = "age"
     for row in table.rows:
         for cell in row.cells:
             p = cell.paragraphs[0]._p
             attr = attrs.get(_text(p).split(":")[0].strip())
             if not attr:
                 continue                # an empty box stays empty
-            label = id_label if attr == "patient_id" else _text(p).split(":")[0].strip()
+            label = (id_label if attr == "patient_id" else _cfg(data).age_label if attr == "age"
+                     else _text(p).split(":")[0].strip())
             value = (getattr(data.patient, attr, "") or "").strip()
             _set_text(p, f"{label}: {value}")
     if _cfg(data).own_styles:
@@ -427,13 +429,14 @@ def _insert_sentence_to_disclaimer(doc, sentence: str):
 
 
 MCC_STATUS_TEXT = ("The sample has been screened for maternal cell contamination and it is "
-                   "found to be negative for MCC (Refer Appendix: I).")
+                   "found to be negative for MCC")
 
 
-def _insert_mcc_status(doc) -> None:
+def _insert_mcc_status(doc, data: ReportData) -> None:
     """POC / Amniotic Fluid reports: an 'MCC Status' section right after CNV Findings,
     as the lab's reference report. Its heading, spacer and text are copies of the
-    CNV Findings ones, so they look the same."""
+    CNV Findings ones, so they look the same. It points to Appendix I only when the
+    MCC table is there."""
     if any(_text(p).strip().lower() == "mcc status" for p in doc.element.body.iter(qn("w:p"))):
         return
     cnv = _find_para(doc, "CNV Findings", "'CNV Findings' heading")
@@ -446,7 +449,7 @@ def _insert_mcc_status(doc) -> None:
     heading = copy.deepcopy(cnv)
     _set_text(heading, "MCC Status")
     text = copy.deepcopy(body)
-    _set_text(text, MCC_STATUS_TEXT)
+    _set_text(text, MCC_STATUS_TEXT + (" (Refer Appendix: I)." if data.mcc_rows else "."))
     new = [copy.deepcopy(spacer) if spacer is not body else None, heading]
     if spacer is not body:
         new.append(copy.deepcopy(spacer))
@@ -457,6 +460,159 @@ def _insert_mcc_status(doc) -> None:
             continue
         anchor.addnext(el)
         anchor = el
+
+
+# ---------------------------------------------------------------------------
+# Appendix I: maternal cell contamination (POC / Amniotic Fluid)
+# ---------------------------------------------------------------------------
+MCC_HEADERS = ("No", "Marker", "Maternal genotype", "Fetal genotype",
+               "No. of shared alleles", "% MCC", "Remarks")
+_MCC_WIDTHS = (600, 1500, 1500, 1500, 1350, 1100, 1800)     # dxa, 9350 in all
+
+
+MCC_HEADER_FILL = "F9BD8F"      # the variant tables' header colour
+
+
+def _mcc_cell(text: str, width: int, bold: bool = False, span: int = 1, fill: str = ""):
+    tc = OxmlElement("w:tc")
+    tcpr = OxmlElement("w:tcPr")
+    tcw = OxmlElement("w:tcW")
+    tcw.set(qn("w:w"), str(width))
+    tcw.set(qn("w:type"), "dxa")
+    tcpr.append(tcw)
+    if span > 1:
+        gs = OxmlElement("w:gridSpan")
+        gs.set(qn("w:val"), str(span))
+        tcpr.append(gs)
+    if fill:
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), fill)
+        tcpr.append(shd)
+    va = OxmlElement("w:vAlign")
+    va.set(qn("w:val"), "center")
+    tcpr.append(va)
+    tc.append(tcpr)
+    p = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    sp = OxmlElement("w:spacing")
+    for k, v in (("before", "20"), ("after", "20"), ("line", "240"), ("lineRule", "auto")):
+        sp.set(qn(f"w:{k}"), v)
+    ppr.append(sp)
+    jc = OxmlElement("w:jc")
+    jc.set(qn("w:val"), "center")
+    ppr.append(jc)
+    p.append(ppr)
+    r = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    fonts = OxmlElement("w:rFonts")
+    for k in ("ascii", "hAnsi", "cs"):
+        fonts.set(qn(f"w:{k}"), "Arial")
+    rpr.append(fonts)
+    if bold:
+        rpr.append(OxmlElement("w:b"))
+    for tag in ("w:sz", "w:szCs"):
+        sz = OxmlElement(tag)
+        sz.set(qn("w:val"), "18")                   # 9 pt
+        rpr.append(sz)
+    r.append(rpr)
+    t = OxmlElement("w:t")
+    t.text = text
+    t.set(qn("xml:space"), "preserve")
+    r.append(t)
+    p.append(r)
+    tc.append(p)
+    return tc
+
+
+def _mcc_table(rows: list, summary: str):
+    tbl = OxmlElement("w:tbl")
+    pr = OxmlElement("w:tblPr")
+    w = OxmlElement("w:tblW")
+    w.set(qn("w:w"), str(sum(_MCC_WIDTHS)))
+    w.set(qn("w:type"), "dxa")
+    pr.append(w)
+    jc = OxmlElement("w:jc")
+    jc.set(qn("w:val"), "center")
+    pr.append(jc)
+    borders = OxmlElement("w:tblBorders")
+    for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{side}")
+        for k, v in (("val", "single"), ("sz", "4"), ("space", "0"), ("color", "000000")):
+            b.set(qn(f"w:{k}"), v)
+        borders.append(b)
+    pr.append(borders)
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    pr.append(layout)
+    tbl.append(pr)
+    grid = OxmlElement("w:tblGrid")
+    for width in _MCC_WIDTHS:
+        gc = OxmlElement("w:gridCol")
+        gc.set(qn("w:w"), str(width))
+        grid.append(gc)
+    tbl.append(grid)
+
+    def row(cells, header=False):
+        tr = OxmlElement("w:tr")
+        trpr = OxmlElement("w:trPr")
+        trpr.append(OxmlElement("w:cantSplit"))
+        if header:
+            trpr.append(OxmlElement("w:tblHeader"))
+        tr.append(trpr)
+        for c in cells:
+            tr.append(c)
+        tbl.append(tr)
+
+    row([_mcc_cell(h, wd, bold=True, fill=MCC_HEADER_FILL)
+         for h, wd in zip(MCC_HEADERS, _MCC_WIDTHS)], header=True)
+    for cells in rows:
+        cells = (list(cells) + [""] * len(_MCC_WIDTHS))[:len(_MCC_WIDTHS)]
+        row([_mcc_cell(str(c), wd) for c, wd in zip(cells, _MCC_WIDTHS)])
+    if summary.strip():
+        row([_mcc_cell(summary.strip(), sum(_MCC_WIDTHS), bold=True, span=len(_MCC_WIDTHS))])
+    return tbl
+
+
+def _insert_mcc_appendix(doc, data: ReportData) -> None:
+    """The uploaded MCC table as 'Appendix I: Estimation of maternal cell
+    contamination %', before the gene coverage appendix, which becomes Appendix II
+    and starts on a page of its own. No MCC table: the report is left as it is."""
+    if not data.mcc_rows:
+        return
+    try:
+        gene_head = _find_para(doc, "Appendix 1", "appendix heading")
+    except TemplateError:
+        return
+    _set_text(gene_head, _text(gene_head).replace("Appendix 1", "Appendix II", 1))
+    head = copy.deepcopy(gene_head)
+    _set_text(head, "Appendix I")
+    sub = copy.deepcopy(gene_head)
+    ppr = sub.find(qn("w:pPr"))
+    style = ppr.find(qn("w:pStyle")) if ppr is not None else None
+    if style is not None:
+        ppr.remove(style)                   # a plain bold line, not a heading
+    _set_text(sub, "Estimation of maternal cell contamination %")
+    for r in _runs(sub):
+        rpr = r.find(qn("w:rPr"))
+        if rpr is None:
+            rpr = OxmlElement("w:rPr")
+            r.insert(0, rpr)
+        for tag in ("w:color", "w:b"):
+            old = rpr.find(qn(tag))
+            if old is not None:
+                rpr.remove(old)
+        rpr.insert(0, OxmlElement("w:b"))
+        for tag in ("w:sz", "w:szCs"):
+            el = rpr.find(qn(tag))
+            if el is not None:
+                el.set(qn("w:val"), "20")   # 10 pt
+    tbl = _mcc_table(data.mcc_rows, data.mcc_summary)
+    for el in (head, sub, tbl):
+        gene_head.addprevious(el)
+    gene_head.addprevious(OxmlElement("w:p"))   # a paragraph between the table and the next page
+    _page_break_before(gene_head)
 
 
 def _fill_methodology(doc, data: ReportData):
@@ -512,6 +668,10 @@ def _fill_gene_table(doc, data: ReportData, blank_unused: bool = True):
     """Rebuild the appendix rows from data.genes, filled row by row like the
     template (gene names keep the template's italic style)."""
     table = _gene_table(doc)
+    skip = tuple(p.upper() for p in _cfg(data).excluded_gene_prefixes)
+    if skip:
+        data = dataclasses.replace(data, genes=[g for g in data.genes
+                                                if not str(g[0]).strip().upper().startswith(skip)])
     if not data.genes:
         if not blank_unused:
             return
@@ -2055,9 +2215,12 @@ def _collapse_blank_runs(doc):
 
 def _appendix_page_break(doc):
     body = doc.element.body
-    try:
-        app_head = _find_para(doc, "Appendix 1", "appendix heading")
-    except TemplateError:
+    # The first appendix: 'Appendix 1: Gene Coverage', or the MCC table's 'Appendix I'
+    # (POC / Amniotic Fluid) with the gene coverage as 'Appendix II'.
+    app_head = next((p for p in body.iter(qn("w:p"))
+                     if _text(p).strip() == "Appendix I"
+                     or _text(p).strip().startswith(("Appendix 1", "Appendix II"))), None)
+    if app_head is None:
         return      # template without an appendix
     sig = next((p for p in body if p.tag == qn("w:p")
                 and p.find(".//" + qn("a:blip")) is not None), None)
@@ -2070,10 +2233,15 @@ def _appendix_page_break(doc):
                 and n.find(".//" + qn("w:drawing")) is None:
             body.remove(n)
         n = nxt
-    ppr = app_head.find(qn("w:pPr"))
+    _page_break_before(app_head)
+
+
+def _page_break_before(p) -> None:
+    """Start paragraph p on a new page."""
+    ppr = p.find(qn("w:pPr"))
     if ppr is None:
         ppr = OxmlElement("w:pPr")
-        app_head.insert(0, ppr)
+        p.insert(0, ppr)
     if ppr.find(qn("w:pageBreakBefore")) is not None:
         return
     pb = OxmlElement("w:pageBreakBefore")
@@ -2845,9 +3013,11 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
     _fill_methodology(doc, data)
     _insert_pcpndt_disclaimer(doc, data)
     _fill_gene_table(doc, data, blank_unused=not keep)
+    if cfg.mcc_status:
+        _insert_mcc_appendix(doc, data)
     _fill_variants(doc, data)
     if cfg.mcc_status:
-        _insert_mcc_status(doc)
+        _insert_mcc_status(doc, data)
     _widen_sequence_ontology(doc)
     _align_variant_table_lines(doc)
     if options:

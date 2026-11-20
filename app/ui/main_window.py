@@ -701,6 +701,137 @@ class GeneTableEditor(QWidget):
             self._mito_path.setText(path)
 
 
+class MCCEditor(QWidget):
+    """Appendix I of POC / Amniotic Fluid reports: the maternal cell contamination
+    table, read from the lab's MCC report (.doc / .docx) and editable here."""
+    changed = Signal()
+    COLS = ("No", "Marker", "Maternal genotype", "Fetal genotype",
+            "No. of shared alleles", "% MCC", "Remarks")
+
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        upload = QPushButton("Upload MCC report (.doc / .docx)…")
+        upload.clicked.connect(self._upload)
+        top.addWidget(upload)
+        add = QPushButton("+ Add row")
+        add.clicked.connect(lambda: self._add_row())
+        top.addWidget(add)
+        clear = QPushButton("Clear table")
+        clear.clicked.connect(self._clear)
+        top.addWidget(clear)
+        top.addStretch(1)
+        self.count = QLabel()
+        top.addWidget(self.count)
+        lay.addLayout(top)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        self.table = QTableWidget(0, len(self.COLS) + 1)
+        self.table.setHorizontalHeaderLabels(list(self.COLS) + [""])
+        head = self.table.horizontalHeader()
+        for c in range(len(self.COLS)):
+            head.setSectionResizeMode(c, QHeaderView.Stretch)
+        head.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        head.setSectionResizeMode(len(self.COLS), QHeaderView.Fixed)
+        head.resizeSection(len(self.COLS), 36)
+        self.table.verticalHeader().hide()
+        self.table.itemChanged.connect(lambda *_: self._changed())
+        lay.addWidget(self.table, 1)
+        lay.addWidget(QLabel("Closing line (under the table):"))
+        self.summary_edit = QLineEdit(placeholderText="The average percentage of maternal cell "
+                                                      "contamination in the fetal sample is 0%")
+        self.summary_edit.textChanged.connect(lambda *_: self._changed())
+        lay.addWidget(self.summary_edit)
+        self._changed()
+
+    def rows(self) -> list[list[str]]:
+        out = []
+        for r in range(self.table.rowCount()):
+            cells = [(self.table.item(r, c).text().strip() if self.table.item(r, c) else "")
+                     for c in range(len(self.COLS))]
+            if any(cells):
+                out.append(cells)
+        return out
+
+    def summary(self) -> str:
+        return self.summary_edit.text().strip()
+
+    def set_data(self, rows, summary: str = "", status: str = "", color: str = "gray"):
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.table.blockSignals(False)
+        for cells in rows or []:
+            self._add_row(cells, notify=False)
+        self.summary_edit.blockSignals(True)
+        self.summary_edit.setText(summary or "")
+        self.summary_edit.blockSignals(False)
+        self.status.setText(status)
+        self.status.setStyleSheet(f"color:{color};")
+        self._changed()
+
+    def _add_row(self, cells=None, notify: bool = True):
+        r = self.table.rowCount()
+        cells = list(cells) if cells else [str(r + 1)] + [""] * (len(self.COLS) - 1)
+        self.table.blockSignals(True)
+        self.table.insertRow(r)
+        for c in range(len(self.COLS)):
+            item = QTableWidgetItem(str(cells[c]) if c < len(cells) else "")
+            item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(r, c, item)
+        self.table.blockSignals(False)
+        btn = QPushButton("×")
+        btn.setFixedSize(24, 24)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip("Delete this row")
+        btn.setStyleSheet("QPushButton { border: none; color: #999; font-size: 15px; } "
+                          "QPushButton:hover { color: #c00; background: #fee; border-radius: 4px; }")
+        btn.clicked.connect(lambda _=False, b=btn: self._delete_row(b))
+        self.table.setCellWidget(r, len(self.COLS), btn)
+        if notify:
+            self._changed()
+
+    def _delete_row(self, btn):
+        for r in range(self.table.rowCount()):
+            if self.table.cellWidget(r, len(self.COLS)) is btn:
+                self.table.removeRow(r)
+                self._changed()
+                return
+
+    def _clear(self):
+        if not self.rows() and not self.summary():
+            return
+        if QMessageBox.question(self, "Clear MCC table", "Clear the MCC table?") != QMessageBox.Yes:
+            return
+        self.set_data([], "", "")
+
+    def _upload(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose the MCC report", "", "Word files (*.doc *.docx)")
+        if not path:
+            return
+        from ..core import mcc as mcc_core
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            found = mcc_core.read_mcc(path)
+        except Exception as e:  # noqa: BLE001
+            QApplication.restoreOverrideCursor()
+            self.status.setText(f"Error: {e}")
+            self.status.setStyleSheet("color:#c00000;")
+            return
+        QApplication.restoreOverrideCursor()
+        n = len(found["rows"])
+        self.set_data(found["rows"], found["summary"],
+                      f"Loaded {n} marker{'s' if n != 1 else ''} from {os.path.basename(path)}.",
+                      "#1a7f37")
+
+    def _changed(self):
+        n = len(self.rows())
+        self.count.setText(f"{n} marker{'s' if n != 1 else ''}")
+        self.changed.emit()
+
+
 class StepTabBar(QTabBar):
     """The report steps, drawn like the web app's: a numbered circle (a tick once
     the step is complete), the step name and a status line under it; the open
@@ -2383,6 +2514,7 @@ class MainWindow(QMainWindow):
             play.addWidget(grp)
             if "patient_id" in keys:
                 self.patient_id_label = gf.labelForField(self.fields["patient_id"])
+                self.age_label = gf.labelForField(self.fields["age"])
                 self._patient_form = gf
         self.fields["received_date"].textChanged.connect(self._received_changed)
         play.addStretch(1)
@@ -2446,6 +2578,11 @@ class MainWindow(QMainWindow):
         self.variants_panel.changed.connect(self._edited)
         self.variants_panel.upload_requested.connect(self._upload_variants)
         self._variants_tab = self.tabs.addTab(self.variants_panel, "")
+        # MCC: Appendix I of POC / Amniotic Fluid reports only.
+        self.mcc_editor = MCCEditor()
+        self.mcc_editor.changed.connect(self._edited)
+        self._mcc_tab = self.tabs.addTab(self.mcc_editor, "")
+        self.tabs.setTabVisible(self._mcc_tab, False)
         # Tabs are numbered steps showing what is left; a step's empty required
         # fields are outlined once the user has moved on from it.
         self._step_tab = self.tabs.currentIndex()
@@ -2589,6 +2726,8 @@ class MainWindow(QMainWindow):
             additional_variants_text=(self.variants_panel.additional_variants_text()
                                      if not self.variants_panel.additional_row.isHidden() else ""),
             options=self._options(),
+            mcc_rows=self.mcc_editor.rows() if self._cfg().mcc_status else [],
+            mcc_summary=self.mcc_editor.summary() if self._cfg().mcc_status else "",
         )
 
     def _options(self) -> dict:
@@ -2642,7 +2781,7 @@ class MainWindow(QMainWindow):
             self._preview_timer.start()
 
     # -- steps -------------------------------------------------------------
-    STEP_NAMES = ("Patient & sample", "Report details", "Gene coverage", "Variants")
+    STEP_NAMES = ("Patient & sample", "Report details", "Gene coverage", "Variants", "MCC")
     RESULT_BADGES = {"pathogenic": "Pathogenic", "likely": "Likely Pathogenic",
                      "vus_related": "VUS", "likely_identified": "Likely Pathogenic",
                      "het_pathogenic_gene": "Pathogenic", "vus_gene": "VUS",
@@ -2681,6 +2820,9 @@ class MainWindow(QMainWindow):
         if step == 2:
             n = len(self.gene_editor.genes())
             return n > 0, f"{n} gene{'s' if n != 1 else ''}" if n else "Not started"
+        if step == 4:
+            n = len(self.mcc_editor.rows())
+            return n > 0, f"{n} marker{'s' if n != 1 else ''}" if n else "Not started"
         variants = self.variants_panel.variants()
         n = sum(1 for v in variants if v.get("selected"))
         return n > 0, f"{n} selected" if variants else "Not started"
@@ -2741,6 +2883,7 @@ class MainWindow(QMainWindow):
         self._template_reviewer = cfg.reviewer
         # "Patient ID" or "Patient name", as the template's table says.
         self.patient_id_label.setText(cfg.patient_id_label)
+        self._set_age_label(cfg)
         self.fields["patient_id"].setPlaceholderText(
             f"e.g. {cfg.patient_id_prefix} - 00000" if cfg.patient_id_prefix
             else "e.g. 12345" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
@@ -2782,6 +2925,10 @@ class MainWindow(QMainWindow):
         # No Gender box in this template's patient table: hide the field.
         self._patient_form.setRowVisible(self.fields["gender"], cfg.gender_row)
         self.tabs.setTabVisible(self._variants_tab, on)
+        # MCC tab: only for the POC / Amniotic Fluid template.
+        self.tabs.setTabVisible(self._mcc_tab, cfg.mcc_status)
+        if not cfg.mcc_status and self.tabs.currentIndex() == self._mcc_tab:
+            self.tabs.setCurrentIndex(0)
         if not on and self.tabs.currentIndex() == self._variants_tab:
             self.tabs.setCurrentIndex(0)
         self._update_steps()
@@ -2801,6 +2948,12 @@ class MainWindow(QMainWindow):
             return
         self.variants_panel.set_variants(found)
         self._edited()
+
+    def _set_age_label(self, cfg) -> None:
+        """'Age', or 'Gestational Age' on the POC / Amniotic Fluid template."""
+        self.age_label.setText(cfg.age_label)
+        self.fields["age"].setPlaceholderText(
+            "e.g. 16 Weeks 3 Days" if cfg.age_label == "Gestational Age" else "52 Years")
 
     def _set_reviewer(self, key: str):
         self.reviewer_combo.setCurrentIndex(max(self.reviewer_combo.findData(key), 0))
@@ -2995,6 +3148,7 @@ class MainWindow(QMainWindow):
         self._template_reviewer = cfg.reviewer
         self._set_reviewer(data.reviewer or cfg.reviewer)
         self.patient_id_label.setText(cfg.patient_id_label)
+        self._set_age_label(cfg)
         self.fields["patient_id"].setPlaceholderText(
             f"e.g. {cfg.patient_id_prefix} - 00000" if cfg.patient_id_prefix
             else "e.g. 12345" if cfg.patient_id_label == "Patient ID" else "e.g. Baby. Name")
@@ -3023,6 +3177,8 @@ class MainWindow(QMainWindow):
         self.variants_panel.set_primary_title(data.primary_title)
         self.variants_panel.set_additional_variants_text(data.additional_variants_text)
         self.variants_panel.set_additional_title(data.additional_title)
+        self.mcc_editor.set_data(data.mcc_rows, data.mcc_summary,
+                                 "MCC table from the draft." if data.mcc_rows else "")
         self._update_steps()
         self._preview()
 

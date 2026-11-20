@@ -54,6 +54,11 @@ class ReportData:
     additional_title: str = ""           # separate Additional variants table's title; blank = first ADDITIONAL_TITLES
     additional_variants_text: str = ""   # intro text for the "Additional Variant(s)" section; blank = default
     options: dict = field(default_factory=dict)   # an options template's choices (config OPTIONS)
+    # Maternal cell contamination table (POC / Amniotic Fluid reports, core.mcc):
+    # rows of [No, Marker, Maternal genotype, Fetal genotype, Shared alleles, % MCC,
+    # Remarks] and its closing line; no rows = no MCC appendix.
+    mcc_rows: list = field(default_factory=list)
+    mcc_summary: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -65,4 +70,5 @@ class ReportData:
         data.patient = _from_dict(PatientInfo, d.get("patient", {}))
         data.genes = [(str(g), str(c)) for g, c in d.get("genes", [])]
         data.variants = [dict(v) for v in d.get("variants", [])]
+        data.mcc_rows = [[str(c) for c in r] for r in d.get("mcc_rows", []) or []]
         return data

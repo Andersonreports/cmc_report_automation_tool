@@ -107,6 +107,7 @@ html,body{height:100%;font-family:'Inter',system-ui,sans-serif;font-size:13px;co
 .tab-panel.active{display:flex;flex-direction:column;gap:22px}
 #tab-genes.active{display:block;overflow:visible;flex:none}
 #tab-genes>*+*{margin-top:12px}
+#tab-mcc.active{gap:12px}
 
 .pin-box{background:#eef5f8;border:1px solid #cfe0e8;border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;gap:8px}
 .field-group{display:flex;flex-direction:column;gap:12px}
@@ -216,6 +217,14 @@ label.req::after{content:" *";color:var(--warn)}
 #gene-table td input:focus{background:var(--accent-light,#e8f4f8);border-radius:3px;padding:0 4px;margin:0 -4px}
 .gene-del-btn{background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;opacity:.4;transition:opacity .1s,color .1s}
 #gene-table tr:hover .gene-del-btn{opacity:1}
+#mcc-table{width:100%;border-collapse:collapse;table-layout:fixed}
+#mcc-table th{padding:8px 6px;font-size:10.5px;font-weight:700;color:var(--muted);background:var(--bg);text-align:center;border-bottom:2px solid var(--accent);white-space:normal}
+#mcc-table th:first-child{width:40px} #mcc-table th:last-child{width:32px} #mcc-table th:nth-child(7){width:22%}
+#mcc-table td{padding:5px 6px;font-size:13px;border-bottom:1px solid var(--line);color:var(--ink)}
+#mcc-table tr:last-child td{border-bottom:none}
+#mcc-table td input{border:none;width:100%;padding:0;font:inherit;background:transparent;color:inherit;outline:none;text-align:center}
+#mcc-table td input:focus{background:var(--accent-light,#e8f4f8);border-radius:3px}
+#mcc-table tr:hover .gene-del-btn{opacity:1}
 .gene-del-btn:hover{color:var(--bad,#c00);background:color-mix(in srgb,var(--bad,#c00) 8%,transparent)}
 
 /* ── VARIANTS PANEL ── */
@@ -385,6 +394,7 @@ label.req::after{content:" *";color:var(--warn)}
         <button class="tab-btn" data-tab="report"><span class="step-num">2</span><span class="step-text"><span class="step-name">Report details</span><span class="step-sub">Not started</span></span></button>
         <button class="tab-btn" data-tab="genes" id="genes-tab-btn"><span class="step-num">3</span><span class="step-text"><span class="step-name">Gene coverage</span><span class="step-sub">Not started</span></span></button>
         <button class="tab-btn" data-tab="variants" id="variants-tab-btn" style="display:none"><span class="step-num">4</span><span class="step-text"><span class="step-name">Variants</span><span class="step-sub">Not started</span></span></button>
+        <button class="tab-btn" data-tab="mcc" id="mcc-tab-btn" style="display:none"><span class="step-num">5</span><span class="step-text"><span class="step-name">MCC</span><span class="step-sub">Not started</span></span></button>
       </div>
 
       <div class="step-head" style="display:flex;align-items:center">
@@ -418,7 +428,7 @@ label.req::after{content:" *";color:var(--warn)}
               <input type="text" id="f-patient_id" placeholder="e.g. MEL - 00000">
             </div>
             <div class="form-group">
-              <label class="req" for="f-age">Age</label>
+              <label class="req" for="f-age" id="age-label">Age</label>
               <input type="text" id="f-age" placeholder="52 Years">
             </div>
             <div class="form-group">
@@ -545,6 +555,30 @@ label.req::after{content:" *";color:var(--warn)}
           </table>
         </div>
       </div><!-- /genes tab -->
+
+      <!-- MCC TAB (POC / Amniotic Fluid) -->
+      <div id="tab-mcc" class="tab-panel">
+        <div class="dropzone" id="mcc-dropzone">
+          <input type="file" id="mcc-file-input" accept=".doc,.docx">
+          <span>Click to browse or drag &amp; drop the MCC report (.doc / .docx)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="add-mcc-row-btn">+ Add row</button>
+          <button class="btn" id="clear-mcc-btn">Clear table</button>
+          <span id="mcc-count">0 markers</span>
+        </div>
+        <div id="mcc-status"></div>
+        <div class="gene-table-wrap">
+          <table id="mcc-table">
+            <thead><tr><th>No</th><th>Marker</th><th>Maternal genotype</th><th>Fetal genotype</th><th>No. of shared alleles</th><th>% MCC</th><th>Remarks</th><th></th></tr></thead>
+            <tbody id="mcc-tbody"></tbody>
+          </table>
+        </div>
+        <div class="form-group">
+          <label for="f-mcc_summary">Closing line (under the table)</label>
+          <input type="text" id="f-mcc_summary" placeholder="The average percentage of maternal cell contamination in the fetal sample is 0%">
+        </div>
+      </div><!-- /mcc tab -->
 
       <!-- VARIANTS TAB -->
       <div id="tab-variants" class="tab-panel">
@@ -881,6 +915,7 @@ const STEP_META = {
   report:   { name: 'Report details' },
   genes:    { name: 'Gene coverage' },
   variants: { name: 'Variants' },
+  mcc:      { name: 'MCC (maternal cell contamination)' },
 };
 const STEP_REQ = {
   patient: [['f-patient_id','Patient ID'],['f-age','Age'],['f-gender','Gender'],['oc-referring_clinician','Referring clinician'],
@@ -911,6 +946,10 @@ function stepState(tab) {
     const missing = req.filter(([id]) => !reqValue(id)).length;
     const sub = !missing ? 'Complete' : missing === total ? 'Not started' : `${missing} of ${total} left`;
     return { complete: !missing, sub };
+  }
+  if (tab === 'mcc') {
+    const n = collectMcc().length;
+    return { complete: n > 0, sub: n ? `${n} marker${n===1?'':'s'}` : 'Not started' };
   }
   if (tab === 'genes') {
     const n = collectGenes().length;
@@ -1029,7 +1068,70 @@ function collectData() {
     additional_variants_text: $('f-additional_variants_text').value.trim(),
     secondary_title: $('f-secondary_title').value || '',
     options: (G.templateInfo && G.templateInfo.options && G.templateInfo.options.length) ? G.options : {},
+    mcc_rows: G.mccOn ? collectMcc() : [],
+    mcc_summary: G.mccOn ? $('f-mcc_summary').value.trim() : '',
   };
+}
+
+// ============================================================
+// MCC TABLE (POC / Amniotic Fluid: Appendix I)
+// ============================================================
+function collectMcc() {
+  const rows = [];
+  $qa('#mcc-tbody tr').forEach(tr => {
+    const cells = [...tr.querySelectorAll('input')].map(i => i.value.trim());
+    if (cells.some(c => c)) rows.push(cells);
+  });
+  return rows;
+}
+
+function renderMccTable(rows, summary) {
+  $('mcc-tbody').innerHTML = '';
+  (rows || []).forEach(r => addMccRow(r));
+  if (summary !== undefined) $('f-mcc_summary').value = summary || '';
+  updateMccCount();
+}
+
+function addMccRow(cells) {
+  const tbody = $('mcc-tbody');
+  cells = cells || [String(tbody.children.length + 1), '', '', '', '', '', ''];
+  const tr = document.createElement('tr');
+  tr.innerHTML = cells.slice(0, 7).map(c => `<td><input type="text" value="${escHtml(c || '')}"></td>`).join('')
+    + '<td><button type="button" class="gene-del-btn" title="Delete row">&times;</button></td>';
+  tr.querySelectorAll('input').forEach(i => i.addEventListener('input', () => { updateMccCount(); schedulePreview(); }));
+  tr.querySelector('.gene-del-btn').addEventListener('click', () => {
+    tr.remove(); updateMccCount(); schedulePreview();
+  });
+  tbody.appendChild(tr);
+  updateMccCount();
+}
+
+function updateMccCount() {
+  const n = collectMcc().length;
+  $('mcc-count').textContent = `${n} marker${n===1?'':'s'}`;
+  updateSteps();
+}
+
+function setMccStatus(msg, cls='') {
+  const el = $('mcc-status');
+  el.textContent = msg;
+  el.className = cls === 'ok' ? 'status-ok' : cls === 'bad' ? 'status-bad' : '';
+}
+
+async function uploadMcc(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  setMccStatus('Reading the MCC table…');
+  try {
+    const r = await api('/api/upload-mcc', { method:'POST', body: fd });
+    if (r.error) { setMccStatus(`Error: ${r.error}`, 'bad'); return; }
+    renderMccTable(r.rows, r.summary);
+    setMccStatus(`Loaded ${r.rows.length} marker${r.rows.length===1?'':'s'} from ${file.name}.`, 'ok');
+    schedulePreview();
+  } catch(e) {
+    setMccStatus(`Error: ${e.message}`, 'bad');
+  }
 }
 
 // ============================================================
@@ -1352,6 +1454,9 @@ async function onTemplateChange(key, force=false) {
 
   // Patient ID label
   $('patient-id-label').textContent = info.patient_id_label || 'Patient ID';
+  // Age label: "Gestational Age" on the POC / Amniotic Fluid template.
+  $('age-label').textContent = info.age_label || 'Age';
+  $('f-age').placeholder = info.age_label === 'Gestational Age' ? 'e.g. 16 Weeks 3 Days' : '52 Years';
   $('f-patient_id').placeholder = info.patient_id_prefix
     ? `e.g. ${info.patient_id_prefix} - 00000`
     : (info.patient_id_label === 'Patient ID' ? 'e.g. 12345' : 'e.g. Baby. Name');
@@ -1375,6 +1480,11 @@ async function onTemplateChange(key, force=false) {
 
   // Variants tab — always visible so variant data can be prepared for any result
   $('variants-tab-btn').style.display = '';
+
+  // MCC tab — only for the POC / Amniotic Fluid template
+  G.mccOn = !!info.mcc_status;
+  $('mcc-tab-btn').style.display = G.mccOn ? '' : 'none';
+  if (!G.mccOn && G.activeTab === 'mcc') switchTab('patient');
 
   // Primary variant list title row (shown for pathogenic templates)
   const priRow = $('primary-title-row');
@@ -2439,7 +2549,7 @@ async function bulkExport(kind) {
 // ============================================================
 // DROPZONES
 // ============================================================
-function setupDropzone(zoneId, inputId, onFile) {
+function setupDropzone(zoneId, inputId, onFile, pattern = /\.(xlsx|xlsm)$/i) {
   const zone = $(zoneId);
   const input = $(inputId);
   zone.addEventListener('click', () => input.click());
@@ -2448,7 +2558,7 @@ function setupDropzone(zoneId, inputId, onFile) {
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
   zone.addEventListener('drop', e => {
     e.preventDefault(); zone.classList.remove('drag-over');
-    const f = [...(e.dataTransfer.files||[])].find(f => /\.(xlsx|xlsm)$/i.test(f.name));
+    const f = [...(e.dataTransfer.files||[])].find(f => pattern.test(f.name));
     if (f) onFile(f);
   });
 }
@@ -2624,6 +2734,16 @@ async function initApp() {
 
     // Variants
     setupDropzone('variants-dropzone', 'variants-file-input', uploadVariants);
+
+    // MCC table
+    setupDropzone('mcc-dropzone', 'mcc-file-input', uploadMcc, /\.docx?$/i);
+    $('add-mcc-row-btn').addEventListener('click', () => { addMccRow(); schedulePreview(); });
+    $('clear-mcc-btn').addEventListener('click', () => {
+      if (!collectMcc().length && !$('f-mcc_summary').value.trim()) return;
+      if (!confirm('Clear the MCC table?')) return;
+      renderMccTable([], ''); setMccStatus(''); schedulePreview();
+    });
+    $('f-mcc_summary').addEventListener('input', schedulePreview);
     $('variant-search').addEventListener('input', renderVariantList);
     function setListCollapsed(collapsed) {
       $('variant-list-col').classList.toggle('collapsed', collapsed);
@@ -2752,6 +2872,8 @@ function saveFormState() {
       resultTag: $('f-result_tag').value,
       secondaryTitle: $('f-secondary_title').value,
       genes: collectGenes(),
+      mccRows: collectMcc(),
+      mccSummary: $('f-mcc_summary').value,
       variants: G.variants,
       variantManualFields: G.variantManualFields,
       options: G.options,
@@ -2779,6 +2901,7 @@ async function restoreFormState() {
     if (state.resultTag) $('f-result_tag').value = state.resultTag;
     if (state.secondaryTitle) $('f-secondary_title').value = state.secondaryTitle;
     if (state.genes && state.genes.length) renderGeneTable(state.genes);
+    if ((state.mccRows && state.mccRows.length) || state.mccSummary) renderMccTable(state.mccRows, state.mccSummary);
     if (state.variants && state.variants.length) {
       G.variants = state.variants;
       G.variantManualFields = state.variantManualFields || {};

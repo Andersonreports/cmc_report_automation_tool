@@ -84,7 +84,7 @@ def api_init():
             "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
             "hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
             "specimen": cfg.specimen, "reviewer": cfg.reviewer,
-            "patient_id_label": cfg.patient_id_label,
+            "patient_id_label": cfg.patient_id_label, "age_label": cfg.age_label,
             "patient_id_prefix": cfg.patient_id_prefix or "",
         })
     reviewers_list = [{"key": k, "name": r.name} for k, r in REVIEWERS.items()]
@@ -128,10 +128,11 @@ def _template_info_dict(key: str, chosen: dict) -> dict:
         "variants": cfg.variants, "secondary_findings": cfg.secondary_findings,
         "variant_captions": cfg.variant_captions,
         "fixed_result": cfg.fixed_result, "hospital_row": cfg.hospital_row, "gender_row": cfg.gender_row,
+        "mcc_status": cfg.mcc_status,
         "lab_wording": cfg.lab_wording,
         "hospital": cfg.hospital, "referring_clinician": cfg.referring_clinician,
         "specimen": cfg.specimen, "reviewer": cfg.reviewer,
-        "patient_id_label": cfg.patient_id_label,
+        "patient_id_label": cfg.patient_id_label, "age_label": cfg.age_label,
         "patient_id_prefix": cfg.patient_id_prefix or "",
         "genes": genes, "gene_list_url": url,
         "options": [{"key": k, "label": label, "choices": choices, "value": values[k]}
@@ -455,6 +456,27 @@ def api_upload_variants():
         found = variants_core.read_variants(path)
         return jsonify({"variants": found})
     except variants_core.VariantError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@app.route("/api/upload-mcc", methods=["POST"])
+def api_upload_mcc():
+    """The MCC report (.doc / .docx): its maternal cell contamination table."""
+    from ..core import mcc as mcc_core
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+    tmp = tempfile.mkdtemp(prefix="cmc_mcc_")
+    try:
+        name = os.path.basename(file.filename or "mcc.docx")
+        path = os.path.join(tmp, name)
+        file.save(path)
+        return jsonify(mcc_core.read_mcc(path))
+    except mcc_core.MCCError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
