@@ -96,6 +96,9 @@ class TemplateConfig:
     # Genes left out of the Appendix gene coverage table: names starting with any
     # of these prefixes (case-insensitive), e.g. SRY on fetal reports (PCPNDT).
     excluded_gene_prefixes: tuple[str, ...] = ()
+    # Fetal samples: the PCPNDT notice under the demography table and in the
+    # Disclaimer on every report, whatever the Specimen box says.
+    pcpndt: bool = False
 
 
 @dataclass(frozen=True)
@@ -165,6 +168,7 @@ TEMPLATES: dict[str, TemplateConfig] = {
         age_label="Gestational Age",
         mcc_status=True,
         excluded_gene_prefixes=("HLA-", "SRY", "MT-"),
+        pcpndt=True,
     ),
     # The Whole Exome & Mitochondrial reports (no pathogenic / pathogenic /
     # VUS / additional variants) as one template, the same way.

@@ -234,6 +234,7 @@ METHODOLOGY_SPECIMENS = ("Peripheral Blood", "Amniotic fluid", "CVS", "Product O
 
 # Specimens that require the PCPNDT notice in the report.
 _PCPNDT_SPECIMENS = frozenset({"Amniotic fluid", "CVS", "Product Of Conception"})
+_PCPNDT_LOWER = frozenset(s.lower() for s in _PCPNDT_SPECIMENS) | {"amniotic fluid", "poc", "chorionic villus sampling"}
 _PCPNDT_TEXT = ("This test confers to the PCPNDT act and does not determine "
                 "the sex of the fetus")
 
@@ -262,11 +263,16 @@ def _replace_in_para(p_el, old: str, new: str) -> bool:
     return True
 
 
+def _needs_pcpndt(data: ReportData) -> bool:
+    """The PCPNDT notice: every POC / Amniotic Fluid report, and any report whose
+    specimen is fetal (Amniotic fluid / CVS / Product Of Conception, any case)."""
+    return _cfg(data).pcpndt or data.patient.specimen.strip().lower() in _PCPNDT_LOWER
+
+
 def _insert_pcpndt_note(doc, data: ReportData):
-    """Insert the PCPNDT notice (italic, centred) immediately after the
-    demography table for specimens that require it.
-    Font matches the document body: Arial 9 pt, color 242629."""
-    if data.patient.specimen.strip() not in _PCPNDT_SPECIMENS:
+    """Insert the PCPNDT notice immediately after the demography table, as the
+    lab's fetal reports: centred, Times New Roman 11 pt bold italic, color 242629."""
+    if not _needs_pcpndt(data):
         return
     tbl_el = _find_table(doc, "Patient", "patient details table")._tbl
 
@@ -296,15 +302,15 @@ def _insert_pcpndt_note(doc, data: ReportData):
     rpr = OxmlElement("w:rPr")
     fonts = OxmlElement("w:rFonts")
     for attr in ("w:ascii", "w:hAnsi", "w:cs"):
-        fonts.set(qn(attr), "Arial")
+        fonts.set(qn(attr), "Times New Roman")
     color = OxmlElement("w:color")
     color.set(qn("w:val"), "242629")
     w_el = OxmlElement("w:w")
-    w_el.set(qn("w:val"), "105")
+    w_el.set(qn("w:val"), "100")
     sz = OxmlElement("w:sz")
-    sz.set(qn("w:val"), "18")
+    sz.set(qn("w:val"), "22")
     szcs = OxmlElement("w:szCs")
-    szcs.set(qn("w:val"), "18")
+    szcs.set(qn("w:val"), "22")
     i_el = OxmlElement("w:i")
     ics_el = OxmlElement("w:iCs")
     b_el = OxmlElement("w:b")
@@ -323,7 +329,7 @@ def _insert_pcpndt_note(doc, data: ReportData):
 def _insert_pcpndt_disclaimer(doc, data: ReportData):
     """Append the PCPNDT statement as a new bullet at the end of the
     Disclaimer section for specimens that require it."""
-    if data.patient.specimen.strip() not in _PCPNDT_SPECIMENS:
+    if not _needs_pcpndt(data):
         return
     others = {h.lower() for h in SECTION_HEADINGS} - {"disclaimer"}
     in_disclaimer = False
@@ -678,9 +684,8 @@ def _fill_gene_table(doc, data: ReportData, blank_unused: bool = True):
         data = dataclasses.replace(data, genes=[g for g in data.genes
                                                 if not str(g[0]).strip().upper().startswith(skip)])
     if not data.genes:
-        if not blank_unused:
-            return
-        # No genes supplied — remove all data rows, keep only the header.
+        # No genes supplied — remove all data rows, keep only the header (every
+        # template: the template's own rows are only a sample).
         tbl = table._tbl
         for tr in tbl.findall(qn("w:tr"))[1:]:
             tbl.remove(tr)
