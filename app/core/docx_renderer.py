@@ -732,6 +732,207 @@ def _fetal_variant_notes(doc, data: ReportData) -> None:
         anchor = para
 
 
+# ---------------------------------------------------------------------------
+# Easy to edit in Word after export
+# ---------------------------------------------------------------------------
+# The templates use Word features that make the exported .docx hard to edit:
+# text boxes floating behind the text (the result line), a floating signature
+# picture, and "page break before" on headings (Enter at the start of such a
+# heading copies it to the new line: Word then breaks twice and leaves an empty
+# page). They are turned into plain content that edits like any Word text.
+_KEEP_WHOLE_ROWS = 12          # tables up to this many rows stay on one page
+
+
+def _text_width_emu(doc) -> int:
+    sec = doc.sections[-1]
+    return int(sec.page_width - sec.left_margin - sec.right_margin)
+
+
+def _anchor_run(anchor):
+    """The w:r holding a floating drawing (through mc:AlternateContent if any)."""
+    el = anchor
+    while el is not None and el.tag != qn("w:r"):
+        el = el.getparent()
+    return el
+
+
+def _boxed_paragraphs(anchor, text_width: int) -> list:
+    """A floating text box (wrapped top and bottom) as ordinary paragraphs with a
+    border around them, the same width and line colour as the box."""
+    box = next(anchor.iter(qn("w:txbxContent")), None)
+    if box is None:
+        return []
+    paras = [copy.deepcopy(p) for p in box.findall(qn("w:p"))]
+    paras = [p for p in paras if _text(p).strip()] or paras[:1]
+    if not paras:
+        return []
+    ext = anchor.find(qn("wp:extent"))
+    width = int(ext.get("cx")) if ext is not None else text_width
+    side = max(0, (text_width - width) // 2) // 635            # EMU -> twips
+    ln = next(anchor.iter(qn("a:ln")), None)
+    sz = 12                                                    # 1.5 pt, in 1/8 pt
+    color = "0E0E0E"
+    if ln is not None:
+        if ln.get("w"):
+            sz = max(4, min(24, round(int(ln.get("w")) / 12700 * 8)))
+        clr = next(ln.iter(qn("a:srgbClr")), None)
+        if clr is not None and clr.get("val"):
+            color = clr.get("val")
+    for i, para in enumerate(paras):
+        ppr = para.find(qn("w:pPr"))
+        if ppr is None:
+            ppr = OxmlElement("w:pPr")
+            para.insert(0, ppr)
+        for tag in ("w:pBdr", "w:spacing", "w:ind", "w:keepNext"):
+            for old in ppr.findall(qn(tag)):
+                ppr.remove(old)
+        if i < len(paras) - 1:
+            ppr.insert(0, OxmlElement("w:keepNext"))
+        bdr = OxmlElement("w:pBdr")
+        for edge, space in (("top", "5"), ("left", "4"), ("bottom", "5"), ("right", "4")):
+            b = OxmlElement(f"w:{edge}")
+            for k, v in (("val", "single"), ("sz", str(sz)), ("space", space), ("color", color)):
+                b.set(qn(f"w:{k}"), v)
+            bdr.append(b)
+        sp = OxmlElement("w:spacing")
+        # as far from the text above / below as the floating box was
+        sp.set(qn("w:before"), "156" if i == 0 else "0")
+        sp.set(qn("w:after"), "40" if i == len(paras) - 1 else "0")
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), str(side + 80))
+        ind.set(qn("w:right"), str(side + 80))
+        # CT_PPr order: ..., pBdr, shd, tabs, ..., spacing, ind, ..., jc, ...
+        jc = ppr.find(qn("w:jc"))
+        anchor_el = jc if jc is not None else ppr.find(qn("w:rPr"))
+        for el in (bdr, sp, ind):
+            (anchor_el.addprevious(el) if anchor_el is not None else ppr.append(el))
+    return paras
+
+
+def _inline_picture(anchor):
+    """A floating picture (wrapped top and bottom) as an inline one, in a
+    paragraph of its own aligned as the picture was."""
+    inline = OxmlElement("wp:inline")
+    for k in ("distT", "distB", "distL", "distR"):
+        inline.set(k, "0")
+    for tag in ("wp:extent", "wp:effectExtent", "wp:docPr", "wp:cNvGraphicFramePr", "a:graphic"):
+        el = anchor.find(qn(tag))
+        if el is not None:
+            inline.append(copy.deepcopy(el))
+    drawing = OxmlElement("w:drawing")
+    drawing.append(inline)
+    run = OxmlElement("w:r")
+    run.append(drawing)
+    para = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    sp = OxmlElement("w:spacing")
+    sp.set(qn("w:before"), "60")
+    sp.set(qn("w:after"), "0")
+    ppr.append(sp)
+    pos = anchor.find(qn("wp:positionH"))
+    align = pos.find(qn("wp:align")) if pos is not None else None
+    if align is not None and align.text in ("center", "right"):
+        jc = OxmlElement("w:jc")
+        jc.set(qn("w:val"), align.text)
+        ppr.append(jc)
+    elif pos is not None and pos.find(qn("wp:posOffset")) is not None:
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:left"), str(max(0, int(pos.find(qn("wp:posOffset")).text) // 635)))
+        ppr.insert(1, ind)
+    para.append(ppr)
+    para.append(run)
+    return para
+
+
+def _unfloat(doc) -> None:
+    """Floating text boxes and pictures in the body (not the header / footer)
+    that sit between the lines (wrapped top and bottom) become inline content."""
+    width = _text_width_emu(doc)
+    for anchor in list(doc.element.body.iter(qn("wp:anchor"))):
+        if anchor.find(qn("wp:wrapTopAndBottom")) is None:
+            continue                # a picture placed over the text: left as it is
+        run = _anchor_run(anchor)
+        host = run.getparent() if run is not None else None
+        if host is None or host.tag != qn("w:p") or host.getparent() is not doc.element.body:
+            continue
+        if next(anchor.iter(qn("w:txbxContent")), None) is not None:
+            new = _boxed_paragraphs(anchor, width)
+            if not new:
+                continue
+            run.getparent().remove(run)
+            own_text = "".join(t.text or "" for r in host.findall(qn("w:r"))
+                               for t in r.findall(qn("w:t"))).strip()
+            anchor_el = host
+            for para in new:
+                anchor_el.addnext(para)
+                anchor_el = para
+            if not own_text and not host.findall(qn("w:r")):
+                host.getparent().remove(host)   # the box's empty holder line
+        elif next(anchor.iter(qn("pic:pic")), None) is not None:
+            para = _inline_picture(anchor)
+            run.getparent().remove(run)
+            host.addnext(para)
+
+
+def _page_break_paragraphs(doc) -> None:
+    """'Page break before' on a body paragraph -> a page break of its own just
+    before it, as Word's Insert > Page Break makes. Pressing Enter above the
+    heading then only adds a line, instead of a second break and an empty page."""
+    for p in list(doc.element.body.iterchildren(qn("w:p"))):
+        ppr = p.find(qn("w:pPr"))
+        pb = ppr.find(qn("w:pageBreakBefore")) if ppr is not None else None
+        if pb is None:
+            continue
+        ppr.remove(pb)
+        brk = OxmlElement("w:p")
+        bppr = OxmlElement("w:pPr")
+        sp = OxmlElement("w:spacing")
+        # exactly 1 pt high, so it fits even at the very foot of a full page
+        # (a taller line would spill onto the next page and leave it empty)
+        for k, v in (("before", "0"), ("after", "0"), ("line", "20"), ("lineRule", "exact")):
+            sp.set(qn(f"w:{k}"), v)
+        bppr.append(sp)
+        prpr = OxmlElement("w:rPr")
+        for tag in ("w:sz", "w:szCs"):
+            el = OxmlElement(tag)
+            el.set(qn("w:val"), "2")                    # a 1 pt line: never spills a page
+            prpr.append(el)
+        bppr.append(prpr)
+        brk.append(bppr)
+        r = OxmlElement("w:r")
+        r.append(copy.deepcopy(prpr))
+        br = OxmlElement("w:br")
+        br.set(qn("w:type"), "page")
+        r.append(br)
+        brk.append(r)
+        p.addprevious(brk)
+
+
+def _keep_tables_whole(doc) -> None:
+    """No table row splits over two pages, and a short table (one the template's
+    own rules don't already handle) moves to the next page whole instead of
+    splitting when lines are added above it."""
+    for tbl in doc.element.body.iterchildren(qn("w:tbl")):
+        rows = tbl.findall(qn("w:tr"))
+        if not rows:
+            continue
+        for tr in rows:
+            _no_split(tr)
+        chained = any(p.find(qn("w:pPr") + "/" + qn("w:keepNext")) is not None
+                      for tr in rows for p in tr.iter(qn("w:p")))
+        if chained or len(rows) > _KEEP_WHOLE_ROWS:
+            continue                # a variant list's own rules / a long table
+        for tr in rows[:-1]:
+            for p in tr.iter(qn("w:p")):
+                Paragraph(p, None).paragraph_format.keep_with_next = True
+
+
+def _make_editable(doc) -> None:
+    _unfloat(doc)
+    _page_break_paragraphs(doc)
+    _keep_tables_whole(doc)
+
+
 def _fill_methodology(doc, data: ReportData):
     """The Methodology's first sentence names the specimen: 'DNA extracted from
     the <specimen> was used to perform ...', or 'DNA was used ...' for DNA.
@@ -3222,4 +3423,5 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = (), tight: bool
         _title_with_analysis(doc)
     _normalize_hyperlink_colors(doc, hex_color="0000ED")
     _plural_interpretation_heading(doc)
+    _make_editable(doc)
     return doc
