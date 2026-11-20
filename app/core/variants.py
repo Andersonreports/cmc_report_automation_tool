@@ -787,6 +787,7 @@ def genomic_position(v: dict) -> tuple[str, str]:
 PSEUDOGENE_GENES: frozenset[str] = frozenset({
     "BRCA1", "PMS2", "CHEK2", "PKD1", "STRC", "CYP21A2",
     "GBA", "GBA1", "SMN1", "SMN2", "VWF", "IKBKG", "HYDIN",
+    "RERE",
 })
 
 

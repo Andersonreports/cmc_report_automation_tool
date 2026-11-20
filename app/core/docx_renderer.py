@@ -626,6 +626,123 @@ def _insert_mcc_appendix(doc, data: ReportData) -> None:
     _page_break_before(gene_head)
 
 
+# ---------------------------------------------------------------------------
+# Fetal (POC / Amniotic Fluid) notes under the variant list
+# ---------------------------------------------------------------------------
+PARENTAL_NOTE = ("Parental testing is recommended, and classification of the variant(s) may "
+                 "change based on segregation analysis.")
+VUS_REPRODUCTIVE_NOTE = ("Reproductive decisions based on variants of uncertain significance "
+                         "are not recommended.")
+
+
+def _note_run(text: str, color: str = "000000", superscript: bool = False, italic: bool = False):
+    r = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    fonts = OxmlElement("w:rFonts")
+    for k in ("ascii", "hAnsi", "cs"):
+        fonts.set(qn(f"w:{k}"), "Arial")
+    rpr.append(fonts)
+    rpr.append(OxmlElement("w:b"))
+    rpr.append(OxmlElement("w:bCs"))
+    if italic:
+        rpr.append(OxmlElement("w:i"))
+    c = OxmlElement("w:color")
+    c.set(qn("w:val"), color)
+    rpr.append(c)
+    for tag in ("w:sz", "w:szCs"):
+        sz = OxmlElement(tag)
+        sz.set(qn("w:val"), "18")                       # 9 pt
+        rpr.append(sz)
+    if superscript:
+        va = OxmlElement("w:vertAlign")
+        va.set(qn("w:val"), "superscript")
+        rpr.append(va)
+    r.append(rpr)
+    t = OxmlElement("w:t")
+    t.text = text
+    t.set(qn("xml:space"), "preserve")
+    r.append(t)
+    return r
+
+
+def _note_para(runs, before: int):
+    p = OxmlElement("w:p")
+    ppr = OxmlElement("w:pPr")
+    sp = OxmlElement("w:spacing")
+    sp.set(qn("w:before"), str(before))
+    sp.set(qn("w:after"), "0")
+    ppr.append(sp)
+    ind = OxmlElement("w:ind")
+    ind.set(qn("w:left"), "0")
+    ppr.append(ind)
+    p.append(ppr)
+    for r in runs:
+        p.append(r)
+    return p
+
+
+def _is_list_table(tbl) -> bool:
+    rows = tbl.findall(qn("w:tr"))
+    return bool(rows) and "allele status" in _text(rows[0]).lower()
+
+
+def _fetal_variant_notes(doc, data: ReportData) -> None:
+    """POC / Amniotic Fluid reports with a reported variant, as the lab's fetal
+    reports: a superscript '#' after each gene of the variant list, and under the
+    list '#Parental testing is recommended ...' (bold) and, when a variant is of
+    uncertain significance, 'Reproductive decisions ... are not recommended.' (red)."""
+    chosen = [v for v in data.variants if v.get("selected")]
+    if not chosen:
+        return
+    tables = [t for t in doc.element.body.iter(qn("w:tbl")) if _is_list_table(t)]
+    if not tables:
+        return
+    for tbl in tables:
+        for tr in tbl.findall(qn("w:tr"))[1:]:
+            tc = tr.find(qn("w:tc"))
+            p = tc.find(qn("w:p")) if tc is not None else None
+            runs = _runs(p) if p is not None else []
+            if not runs or "#" in _text(p):
+                continue
+            mark = copy.deepcopy(runs[-1])
+            for child in list(mark):
+                if child.tag != qn("w:rPr"):
+                    mark.remove(child)
+            rpr = mark.find(qn("w:rPr"))
+            if rpr is None:
+                rpr = OxmlElement("w:rPr")
+                mark.insert(0, rpr)
+            old = rpr.find(qn("w:vertAlign"))
+            if old is not None:
+                rpr.remove(old)
+            va = OxmlElement("w:vertAlign")
+            va.set(qn("w:val"), "superscript")
+            rpr.append(va)
+            t = OxmlElement("w:t")
+            t.text = "#"
+            mark.append(t)
+            runs[-1].addnext(mark)
+    anchor = tables[-1]
+    vus = any("uncertain" in str(v.get("classification", "")).lower() for v in chosen)
+    notes = [_note_para([_note_run("#", superscript=True), _note_run(PARENTAL_NOTE)], 120)]
+    if vus:
+        notes.append(_note_para([_note_run(VUS_REPRODUCTIVE_NOTE, color="FF0000")], 200))
+    for para in notes:
+        anchor.addnext(para)
+        anchor = para
+    if not vus:
+        return
+    # The same caution leads the Recommendations (before any pseudogene note).
+    head = _find_para(doc, "Recommendations", "'Recommendations' heading")
+    first = head.getnext()
+    while first is not None and first.tag == qn("w:p") and not _text(first).strip():
+        first = first.getnext()
+    if first is not None and first.tag == qn("w:p")             and not _text(first).strip().startswith("Reproductive decisions"):
+        line = copy.deepcopy(first)
+        _set_text(line, VUS_REPRODUCTIVE_NOTE)
+        first.addprevious(line)
+
+
 def _fill_methodology(doc, data: ReportData):
     """The Methodology's first sentence names the specimen: 'DNA extracted from
     the <specimen> was used to perform ...', or 'DNA was used ...' for DNA.
@@ -3045,6 +3162,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = ()):
         else:
             _align_result_notes(doc)
         _superscript_hash(doc)
+        if cfg.pcpndt:
+            _fetal_variant_notes(doc, data)
     _space_result_notes(doc)
     _keep_classification_intro(doc)
     if cfg.variants:
