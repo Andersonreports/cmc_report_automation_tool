@@ -467,7 +467,8 @@ def _insert_mcc_status(doc, data: ReportData) -> None:
 # ---------------------------------------------------------------------------
 MCC_HEADERS = ("No", "Marker", "Maternal genotype", "Fetal genotype",
                "No. of shared alleles", "% MCC", "Remarks")
-_MCC_WIDTHS = (600, 1500, 1500, 1500, 1350, 1100, 1800)     # dxa, 9350 in all
+_MCC_WIDTHS = (650, 1450, 1450, 1450, 1600, 1050, 1800)     # dxa, 9450 in all
+_MCC_FONT = "Times New Roman"                                # as the lab's MCC report
 
 
 MCC_HEADER_FILL = "F9BD8F"      # the variant tables' header colour
@@ -497,7 +498,7 @@ def _mcc_cell(text: str, width: int, bold: bool = False, span: int = 1, fill: st
     p = OxmlElement("w:p")
     ppr = OxmlElement("w:pPr")
     sp = OxmlElement("w:spacing")
-    for k, v in (("before", "20"), ("after", "20"), ("line", "240"), ("lineRule", "auto")):
+    for k, v in (("before", "10"), ("after", "10"), ("line", "240"), ("lineRule", "auto")):
         sp.set(qn(f"w:{k}"), v)
     ppr.append(sp)
     jc = OxmlElement("w:jc")
@@ -508,13 +509,13 @@ def _mcc_cell(text: str, width: int, bold: bool = False, span: int = 1, fill: st
     rpr = OxmlElement("w:rPr")
     fonts = OxmlElement("w:rFonts")
     for k in ("ascii", "hAnsi", "cs"):
-        fonts.set(qn(f"w:{k}"), "Arial")
+        fonts.set(qn(f"w:{k}"), _MCC_FONT)
     rpr.append(fonts)
     if bold:
         rpr.append(OxmlElement("w:b"))
     for tag in ("w:sz", "w:szCs"):
         sz = OxmlElement(tag)
-        sz.set(qn("w:val"), "18")                   # 9 pt
+        sz.set(qn("w:val"), "22")                   # 11 pt
         rpr.append(sz)
     r.append(rpr)
     t = OxmlElement("w:t")
@@ -558,6 +559,10 @@ def _mcc_table(rows: list, summary: str):
         tr = OxmlElement("w:tr")
         trpr = OxmlElement("w:trPr")
         trpr.append(OxmlElement("w:cantSplit"))
+        height = OxmlElement("w:trHeight")
+        height.set(qn("w:val"), "330")              # about 0.58 cm, as the lab's table
+        height.set(qn("w:hRule"), "atLeast")
+        trpr.append(height)
         if header:
             trpr.append(OxmlElement("w:tblHeader"))
         tr.append(trpr)
