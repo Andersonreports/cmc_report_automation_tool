@@ -218,12 +218,26 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 45) -> dict[str, str] | Non
         raise SheetError("The patient sheet link is not set up "
                          "(app/config/sheet_config.py is missing).")
     key = pin.strip().upper()
-    if cfg is not None and cfg.patient_sheet == "WES":
-        cells = (_row_via_csv(key, timeout, WES_SHEET_CSV_URL, last=True) if WES_SHEET_CSV_URL
-                 else _row_via_apps_script(key, timeout, "wes"))
-    else:
-        cells = (_row_via_apps_script(key, timeout) if APPS_SCRIPT_URL
-                 else _row_via_csv(key, timeout))
+
+    def from_wes():
+        if not (WES_SHEET_CSV_URL or APPS_SCRIPT_URL):
+            return None
+        return (_row_via_csv(key, timeout, WES_SHEET_CSV_URL, last=True) if WES_SHEET_CSV_URL
+                else _row_via_apps_script(key, timeout, "wes"))
+
+    def from_patient():
+        if not (APPS_SCRIPT_URL or SHEET_CSV_URL):
+            return None
+        return (_row_via_apps_script(key, timeout) if APPS_SCRIPT_URL
+                else _row_via_csv(key, timeout))
+
+    # The template's own sheet first; a PIN that is only in the other sheet (e.g. a
+    # WES patient reported on the Endocrinology template) is found there.
+    wes = cfg is not None and cfg.patient_sheet == "WES"
+    cells = (from_wes() if wes else from_patient())
+    if cells is None:
+        cells = (from_patient() if wes else from_wes())
+        wes = not wes
     if cells is None:
         return None
 
@@ -234,7 +248,7 @@ def fetch_patient(pin: str, cfg=None, timeout: int = 45) -> dict[str, str] | Non
     # The WES sheet heads the client column just "Client".
     client = get("Client name") or get("Client")
     out.update(_parse_name(get("Name")))
-    if cfg is not None and cfg.patient_sheet == "WES":
+    if wes:
         # Strip age/gender brackets, square-bracket tags, titles, then title-case:
         # 'MASTER.MD WAKILIBN (AQ38850) (5Y/M)' -> 'Md Wakilibn (AQ38850)'.
         name = re.sub(r"\(\s*\d+\s*[YMD]\s*[/|]?\s*[MF]\s*\)\s*(-\s*\d+\s*)?", " ",
