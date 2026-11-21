@@ -875,9 +875,12 @@ def _unfloat(doc) -> None:
 
 
 def _page_break_paragraphs(doc) -> None:
-    """'Page break before' on a body paragraph -> a page break of its own just
-    before it, as Word's Insert > Page Break makes. Pressing Enter above the
-    heading then only adds a line, instead of a second break and an empty page."""
+    """'Page break before' moves off the heading onto an empty 1 pt line just above
+    it. Pressing Enter at the start of the heading then only adds a line (Word
+    copies a paragraph's settings to the new line, so a heading carrying the break
+    broke twice and left an empty page). Unlike a page-break character, 'page break
+    before' does nothing when the line already starts a page, so a page filled to
+    the foot by edits above never gets an empty page after it either."""
     for p in list(doc.element.body.iterchildren(qn("w:p"))):
         ppr = p.find(qn("w:pPr"))
         pb = ppr.find(qn("w:pageBreakBefore")) if ppr is not None else None
@@ -886,9 +889,9 @@ def _page_break_paragraphs(doc) -> None:
         ppr.remove(pb)
         brk = OxmlElement("w:p")
         bppr = OxmlElement("w:pPr")
+        bppr.append(OxmlElement("w:keepNext"))          # stays with the heading
+        bppr.append(OxmlElement("w:pageBreakBefore"))
         sp = OxmlElement("w:spacing")
-        # exactly 1 pt high, so it fits even at the very foot of a full page
-        # (a taller line would spill onto the next page and leave it empty)
         for k, v in (("before", "0"), ("after", "0"), ("line", "20"), ("lineRule", "exact")):
             sp.set(qn(f"w:{k}"), v)
         bppr.append(sp)
@@ -899,12 +902,6 @@ def _page_break_paragraphs(doc) -> None:
             prpr.append(el)
         bppr.append(prpr)
         brk.append(bppr)
-        r = OxmlElement("w:r")
-        r.append(copy.deepcopy(prpr))
-        br = OxmlElement("w:br")
-        br.set(qn("w:type"), "page")
-        r.append(br)
-        brk.append(r)
         p.addprevious(brk)
 
 
@@ -2648,11 +2645,19 @@ def _section_heading_size(doc, points: int = 11):
                 el.set(qn("w:val"), sz)
 
 
-def _tidy_classification_table(doc, pad: int = 180):
+# Minimum row heights of the classification table in the lab's own reports
+# (twips): Pathogenic, Likely Pathogenic, Variant of Uncertain Significance.
+CLASSIFICATION_ROW_HEIGHTS = (719, 719, 1199)
+
+
+def _tidy_classification_table(doc, tight: bool = False):
     """Classification column: one paragraph per label, centred vertically.
     The template has an empty paragraph above 'Variant of Uncertain
     Significance' and splits 'Likely Pathogenic' over two paragraphs, which
-    leaves uneven space in the cells."""
+    leaves uneven space in the cells.
+    Sized as the lab's reports: no padding above / below the cell text and
+    0.5" / 0.5" / 0.83" minimum row heights (tight: no minimum, the rows
+    just fit their text)."""
     try:
         table = _find_table(doc, "Classification", "classification table")
     except TemplateError:
@@ -2670,25 +2675,30 @@ def _tidy_classification_table(doc, pad: int = 180):
             if p is not keep:
                 p._p.getparent().remove(p._p)
         cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    # Breathing room between the text and the cell lines, and every cell
-    # centred vertically, so a wrapped label never touches the border.
+    # A little room left / right of the text, none above / below (the row
+    # heights and the 3 pt paragraph spacing give the vertical room).
     tbl_pr = table._tbl.tblPr
     old = tbl_pr.find(qn("w:tblCellMar"))
     if old is not None:
         tbl_pr.remove(old)
     mar = OxmlElement("w:tblCellMar")
-    for side, w in (("top", pad), ("left", 50), ("bottom", pad), ("right", 50)):
+    for side, w in (("top", 0), ("left", 50), ("bottom", 0), ("right", 50)):
         el = OxmlElement(f"w:{side}")
         el.set(qn("w:w"), str(w))
         el.set(qn("w:type"), "dxa")
         mar.append(el)
     tbl_pr.append(mar)
     for i, row in enumerate(table.rows[1:], 1):
-        # Remove fixed row heights so the cell content sets the height.
+        # The lab's minimum row heights; a longer text still grows the row.
         trpr = row._tr.get_or_add_trPr()
         height = trpr.find(qn("w:trHeight"))
         if height is not None:
             trpr.remove(height)
+        if not tight and i <= len(CLASSIFICATION_ROW_HEIGHTS):
+            height = OxmlElement("w:trHeight")
+            height.set(qn("w:val"), str(CLASSIFICATION_ROW_HEIGHTS[i - 1]))
+            height.set(qn("w:hRule"), "atLeast")
+            trpr.append(height)
         for cell in row.cells:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
     n_rows = len(table.rows)
@@ -3327,15 +3337,18 @@ def _tighten_classification(doc) -> None:
 def page_break_texts(doc) -> list[str]:
     """Text of the paragraphs the report starts on a new page (report_builder's
     layout check uses it to tell a planned page break from a gap)."""
-    out = []
+    out, pending = [], False
     for p in doc.element.body.iter(qn("w:p")):
         ppr = p.find(qn("w:pPr"))
-        forced = ppr is not None and ppr.find(qn("w:pageBreakBefore")) is not None
+        forced = pending or (ppr is not None and ppr.find(qn("w:pageBreakBefore")) is not None)
         prev = p.getprevious()
         if not forced and prev is not None and prev.tag == qn("w:p"):
             forced = any(br.get(qn("w:type")) == "page" for br in prev.iter(qn("w:br")))
         if forced and _text(p).strip():
             out.append(_text(p).strip())
+            pending = False
+        else:
+            pending = forced        # an empty break line: the next paragraph starts the page
     return out
 
 
@@ -3397,7 +3410,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = (), tight: bool
     _appendix_page_break(doc)
     title_pt = 16 if "mito" in cfg.docx_file.lower() else 20
     if not cfg.keep_layout:
-        _tidy_classification_table(doc, pad=70 if tight else 180)
+        _tidy_classification_table(doc, tight)
         if tight:
             _tighten_classification(doc)
         _title_size(doc, title_pt)
@@ -3405,9 +3418,8 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = (), tight: bool
         _match_reference_layout(doc)
     else:
         # Laid out as the finished report, but the same table padding, sizes
-        # and alignment as every other template. The pages are packed tight, so
-        # the classification rows get less padding than elsewhere.
-        _tidy_classification_table(doc, pad=70)
+        # and alignment as every other template.
+        _tidy_classification_table(doc, tight)
         if not cfg.own_styles:
             _title_size(doc, title_pt)
         _justify_section(doc, "Disclaimer")
