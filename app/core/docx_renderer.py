@@ -627,112 +627,6 @@ def _insert_mcc_appendix(doc, data: ReportData) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fetal (POC / Amniotic Fluid) notes under the variant list
-# ---------------------------------------------------------------------------
-PARENTAL_NOTE = ("Parental testing is recommended, and classification of the variant(s) may "
-                 "change based on segregation analysis.")
-VUS_REPRODUCTIVE_NOTE = ("Reproductive decisions based on variants of uncertain significance "
-                         "are not recommended.")
-
-
-def _note_run(text: str, color: str = "000000", superscript: bool = False, italic: bool = False):
-    r = OxmlElement("w:r")
-    rpr = OxmlElement("w:rPr")
-    fonts = OxmlElement("w:rFonts")
-    for k in ("ascii", "hAnsi", "cs"):
-        fonts.set(qn(f"w:{k}"), "Arial")
-    rpr.append(fonts)
-    rpr.append(OxmlElement("w:b"))
-    rpr.append(OxmlElement("w:bCs"))
-    if italic:
-        rpr.append(OxmlElement("w:i"))
-    c = OxmlElement("w:color")
-    c.set(qn("w:val"), color)
-    rpr.append(c)
-    for tag in ("w:sz", "w:szCs"):
-        sz = OxmlElement(tag)
-        sz.set(qn("w:val"), "18")                       # 9 pt
-        rpr.append(sz)
-    if superscript:
-        va = OxmlElement("w:vertAlign")
-        va.set(qn("w:val"), "superscript")
-        rpr.append(va)
-    r.append(rpr)
-    t = OxmlElement("w:t")
-    t.text = text
-    t.set(qn("xml:space"), "preserve")
-    r.append(t)
-    return r
-
-
-def _note_para(runs, before: int):
-    p = OxmlElement("w:p")
-    ppr = OxmlElement("w:pPr")
-    sp = OxmlElement("w:spacing")
-    sp.set(qn("w:before"), str(before))
-    sp.set(qn("w:after"), "0")
-    ppr.append(sp)
-    ind = OxmlElement("w:ind")
-    ind.set(qn("w:left"), "0")
-    ppr.append(ind)
-    p.append(ppr)
-    for r in runs:
-        p.append(r)
-    return p
-
-
-def _is_list_table(tbl) -> bool:
-    rows = tbl.findall(qn("w:tr"))
-    return bool(rows) and "allele status" in _text(rows[0]).lower()
-
-
-def _fetal_variant_notes(doc, data: ReportData) -> None:
-    """POC / Amniotic Fluid reports with a reported variant, as the lab's fetal
-    reports: a superscript '#' after each gene of the variant list, and under the
-    list '#Parental testing is recommended ...' (bold) and, when a variant is of
-    uncertain significance, 'Reproductive decisions ... are not recommended.' (red)."""
-    chosen = [v for v in data.variants if v.get("selected")]
-    if not chosen:
-        return
-    tables = [t for t in doc.element.body.iter(qn("w:tbl")) if _is_list_table(t)]
-    if not tables:
-        return
-    for tbl in tables:
-        for tr in tbl.findall(qn("w:tr"))[1:]:
-            tc = tr.find(qn("w:tc"))
-            p = tc.find(qn("w:p")) if tc is not None else None
-            runs = _runs(p) if p is not None else []
-            if not runs or "#" in _text(p):
-                continue
-            mark = copy.deepcopy(runs[-1])
-            for child in list(mark):
-                if child.tag != qn("w:rPr"):
-                    mark.remove(child)
-            rpr = mark.find(qn("w:rPr"))
-            if rpr is None:
-                rpr = OxmlElement("w:rPr")
-                mark.insert(0, rpr)
-            old = rpr.find(qn("w:vertAlign"))
-            if old is not None:
-                rpr.remove(old)
-            va = OxmlElement("w:vertAlign")
-            va.set(qn("w:val"), "superscript")
-            rpr.append(va)
-            t = OxmlElement("w:t")
-            t.text = "#"
-            mark.append(t)
-            runs[-1].addnext(mark)
-    anchor = tables[-1]
-    vus = any("uncertain" in str(v.get("classification", "")).lower() for v in chosen)
-    notes = [_note_para([_note_run("#", superscript=True), _note_run(PARENTAL_NOTE)], 120)]
-    if vus:
-        notes.append(_note_para([_note_run(VUS_REPRODUCTIVE_NOTE, color="FF0000")], 200))
-    for para in notes:
-        anchor.addnext(para)
-        anchor = para
-
-
-# ---------------------------------------------------------------------------
 # Easy to edit in Word after export
 # ---------------------------------------------------------------------------
 # The templates use Word features that make the exported .docx hard to edit:
@@ -2527,6 +2421,32 @@ def _collapse_blank_runs(doc):
         body.remove(extra)
 
 
+def _disclaimer_flows(doc) -> None:
+    """The Disclaimer follows on the same page when there is room, as in the
+    lab's reports: the WES & Mito templates' page break above it is removed (it
+    left the rest of the page empty and, once lines were added above it in
+    Word, a near-empty page)."""
+    for p in doc.element.body.iterchildren(qn("w:p")):
+        if _text(p).strip().rstrip(":").lower() != "disclaimer":
+            continue
+        ppr = p.find(qn("w:pPr"))
+        pbb = ppr.find(qn("w:pageBreakBefore")) if ppr is not None else None
+        if pbb is not None:
+            ppr.remove(pbb)
+        prev = p.getprevious()
+        while prev is not None and prev.tag == qn("w:p") and not _text(prev).strip():
+            above = prev.getprevious()
+            brs = [b for b in prev.iter(qn("w:br")) if b.get(qn("w:type")) == "page"]
+            brs += list(prev.iter(qn("w:pageBreakBefore")))
+            if brs:
+                for b in brs:
+                    b.getparent().remove(b)
+                if not list(prev.iter(qn("w:drawing"), qn("w:sectPr"))):
+                    prev.getparent().remove(prev)
+            prev = above
+        break
+
+
 def _appendix_page_break(doc):
     body = doc.element.body
     # The first appendix: 'Appendix 1: Gene Coverage', or the MCC table's 'Appendix I'
@@ -2701,21 +2621,28 @@ def _tidy_classification_table(doc, tight: bool = False):
             trpr.append(height)
         for cell in row.cells:
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-    n_rows = len(table.rows)
     for idx, row in enumerate(table.rows):
         trpr = row._tr.get_or_add_trPr()
         if trpr.find(qn("w:cantSplit")) is None:
             trpr.append(OxmlElement("w:cantSplit"))
-        # keepNext on every paragraph in each row except the last keeps the
-        # whole table together on one page (it moves to the next page whole).
-        if idx < n_rows - 1:
-            for tc in row._tr.iter(qn("w:tc")):
-                for p in tc.iterchildren(qn("w:p")):
-                    ppr = p.find(qn("w:pPr"))
-                    if ppr is None:
-                        ppr = OxmlElement("w:pPr")
-                        p.insert(0, ppr)
-                    if ppr.find(qn("w:keepNext")) is None:
+        # No row splits, and the heading row stays with the first row (and
+        # repeats if the table runs onto the next page), but the table may break
+        # between rows: a line added above it in Word then moves one row on, not
+        # the whole table, leaving no big gap / near-empty page.
+        if idx == 0 and trpr.find(qn("w:tblHeader")) is None:
+            trpr.append(OxmlElement("w:tblHeader"))
+        for tc in row._tr.iter(qn("w:tc")):
+            for p in tc.iterchildren(qn("w:p")):
+                ppr = p.find(qn("w:pPr"))
+                if idx > 0:
+                    old_kn = ppr.find(qn("w:keepNext")) if ppr is not None else None
+                    if old_kn is not None:
+                        ppr.remove(old_kn)
+                    continue
+                if ppr is None:
+                    ppr = OxmlElement("w:pPr")
+                    p.insert(0, ppr)
+                if ppr.find(qn("w:keepNext")) is None:
                         # CT_PPr order: pStyle, keepNext, ...
                         kn = OxmlElement("w:keepNext")
                         ps = ppr.find(qn("w:pStyle"))
@@ -3397,8 +3324,6 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = (), tight: bool
         else:
             _align_result_notes(doc)
         _superscript_hash(doc)
-        if cfg.pcpndt:
-            _fetal_variant_notes(doc, data)
     _space_result_notes(doc)
     _keep_classification_intro(doc)
     if cfg.variants:
@@ -3407,6 +3332,7 @@ def render_report(data: ReportData, new_pages: tuple[str, ...] = (), tight: bool
     _fill_signatures(doc, data)
     _tighten_signature_gap(doc)
     _collapse_blank_runs(doc)
+    _disclaimer_flows(doc)
     _appendix_page_break(doc)
     title_pt = 16 if "mito" in cfg.docx_file.lower() else 20
     if not cfg.keep_layout:

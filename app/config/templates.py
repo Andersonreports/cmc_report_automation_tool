@@ -272,7 +272,7 @@ RESULT_DEFAULTS: dict[str, dict[str, tuple[dict, dict]]] = {
                      file_suffix="whole_exome_report|_", reviewer="ROBERT")),
     },
     "wes_mito": {
-        "none": (dict(docx_file="whole_exome_mito.docx", new_page_before=("Disclaimer",)),
+        "none": (dict(docx_file="whole_exome_mito.docx"),
                  dict(interpretation="no",
                       file_suffix="WES_&_Mito_Report|_", reviewer="SARATH")),
         "pathogenic": (dict(docx_file="whole_exome_mito_patho.docx", variants=True,
