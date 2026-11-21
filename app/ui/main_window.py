@@ -500,6 +500,22 @@ def class_colors(label: str) -> tuple[str, str, str] | None:
     return None
 
 
+class GenePanelEdit(QPlainTextEdit):
+    """Gene panel box: a paste is tidied as on the web app - one entry per gene
+    (no repeats, trailing dots dropped), sorted A-Z, comma-separated."""
+
+    def insertFromMimeData(self, source):
+        super().insertFromMimeData(source)
+        genes = []
+        for g in re.split(r"[,\r\n]+", self.toPlainText()):
+            g = g.strip().rstrip(".")
+            if g and g not in genes:
+                genes.append(g)
+        genes.sort(key=str.upper)
+        self.setPlainText(", ".join(genes))
+        self.moveCursor(self.textCursor().MoveOperation.End)
+
+
 class GeneTableEditor(QWidget):
     """Appendix 1 gene coverage table: paste a whole table to replace it."""
     changed = Signal()
@@ -522,7 +538,7 @@ class GeneTableEditor(QWidget):
         csv_row.addWidget(csv_browse)
         cov_lay.addLayout(csv_row)
         cov_lay.addWidget(QLabel("Gene panel (comma-separated):"))
-        self._panel_edit = QPlainTextEdit()
+        self._panel_edit = GenePanelEdit()
         self._panel_edit.setPlaceholderText("BRCA1, BRCA2, TP53, ATM, CHEK2, PALB2, …")
         self._panel_edit.setMaximumHeight(80)
         cov_lay.addWidget(self._panel_edit)
