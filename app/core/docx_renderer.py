@@ -797,6 +797,24 @@ def _page_break_paragraphs(doc) -> None:
         bppr.append(prpr)
         brk.append(bppr)
         p.addprevious(brk)
+        # Blank spacer lines just above the break do nothing there, and on a page
+        # filled to the foot one spills onto a page of its own before the break
+        # (a whole empty page): drop them.
+        prev = brk.getprevious()
+        while prev is not None and _blank_para(prev):
+            above = prev.getprevious()
+            prev.getparent().remove(prev)
+            prev = above
+
+
+def _blank_para(el) -> bool:
+    """An empty paragraph with nothing in it but formatting: no text, picture,
+    break, field or section settings."""
+    if el.tag != qn("w:p") or _text(el).strip():
+        return False
+    return not list(el.iter(qn("w:drawing"), qn("w:pict"), qn("w:object"), qn("w:br"),
+                            qn("w:sectPr"), qn("w:fldChar"), qn("w:fldSimple"),
+                            qn("w:pageBreakBefore")))
 
 
 def _keep_tables_whole(doc) -> None:
@@ -818,10 +836,46 @@ def _keep_tables_whole(doc) -> None:
                 Paragraph(p, None).paragraph_format.keep_with_next = True
 
 
+def _tiny_last_line(doc) -> None:
+    """The empty line Word keeps after a table that ends the document (the gene
+    coverage table): at normal height it spills onto a page of its own when the
+    table fills the last page. Blank lines at the end go, and the last one is
+    made 1 pt high so it always fits."""
+    paras = [el for el in doc.element.body.iterchildren() if el.tag in (qn("w:p"), qn("w:tbl"))]
+    while len(paras) > 1 and _blank_para(paras[-1]) and _blank_para(paras[-2]):
+        paras[-2].getparent().remove(paras[-2])
+        paras.pop(-2)
+    last = paras[-1] if paras else None
+    if last is None or not _blank_para(last):
+        return
+    ppr = last.find(qn("w:pPr"))
+    if ppr is None:
+        ppr = OxmlElement("w:pPr")
+        last.insert(0, ppr)
+    for tag in ("w:spacing", "w:rPr"):
+        old = ppr.find(qn(tag))
+        if old is not None:
+            ppr.remove(old)
+    sp = OxmlElement("w:spacing")
+    for k, v in (("before", "0"), ("after", "0"), ("line", "20"), ("lineRule", "exact")):
+        sp.set(qn(f"w:{k}"), v)
+    # CT_PPr order: spacing comes before ind / jc / rPr
+    after = next((ppr.find(qn(t)) for t in ("w:ind", "w:contextualSpacing", "w:jc", "w:outlineLvl")
+                  if ppr.find(qn(t)) is not None), None)
+    (after.addprevious if after is not None else ppr.append)(sp)
+    prpr = OxmlElement("w:rPr")
+    for tag in ("w:sz", "w:szCs"):
+        el = OxmlElement(tag)
+        el.set(qn("w:val"), "2")
+        prpr.append(el)
+    ppr.append(prpr)
+
+
 def _make_editable(doc) -> None:
     _unfloat(doc)
     _page_break_paragraphs(doc)
     _keep_tables_whole(doc)
+    _tiny_last_line(doc)
 
 
 def _fill_methodology(doc, data: ReportData):
