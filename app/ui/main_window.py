@@ -1194,6 +1194,7 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.additional_separate = True       # every template offers the Additional variants table
         self.fixed_result = False             # the template's result line never changes: no Result picker
         self._mane_worker: ManeWorker | None = None
+        self._mane_running: set[ManeWorker] = set()   # checks not yet finished, kept alive
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 12, 0, 0)
         lay.setSpacing(10)
@@ -1622,14 +1623,17 @@ class VariantsPanel(ExcelDropPanel, QWidget):
         self.mane_status.setText("")
         if not gene or not nm_id:
             return
-        # cancel any previous check
-        if hasattr(self, "_mane_worker") and self._mane_worker and self._mane_worker.isRunning():
-            self._mane_worker.matched.disconnect()
-            self._mane_worker.mismatched.disconnect()
-            self._mane_worker.not_found.disconnect()
-            self._mane_worker.failed.disconnect()
+        # A previous check still running is silenced but kept referenced until it
+        # finishes: a QThread freed while running aborts the whole app (it closed
+        # on every listed-variants upload, which starts two checks back to back).
+        old = self._mane_worker
+        if old is not None and old.isRunning():
+            for sig in (old.matched, old.mismatched, old.not_found, old.failed):
+                sig.disconnect()
         worker = ManeWorker(gene, nm_id)
         self._mane_worker = worker
+        self._mane_running.add(worker)
+        worker.finished.connect(lambda w=worker: self._mane_running.discard(w))
         worker.matched.connect(self._mane_ok)
         worker.mismatched.connect(self._mane_mismatch)
         worker.not_found.connect(self._mane_not_found)
